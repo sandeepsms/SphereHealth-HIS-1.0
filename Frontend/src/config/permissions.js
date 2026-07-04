@@ -300,6 +300,10 @@ export const ACTIONS = {
   "mrd.read":              ["Admin", "Doctor", "MRD"],
   "mrd.list":              ["Admin", "Doctor", "MRD"],
   "mrd.write":             ["Admin"],
+  // Patient-scoped audit-bundle print (Complete File + activity/print/billing/
+  // clinical trails). Gates the "Include audit logs" group in the Print Center
+  // dialog on CompletePatientFilePage. Mirror of Backend/config/permissions.js.
+  "patient-file.audit-print": ["Admin", "MRD"],
   // Same-day discharge undo — Admin only, controller gates 24h window.
   "admission.reactivate":  ["Admin"],
 
@@ -364,6 +368,9 @@ export const ACTIONS = {
   "pharmacy.adr.read":             ["Admin", "Doctor", "Pharmacist", "Nurse"],
   "quality.grievance.write":       ["Admin", "MRD", "Receptionist"],
   "quality.grievance.read":        ["Admin", "MRD", "Receptionist", "Doctor"],
+  // PRE.3 — patient satisfaction & experience feedback (mirror of Backend)
+  "feedback.write":                ["Admin", "MRD", "Receptionist", "Nurse"],
+  "feedback.read":                 ["Admin", "MRD", "Receptionist"],
   "hr.credential.write":           ["Admin"],
   "hr.credential.read":            ["Admin", "Doctor"],
   "compliance.firedrill.write":    ["Admin", "Security"],

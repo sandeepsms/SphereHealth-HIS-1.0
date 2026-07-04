@@ -1287,6 +1287,11 @@ app.get("/", (req, res) => {
 });
 
 // ── Routes ─────────────────────────────────────────────────────────────────
+// Authenticated PHI file serving (visitor photos, incident attachments, …).
+// Top-level mount (not /api) so stored `/uploads/...` URLs resolve as-is —
+// nginx (Docker) and the Vite dev proxy both forward /uploads here unchanged.
+// See routes/Files/uploadsRoutes.js for the traversal/whitelist hardening.
+app.use("/uploads", require("./routes/Files/uploadsRoutes"));
 app.use("/api", require("./routes/index"));
 
 // ── 404 + central error handler ────────────────────────────────────────────

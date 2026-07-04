@@ -166,10 +166,23 @@ const PrintShell = ({
                 columnGap: "24px",
               } : undefined}
             >
-              {infoItems.map((it, i) => (
+              {/* R7hr — "no dashes on printouts": rows whose value is empty
+                  are OMITTED instead of printing "—". (Also fixes the old
+                  `value || "—"` falsy trap that turned a legitimate 0 into
+                  a dash.) Enrichment upstream (printEnrichment.js) fills
+                  patient/admission fields first; whatever is still truly
+                  unknown simply doesn't print. */}
+              {infoItems
+                .filter((it) => {
+                  const v = it?.value;
+                  if (v === undefined || v === null) return false;
+                  const s = String(v).trim();
+                  return s !== "" && s !== "—" && s !== "-";
+                })
+                .map((it, i) => (
                 <div key={i} className="pr-info-grid__item">
                   <div className="pr-info-grid__lbl">{it.label}</div>
-                  <div className="pr-info-grid__val">{it.value || "—"}</div>
+                  <div className="pr-info-grid__val">{String(it.value)}</div>
                 </div>
               ))}
             </div>

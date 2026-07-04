@@ -20,6 +20,8 @@
 import React, { useEffect, useState, useMemo } from "react";
 import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
+import SecureImage from "../SecureImage";
+import { useInlinedUploadsHtml } from "../../utils/secureUploads";
 import "./patient-panel-tabs.css";
 // R7gn — Reuse the SAME per-type card builders that the Complete File
 // (Narrative.jsx) prints. The patient panel was showing a generic
@@ -71,9 +73,13 @@ function NoteCardEmbed({ note, role, hideNursingExtras = false }) {
   // the Initial Assessment tab can suppress the "NURSING INTAKE — CROSS-
   // DISCIPLINARY" block when no separate Nurse IA exists. Default false
   // preserves all existing call sites (prints, timelines, MLC tab).
-  const html = role === "nurse"
+  const rawHtml = role === "nurse"
     ? buildNurseNoteCardHtml(note)
     : buildDoctorNoteCardHtml(note, { hideNursingExtras });
+  // /uploads signature images are JWT-gated — resolve them to data: URLs
+  // through the authenticated axios pipe before injecting the markup
+  // (a raw <img src="/uploads/…"> can't send the Authorization header).
+  const html = useInlinedUploadsHtml(rawHtml);
   return (
     <div
       className={`ppt-embed-card ppt-embed-card--${role}`}
@@ -1509,7 +1515,9 @@ function NoteSignature({ note, role }) {
     <div className="ppt-sig">
       <div className="ppt-sig-line">
         {isImg ? (
-          <img src={sig} alt={`${role} signature`} className="ppt-sig-img" />
+          // SecureImage: /uploads/ signatures are JWT-gated — a plain <img>
+          // can't send the Authorization header (data:/https pass through).
+          <SecureImage src={sig} alt={`${role} signature`} className="ppt-sig-img" />
         ) : sig ? (
           <span className="ppt-sig-cursive">{signedByName || "Signed"}</span>
         ) : (
@@ -1788,7 +1796,7 @@ function renderValue(v) {
     // string field — render it as an <img>. Same for /uploads/ paths and
     // remote http(s) image URLs. Anything else stays as text.
     if (v.startsWith("data:image/") || v.startsWith("/uploads/") || /^https?:\/\/.+\.(png|jpe?g|gif|webp|svg)$/i.test(v)) {
-      return <img src={v} alt="" className="ppt-inline-img" />;
+      return <SecureImage src={v} alt="" className="ppt-inline-img" />;
     }
     // ISO date strings → format. Heuristic — must look like an ISO date.
     if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v)) {
@@ -1824,7 +1832,7 @@ function renderObj(o) {
       let display;
       // Strings that are actually images → render as <img>, never as text.
       if (typeof val === "string" && (val.startsWith("data:image/") || val.startsWith("/uploads/"))) {
-        display = <img src={val} alt={k} className="ppt-inline-img" />;
+        display = <SecureImage src={val} alt={k} className="ppt-inline-img" />;
       } else if (typeof val === "string" && val.length > 200) {
         // Truncate absurdly long strings (very long signatures, dumps) so the
         // UI never gets bricked.

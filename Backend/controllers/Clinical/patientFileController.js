@@ -145,7 +145,14 @@ exports.getCompleteFile = async (req, res) => {
       // Bounded at 100 to protect against pathological histories.
       safe("opdVisits",        () => OPDRegistration.find({ UHID }).sort({ visitDate: -1, createdAt: -1 }).limit(100).lean()),
       // The 7-day window applies to high-cardinality recorded data.
-      safe("doctorNotes",      () => DoctorNotes.find({ patientUHID: UHID, createdAt: win }).sort({ visitDate: -1, createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
+      // R7hr — the "Complete File" must show the WHOLE admission, not the last
+      // 7 days. The Initial Assessment is always the OLDEST note (day 1), so
+      // the createdAt window silently dropped it (and every early note/order/
+      // MAR) for any stay > 7 days. Mirror the R7fo nurseNotes/vitals fix:
+      // drop the window on the clinical-record collections; PER_SECTION_LIMIT
+      // still bounds the payload. (Operational billingTriggers + activityLog
+      // keep the window — activity is served separately via the audit bundle.)
+      safe("doctorNotes",      () => DoctorNotes.find({ patientUHID: UHID }).sort({ visitDate: -1, createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
       // R7fo — nursing-timeline visibility regression. The `createdAt: win`
       // 7-day default hid older nurse notes from the patient file (e.g.
       // an admission's initial assessment from day-1 vanished on day-9).
@@ -153,15 +160,18 @@ exports.getCompleteFile = async (req, res) => {
       // PER_SECTION_LIMIT cap (default 200, max 500) prevents bloat.
       // Sort DESC by createdAt picks the newest within the cap.
       safe("nurseNotes",       () => NurseNotes.find({ patientUHID: UHID }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
-      safe("doctorOrders",     () => DoctorOrder.find({ UHID, createdAt: win }).sort({ orderedAt: -1, createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
+      safe("doctorOrders",     () => DoctorOrder.find({ UHID }).sort({ orderedAt: -1, createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
       // Consents are infrequent + must be visible historically — load all but capped.
       safe("consents",         () => ConsentForm.find({ UHID }).sort({ createdAt: -1 }).limit(100).lean()),
       safe("dischargeSummary", () => DischargeSummary.find({ UHID }).sort({ createdAt: -1 }).limit(50).lean()),
-      safe("nursingAssessments", () => NursingAssessment.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
-      safe("nursingCarePlans",   () => NursingCarePlan.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
-      safe("shiftHandovers",     () => ShiftHandover.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
+      safe("nursingAssessments", () => NursingAssessment.find({ UHID }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
+      safe("nursingCarePlans",   () => NursingCarePlan.find({ UHID }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
+      // R7ht — shiftHandoverModel keys on lowercase `uhid` (like VitalSheet
+      // above), so the old `{ UHID }` query matched zero app-written handovers
+      // and only the demo seed (which writes both spellings) ever printed.
+      safe("shiftHandovers",     () => ShiftHandover.find({ $or: [{ uhid: UHID }, { UHID }] }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
       safe("bedTransfers",       () => BedTransfer ? BedTransfer.find({ UHID }).sort({ createdAt: -1 }).limit(50).lean() : []),
-      safe("mar",                () => MAR ? MAR.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean() : []),
+      safe("mar",                () => MAR ? MAR.find({ UHID }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean() : []),
       // R7bu — VitalSheet schema uses `uhid` (lowercase) NOT `UHID`, and
       // there is NO top-level `recordedAt` field — entries with their
       // own time live in tableData[]. The old `{ UHID, recordedAt: win }`
@@ -173,7 +183,7 @@ exports.getCompleteFile = async (req, res) => {
       safe("vitals",             () => VitalSheet ? VitalSheet.find({ uhid: UHID }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean() : []),
       // MLC + bills + admissions don't bloat — keep small, no window.
       safe("mlc",                () => MLCReport ? MLCReport.find({ UHID }).sort({ createdAt: -1 }).limit(50).lean() : []),
-      safe("investigations",     () => InvestigationOrder.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
+      safe("investigations",     () => InvestigationOrder.find({ UHID }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
       safe("bills",              () => PatientBill.find({ UHID }).sort({ createdAt: -1 }).limit(50).lean()),
       safe("billingTriggers",    () => BillingTrigger.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
       safe("activityLog",        () => PatientActivityLog.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
@@ -188,11 +198,82 @@ exports.getCompleteFile = async (req, res) => {
       safe("bloodTransfusion",   () => BloodTransfusionRegister ? BloodTransfusionRegister.find({ UHID }).sort({ createdAt: -1 }).limit(50).lean() : []),
     ]);
 
+    // R7hr — devices history (IV cannula / catheter / ET tube …) for the
+    // chronological Complete File print. ASC by placedAt — a device row is
+    // a lifecycle (placed → changes[] → removed), so bedside order is the
+    // natural read. Lazy-require mirrors the other optional models.
+    const PatientDevice = (() => { try { return require("../../models/Clinical/PatientDeviceModel"); } catch { return null; } })();
+    const devices = PatientDevice
+      ? await safe("devices", () => PatientDevice.find({ UHID }).sort({ placedAt: 1 }).limit(100).lean())
+      : [];
+
+    // ── R7hr — "everything captured must reach the Complete File" ──────
+    // Coverage audit (2026-07) found ~25 patient-scoped collections that
+    // never reached this aggregator: ER visits, standalone prescriptions,
+    // medical certificates, physio, med-reconciliation, diabetic charts,
+    // pharmacy dispenses, advances, appointments, procedure notes, ADR /
+    // food reactions, PROM-PREM, code-response events, and the patient-
+    // linked NABH safety registers. All are surfaced here through one
+    // defensive helper: lazy-require (absent model ⇒ []), $or over both
+    // UHID spellings (schemas are split between UHID and patientUHID),
+    // capped + lean. A schema without either field simply matches zero
+    // rows — never throws.
+    const _lazyModel = (p) => { try { return require(p); } catch { return null; } };
+    const _byPatient = (Model, name, { sort = { createdAt: -1 }, cap = 100 } = {}) =>
+      Model
+        ? safe(name, () => Model.find({ $or: [{ UHID }, { patientUHID: UHID }] }).sort(sort).limit(cap).lean())
+        : Promise.resolve([]);
+
+    const [
+      emergencyCases, prescriptions, medicalCertificates,
+      physioPlans, physioSessions, medReconciliation, diabeticCharts,
+      pharmacySales, advances, appointments, procedureNotes,
+      adrReports, foodReactions, promPremSurveys, codeResponseEvents,
+    ] = await Promise.all([
+      _byPatient(_lazyModel("../../models/Patient/emergencyModel"), "emergencyCases"),
+      _byPatient(_lazyModel("../../models/Doctor/prescription"), "prescriptions"),
+      _byPatient(_lazyModel("../../models/Clinical/MedicalCertificateModel"), "medicalCertificates", { cap: 50 }),
+      _byPatient(_lazyModel("../../models/Clinical/PhysioPlanModel"), "physioPlans", { cap: 50 }),
+      _byPatient(_lazyModel("../../models/Clinical/PhysioSessionModel"), "physioSessions"),
+      _byPatient(_lazyModel("../../models/Clinical/MedReconciliationModel"), "medReconciliation", { cap: 50 }),
+      _byPatient(_lazyModel("../../models/Clinical/DiabeticChartModel"), "diabeticCharts"),
+      _byPatient(_lazyModel("../../models/Pharmacy/PharmacySaleModel"), "pharmacySales"),
+      _byPatient(_lazyModel("../../models/PatientBillModel/PatientAdvanceModel"), "advances", { cap: 50 }),
+      _byPatient(_lazyModel("../../models/Appointment/appointmentModel"), "appointments"),
+      _byPatient(_lazyModel("../../models/Clinical/ProcedureNoteModel"), "procedureNotes"),
+      _byPatient(_lazyModel("../../models/Pharmacy/ADRReportModel"), "adrReports", { cap: 50 }),
+      _byPatient(_lazyModel("../../models/Clinical/AdverseFoodReactionModel"), "foodReactions", { cap: 50 }),
+      _byPatient(_lazyModel("../../models/Clinical/PROMPREMSurveyModel"), "promPremSurveys", { cap: 50 }),
+      _byPatient(_lazyModel("../../models/Compliance/CodeResponseEventModel"), "codeResponseEvents", { cap: 50 }),
+    ]);
+
+    // Patient-linked NABH safety/compliance registers — grouped so the
+    // print can render them as one "Safety & Compliance" section.
+    const _REGISTERS = [
+      ["restraints",        "../../models/Compliance/RestraintRegisterModel"],
+      ["fallEvents",        "../../models/Compliance/FallRiskRegisterModel"],
+      ["pressureUlcers",    "../../models/Compliance/PressureUlcerRegisterModel"],
+      ["medicationErrors",  "../../models/Compliance/MedicationErrorRegisterModel"],
+      ["sentinelEvents",    "../../models/Compliance/SentinelEventRegisterModel"],
+      ["haiSurveillance",   "../../models/Compliance/HAISurveillanceRegisterModel"],
+      ["lama",              "../../models/Compliance/LAMARegisterModel"],
+      ["mortality",         "../../models/Compliance/MortalityRegisterModel"],
+      ["nearMissEvents",    "../../models/Compliance/NearMissEventRegisterModel"],
+      ["otRegister",        "../../models/Compliance/OTRegisterModel"],
+      ["antimicrobialUse",  "../../models/Compliance/AntimicrobialUseRegisterModel"],
+    ];
+    const _regRows = await Promise.all(
+      _REGISTERS.map(([name, path]) => _byPatient(_lazyModel(path), `registers.${name}`, { cap: 50 })),
+    );
+    const complianceRegisters = Object.fromEntries(
+      _REGISTERS.map(([name], i) => [name, _regRows[i]]),
+    );
+
     // Lab-records (manual trend sheets + imaging/micro/histopath reports).
     // Fetched separately so the optional-require null-guard is local — the
     // main Promise.all above stays uncluttered.
-    const labTrends  = LabTrend  ? await safe("labTrends",  () => LabTrend.find({ UHID, createdAt: win }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean())  : [];
-    const labReports = LabReport ? await safe("labReports", () => LabReport.find({ UHID, reportDate: win }).sort({ reportDate: -1 }).limit(PER_SECTION_LIMIT).lean()) : [];
+    const labTrends  = LabTrend  ? await safe("labTrends",  () => LabTrend.find({ UHID }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean())  : [];
+    const labReports = LabReport ? await safe("labReports", () => LabReport.find({ UHID }).sort({ reportDate: -1 }).limit(PER_SECTION_LIMIT).lean()) : [];
 
     // R7ey-F19 — .lean() bypasses each schema's toJSON decimalToNumber
     // transform, so every money field on bills/triggers shipped as raw
@@ -463,6 +544,27 @@ exports.getCompleteFile = async (req, res) => {
         icuBundles,
         // R7ft-FIX2 — blood transfusion register (NABH HIC.4 / MOM.4).
         bloodTransfusion,
+        // R7hr — device lifecycle rows (placed → changes[] → removed) for
+        // the chronological Complete File print's Devices History section.
+        devices,
+        // R7hr — full-coverage additions ("everything captured must reach
+        // the Complete File"): see the coverage-audit block above.
+        emergencyCases,
+        prescriptions,
+        medicalCertificates,
+        physioPlans,
+        physioSessions,
+        medReconciliation,
+        diabeticCharts,
+        pharmacySales,
+        advances,
+        appointments,
+        procedureNotes,
+        adrReports,
+        foodReactions,
+        promPremSurveys,
+        codeResponseEvents,
+        complianceRegisters,
         timeline,
         completeness,
         pagination,
@@ -682,6 +784,89 @@ exports.logEvent = async (req, res) => {
       userAgent:  req.headers["user-agent"] || "",
     });
     return res.json({ success: true, data: row });
+  } catch (e) {
+    return res.status(500).json({ success: false, message: e.message });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────
+// GET /api/patient-file/:uhid/audit-bundle
+// Aggregates the four patient-scoped audit trails for the
+// "Complete Patient File + audit logs" print (Admin + MRD only —
+// gated by the dedicated patient-file.audit-print action so the
+// broader reports.audit token doesn't have to widen to MRD):
+//   activityLog   — PatientActivityLog (file access; NABH IMS.1)
+//   printAudit    — PrintAudit (who printed what; NABH IMS.4)
+//   billingAudit  — BillingAudit (money trail)
+//   clinicalAudit — ClinicalAudit (clinical action trail; AAC.7)
+// Optional query: admissionId (narrows billing/clinical rows),
+// from / to (createdAt window). Each source capped at 500 rows,
+// newest first; before/after blobs are never included.
+// ─────────────────────────────────────────────────────────────
+const PrintAuditModel   = (() => { try { return require("../../models/Billing/PrintAuditModel"); } catch { return null; } })();
+const BillingAuditModel = (() => { try { return require("../../models/Billing/BillingAudit"); } catch { return null; } })();
+const ClinicalAuditModel = (() => { try { return require("../../models/Compliance/ClinicalAuditModel"); } catch { return null; } })();
+
+exports.getAuditBundle = async (req, res) => {
+  try {
+    const UHID = String(req.params.uhid || "").toUpperCase();
+    if (!UHID) return res.status(400).json({ success: false, message: "UHID is required" });
+    const CAP = 500;
+
+    const window = {};
+    if (req.query.from) window.$gte = new Date(req.query.from);
+    if (req.query.to)   window.$lte = new Date(req.query.to);
+    const withWindow = (filter, field = "createdAt") =>
+      (window.$gte || window.$lte) ? { ...filter, [field]: window } : filter;
+
+    const admissionId = req.query.admissionId && /^[a-f0-9]{24}$/i.test(String(req.query.admissionId))
+      ? String(req.query.admissionId) : null;
+    const scoped = (filter) => admissionId ? { ...filter, admissionId } : filter;
+
+    const [activityLog, printAudit, billingAudit, clinicalAudit] = await Promise.all([
+      PatientActivityLog
+        .find(withWindow({ UHID }))
+        .select("action module area summary userName userRole createdAt")
+        .sort({ createdAt: -1 }).limit(CAP).lean(),
+      PrintAuditModel
+        ? PrintAuditModel
+            .find(withWindow({ UHID }, "printedAt"))
+            .select("entityType entityNumber printCount printedByName printedByRole printedAt")
+            .sort({ printedAt: -1 }).limit(CAP).lean()
+        : [],
+      BillingAuditModel
+        ? BillingAuditModel
+            .find(withWindow(scoped({ UHID })))
+            .select("event billNumber amount paymentMode actorName actorRole reason createdAt")
+            .sort({ createdAt: -1 }).limit(CAP).lean()
+            // amount is Decimal128 — lean() leaves it as {$numberDecimal:"x"},
+            // which the print appendix can't format. Flatten to a plain number.
+            .then((rows) => rows.map((r) => ({
+              ...r,
+              amount: r.amount != null ? Number(r.amount.$numberDecimal ?? r.amount) : null,
+            })))
+        : [],
+      ClinicalAuditModel
+        ? ClinicalAuditModel
+            .find(withWindow(scoped({ UHID })))
+            .select("event targetType actorName actorRole reason createdAt")
+            .sort({ createdAt: -1 }).limit(CAP).lean()
+        : [],
+    ]);
+
+    return res.json({
+      success: true,
+      data: {
+        activityLog, printAudit, billingAudit, clinicalAudit,
+        window: { from: req.query.from || null, to: req.query.to || null, admissionId },
+        capped: {
+          activityLog:   activityLog.length   >= CAP,
+          printAudit:    printAudit.length    >= CAP,
+          billingAudit:  billingAudit.length  >= CAP,
+          clinicalAudit: clinicalAudit.length >= CAP,
+        },
+      },
+    });
   } catch (e) {
     return res.status(500).json({ success: false, message: e.message });
   }

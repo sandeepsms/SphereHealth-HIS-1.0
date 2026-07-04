@@ -53,6 +53,25 @@ import { fmtDate, fmtTime, fmtDayMonth, pronoun } from "./normalizeData";
 // layout the user saw in the standalone printouts.
 import { buildDoctorNoteCardHtml } from "@/pages/doctor/buildDoctorNoteCardHtml";
 import { buildNurseNoteCardHtml }  from "@/pages/nursing/printNurseNote";
+// /uploads signature images are JWT-gated — SecureImage (JSX) and the
+// inline-to-data-URL hook (builder HTML) fetch them through axios with
+// the Bearer token; a plain <img src="/uploads/…"> would 401.
+import SecureImage from "@/Components/SecureImage";
+import { useInlinedUploadsHtml } from "@/utils/secureUploads";
+
+/* R7gd note-card embed wrapped in a component so the JWT-gated /uploads
+   signature inlining hook can run per-card (hooks can't live in a .map). */
+function EmbeddedNoteCard({ note }) {
+  const isDoc = note._kind === "doctor";
+  const raw = isDoc ? buildDoctorNoteCardHtml(note) : buildNurseNoteCardHtml(note);
+  const html = useInlinedUploadsHtml(raw);
+  return (
+    <div
+      style={{ marginBottom: 6 }}
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
+}
 
 /* =====================================================================
    1. PROSE HELPERS (kept compatible with pre-R7fu Narrative)
@@ -121,12 +140,51 @@ const isResultAbnormal = (resultText) => {
   return ABNORMAL_RX.test(resultText);
 };
 
+// Temperature arrives as °F from most capture forms (NurseInitialAssessment,
+// NursingNotes vitals, IPD IA) and as °C from a few (MEWS, daily toggle) — and
+// no unit is stored with the value. Infer by magnitude: a body temperature
+// ≥ 45 is Fahrenheit (normal 97–99), below that Celsius (normal 36–38). This
+// prints "98.6°F" and "37.0°C" correctly instead of the old fixed label that
+// turned a real 98.6°F reading into a lethal-looking "98.6°C".
+const fmtTemp = (v) => {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return v == null ? "" : String(v);
+  return `${v}°${n >= 45 ? "F" : "C"}`;
+};
+// ── MAR (medication administration) timing helpers ──────────────────────────
+// Scheduled slot "HH:MM" → minutes-of-day, for ordering a drug's doses. Non-
+// clock slots ("Continuous"/"Immediate"/"") sort ahead of timed ones.
+const _schedMin = (a) => {
+  const m = /^(\d{1,2}):(\d{2})/.exec(a?.schedTime || "");
+  if (m) return Number(m[1]) * 60 + Number(m[2]);
+  const g = a?.givenAt ? new Date(a.givenAt) : null;
+  return g && !isNaN(g.getTime()) ? g.getHours() * 60 + g.getMinutes() : -1;
+};
+const _fmtDelay = (min) => {
+  const h = Math.floor(min / 60), m = min % 60;
+  return h ? `${h}h${m ? ` ${m}m` : ""}` : `${m}m`;
+};
+// Was a dose given on time? Compare givenAt to its HH:MM scheduled slot on the
+// same day: within 30 min → on time; later → late; earlier → early. Returns
+// null when the slot isn't a clock time (Continuous/Immediate) or givenAt is
+// absent, so "timely diya ya nahi" only shows where it's meaningful.
+const _doseTiming = (a) => {
+  if (!a?.givenAt || !/^\d{1,2}:\d{2}/.test(a.schedTime || "")) return null;
+  const g = new Date(a.givenAt);
+  if (isNaN(g.getTime())) return null;
+  const [h, m] = a.schedTime.split(":").map(Number);
+  const sched = new Date(g); sched.setHours(h, m, 0, 0);
+  const diff = Math.round((g - sched) / 60000);
+  if (Math.abs(diff) <= 30) return { label: "on time", color: "#15803d" };
+  return diff > 0 ? { label: `late ${_fmtDelay(diff)}`, color: "#b45309" }
+                  : { label: `early ${_fmtDelay(-diff)}`, color: "#b45309" };
+};
 const vitalsSentence = (v) => {
   if (!v || typeof v !== "object") return "";
   const bits = [];
   if (v.bp)    bits.push(`BP ${v.bp}`);
   if (v.pulse) bits.push(`pulse ${v.pulse}/min`);
-  if (v.temp)  bits.push(`temperature ${v.temp}°F`);
+  if (v.temp)  bits.push(`temperature ${fmtTemp(v.temp)}`);
   if (v.spo2)  bits.push(`SpO₂ ${v.spo2}%`);
   if (v.rr)    bits.push(`respiratory rate ${v.rr}/min`);
   if (!bits.length) return "";
@@ -313,38 +371,200 @@ const DayLabel = ({ n, date, totalDays }) => (
   </div>
 );
 
-const MiniTable = ({ headers, rows, widths }) => (
-  <table
-    className="pr-table"
-    style={{
-      width: "100%",
-      borderCollapse: "collapse",
-      marginBottom: 6,
-      fontSize: 9,
-      pageBreakInside: "auto",
-    }}
-  >
-    <thead>
-      <tr>
-        {headers.map((h, i) => (
-          <th key={`th-${i}`} style={{ ...CELL_TH, width: widths?.[i] || "auto" }}>{h}</th>
-        ))}
-      </tr>
-    </thead>
-    <tbody>
-      {rows.map((cells, ri) => (
-        <tr key={`tr-${ri}`} className="bill-line-row">
-          {cells.map((c, ci) => (
-            <td key={`td-${ri}-${ci}`} style={CELL_TD}>{c == null || c === "" ? "—" : c}</td>
+// R7hr — MiniTable drops any column whose every cell is empty, so a table
+// never prints a phantom "—" column (e.g. SpO₂/RR when the vital sheet didn't
+// capture them). Column 0 (the row anchor — date/time/no.) is always kept.
+const _cellEmpty = (c) => c == null || c === "" || c === "—";
+const MiniTable = ({ headers, rows, widths }) => {
+  const keep = headers.map((_, ci) => ci === 0 || rows.some((cells) => !_cellEmpty(cells[ci])));
+  const H = headers.filter((_, i) => keep[i]);
+  const W = widths ? widths.filter((_, i) => keep[i]) : null;
+  const R = rows.map((cells) => cells.filter((_, i) => keep[i]));
+  return (
+    <table
+      className="pr-table"
+      style={{ width: "100%", borderCollapse: "collapse", marginBottom: 6, fontSize: 9, pageBreakInside: "auto" }}
+    >
+      <thead>
+        <tr>
+          {H.map((h, i) => (
+            <th key={`th-${i}`} style={{ ...CELL_TH, width: W?.[i] || "auto" }}>{h}</th>
           ))}
         </tr>
-      ))}
-    </tbody>
-  </table>
-);
+      </thead>
+      <tbody>
+        {R.map((cells, ri) => (
+          <tr key={`tr-${ri}`} className="bill-line-row">
+            {cells.map((c, ci) => (
+              <td key={`td-${ri}-${ci}`} style={CELL_TD}>{_cellEmpty(c) ? "—" : c}</td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+};
 
 // Alias kept for any legacy reference inside helpers.
 const Table = MiniTable;
+
+/* ── R7hr — full-coverage record renderers ─────────────────────────────
+   Config-driven so every remaining captured collection reaches the file
+   with minimal code. Each entry: how to read a row into table cells.
+   A block renders only when it has ≥1 row (self-eliding).            */
+const _cfmt = (v) => {
+  if (v == null || v === "") return "";
+  if (v instanceof Date) return _cfmtDate(v);
+  if (typeof v === "object") return "";               // never dump [object Object]
+  // ISO date-only ("2026-05-14") or full timestamp → localised print date.
+  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v)) return _cfmtDate(v);
+  return String(v);
+};
+const _cfmtDate = (d) => {
+  try {
+    return new Date(d).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "2-digit", hour: "2-digit", minute: "2-digit" });
+  } catch { return ""; }
+};
+const _pick = (o, ...keys) => { for (const k of keys) { const v = o?.[k]; if (v != null && v !== "") return v; } return ""; };
+
+// Each: { key (file field), title, nabh, headers, widths, row(x)->cells }
+const COVERAGE_BLOCKS = [
+  { key: "appointments", title: "Appointments", nabh: "",
+    headers: ["Date", "Department", "Doctor", "Complaint", "Status"], widths: ["16%","20%","22%","28%","14%"],
+    row: (x) => [_cfmt(_pick(x,"appointmentDate","date","slotStart","createdAt")), _pick(x,"department","departmentName"), _pick(x,"doctorName","consultantName"), _pick(x,"chiefComplaint","reason"), _pick(x,"status")] },
+  { key: "emergencyCases", title: "Emergency / ER Visits", nabh: "NABH AAC.1",
+    headers: ["Date", "Triage", "Complaint", "Disposition", "Consultant"], widths: ["15%","12%","33%","20%","20%"],
+    row: (x) => [_cfmt(_pick(x,"arrivalTime","visitDate","createdAt")), _pick(x,"triageLevel","triageCategory"), _pick(x,"chiefComplaint","presentingComplaint"), _pick(x,"disposition","outcome"), _pick(x,"consultantName","attendingDoctor")] },
+  { key: "prescriptions", title: "Prescriptions (Rx)", nabh: "NABH MOM.2",
+    headers: ["Date", "Rx no", "Doctor", "Medicines", "Advice"], widths: ["14%","16%","20%","32%","18%"],
+    row: (x) => [_cfmt(_pick(x,"prescriptionDate","createdAt")), _pick(x,"prescriptionNumber","rxNo"), _pick(x,"doctorName","consultantName"),
+      (Array.isArray(x.medicines || x.medications) ? (x.medicines||x.medications) : []).map(m=>_pick(m,"medicineName","name","drug")).filter(Boolean).join(", "), _pick(x,"advice","generalAdvice")] },
+  { key: "medReconciliation", title: "Medication Reconciliation", nabh: "NABH MOM.1",
+    headers: ["Date", "Phase", "Home meds", "Reconciled by", "Discrepancies"], widths: ["15%","16%","26%","22%","21%"],
+    row: (x) => [_cfmt(_pick(x,"reconciledAt","createdAt")), _pick(x,"phase","stage","type"),
+      String((Array.isArray(x.homeMedications||x.medications)?(x.homeMedications||x.medications):[]).length || _pick(x,"homeMedCount") || ""),
+      _pick(x,"reconciledByName","pharmacistName","reconciledBy"), _pick(x,"discrepancies","discrepancyNotes")] },
+  { key: "diabeticCharts", title: "Diabetic / Blood-Sugar Chart", nabh: "NABH COP.3",
+    headers: ["Date", "Readings", "Insulin", "Notes"], widths: ["18%","34%","24%","24%"],
+    row: (x) => {
+      const n = (Array.isArray(x.readings || x.entries) ? (x.readings || x.entries) : []).length;
+      return [_cfmt(_pick(x,"chartDate","date","createdAt")),
+        n > 0 ? `${n} reading(s)` : "", _pick(x,"insulinRegimen","insulin"), _pick(x,"notes","remarks")];
+    } },
+  { key: "procedureNotes", title: "Procedure Notes", nabh: "NABH COP.13",
+    headers: ["Date", "Procedure", "Performed by", "Site", "Notes"], widths: ["15%","22%","20%","15%","28%"],
+    row: (x) => [_cfmt(_pick(x,"procedureDate","performedAt","createdAt")), _pick(x,"procedureName","procedure","name"), _pick(x,"performedByName","doctorName","performedBy"), _pick(x,"site","bodyPart"), _pick(x,"notes","findings")] },
+  { key: "physioPlans", title: "Physiotherapy Plans", nabh: "NABH COP.20",
+    headers: ["Date", "Diagnosis", "Goals", "Modalities", "Sessions"], widths: ["14%","22%","24%","24%","16%"],
+    row: (x) => [_cfmt(_pick(x,"createdAt","planDate")), _pick(x,"diagnosis","indication"), _pick(x,"goals","goal"),
+      (Array.isArray(x.modalities)?x.modalities:[]).join(", ") || _pick(x,"modalities"), String(_pick(x,"sessionCount","totalSessions") || "")] },
+  { key: "physioSessions", title: "Physiotherapy Sessions", nabh: "NABH COP.20",
+    headers: ["Date", "Modality", "Duration", "Therapist", "Response"], widths: ["16%","24%","14%","22%","24%"],
+    row: (x) => [_cfmt(_pick(x,"sessionDate","performedAt","createdAt")), _pick(x,"modality","treatment"), _pick(x,"duration","durationMin"), _pick(x,"therapistName","performedBy"), _pick(x,"patientResponse","response","notes")] },
+  { key: "medicalCertificates", title: "Medical Certificates", nabh: "NABH IMS.1",
+    headers: ["Date", "Cert no", "Type", "Issued by", "Validity"], widths: ["15%","18%","22%","23%","22%"],
+    row: (x) => [_cfmt(_pick(x,"issuedAt","createdAt")), _pick(x,"certificateNumber","certNo"), _pick(x,"certificateType","type"), _pick(x,"issuedByName","doctorName"),
+      [_cfmt(_pick(x,"validFrom","fromDate")), _cfmt(_pick(x,"validTo","toDate"))].filter(Boolean).join(" – ")] },
+  { key: "pharmacySales", title: "Pharmacy Dispenses", nabh: "",
+    headers: ["Date", "Bill no", "Type", "Items", "Net (₹)"], widths: ["16%","20%","14%","32%","18%"],
+    row: (x) => [_cfmt(_pick(x,"createdAt","saleDate")), _pick(x,"billNumber","invoiceNumber"), _pick(x,"saleType","type"),
+      String((Array.isArray(x.items)?x.items:[]).length || "") + " item(s)", _cnum(_pick(x,"grandTotal","netAmount","total"))] },
+  { key: "advances", title: "Advance Deposits & Refunds", nabh: "",
+    headers: ["Date", "Receipt", "Amount (₹)", "Mode", "Applied / Refund"], widths: ["16%","18%","16%","16%","34%"],
+    row: (x) => [_cfmt(_pick(x,"paidAt","createdAt")), _pick(x,"receiptNumber","receiptNo"), _cnum(_pick(x,"amount")), _pick(x,"paymentMode","mode"),
+      [_pick(x,"appliedAmount") && `applied ${_cnum(x.appliedAmount)}`, _pick(x,"refundedAmount") && `refunded ${_cnum(x.refundedAmount)}`].filter(Boolean).join(" · ")] },
+  { key: "adrReports", title: "Adverse Drug Reactions", nabh: "Pharmacovigilance",
+    headers: ["Date", "Suspected drug", "Reaction", "Severity", "Outcome"], widths: ["15%","22%","28%","15%","20%"],
+    row: (x) => [_cfmt(_pick(x,"reportedAt","reactionDate","createdAt")), _pick(x,"suspectedDrug","drugName"), _pick(x,"reaction","adverseEffect"), _pick(x,"severity"), _pick(x,"outcome")] },
+  { key: "foodReactions", title: "Adverse Food Reactions", nabh: "",
+    headers: ["Date", "Food", "Reaction", "Severity", "Action"], widths: ["16%","22%","28%","14%","20%"],
+    row: (x) => [_cfmt(_pick(x,"reactionDate","createdAt")), _pick(x,"foodItem","food"), _pick(x,"reaction","symptoms"), _pick(x,"severity"), _pick(x,"actionTaken","action")] },
+  { key: "codeResponseEvents", title: "Code / Resuscitation Events", nabh: "NABH FMS.5",
+    headers: ["Time", "Code", "Location", "Outcome", "Response"], widths: ["18%","16%","22%","22%","22%"],
+    row: (x) => [_cfmt(_pick(x,"alertTime","createdAt")), _pick(x,"codeType","code"), _pick(x,"location","area"), _pick(x,"outcome"), _pick(x,"responseTime") && `${x.responseTime} min`] },
+  { key: "promPremSurveys", title: "Patient Experience (PROM / PREM)", nabh: "Patient Feedback",
+    headers: ["Date", "Type", "Score", "Comments"], widths: ["18%","20%","16%","46%"],
+    row: (x) => [_cfmt(_pick(x,"submittedAt","createdAt")), _pick(x,"surveyType","type"), String(_pick(x,"overallScore","score") || ""), _pick(x,"comments","feedback")] },
+];
+
+function _cnum(v) {
+  const n = typeof v === "object" && v ? Number(v.$numberDecimal ?? v) : Number(v);
+  return Number.isFinite(n) ? n.toLocaleString("en-IN") : "";
+}
+
+// Clinical records first, then administrative / feedback — a readable
+// medical-record order regardless of the config array's authoring order.
+const COVERAGE_ORDER = [
+  "emergencyCases", "prescriptions", "medReconciliation", "procedureNotes",
+  "diabeticCharts", "physioPlans", "physioSessions", "adrReports",
+  "foodReactions", "codeResponseEvents", "medicalCertificates",
+  "appointments", "pharmacySales", "advances", "promPremSurveys",
+];
+function CoverageRecords({ file }) {
+  const blocks = COVERAGE_BLOCKS
+    .slice()
+    .sort((a, b) => {
+      const ia = COVERAGE_ORDER.indexOf(a.key), ib = COVERAGE_ORDER.indexOf(b.key);
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+    })
+    .map((b) => ({ b, rows: Array.isArray(file?.[b.key]) ? file[b.key] : [] }))
+    .filter(({ rows }) => rows.length > 0);
+  if (blocks.length === 0) return null;
+  return (
+    <>
+      {blocks.map(({ b, rows }) => (
+        <React.Fragment key={b.key}>
+          <SectionHeader nabh={b.nabh || undefined}>{b.title}</SectionHeader>
+          <MiniTable headers={b.headers} widths={b.widths} rows={rows.map((x) => b.row(x))} />
+        </React.Fragment>
+      ))}
+    </>
+  );
+}
+
+const REGISTER_META = {
+  restraints:       { title: "Restraint Register",        nabh: "NABH COP.17" },
+  fallEvents:       { title: "Fall-Risk / Fall Register", nabh: "NABH COP.12" },
+  pressureUlcers:   { title: "Pressure-Ulcer Register",   nabh: "NABH COP.4"  },
+  medicationErrors: { title: "Medication-Error Register", nabh: "NABH COP.16" },
+  sentinelEvents:   { title: "Sentinel-Event Register",   nabh: "NABH QMS"    },
+  haiSurveillance:  { title: "HAI Surveillance",          nabh: "NABH HIC.1"  },
+  lama:             { title: "LAMA / DAMA Register",      nabh: "NABH COP.20" },
+  mortality:        { title: "Mortality Register",        nabh: "NABH IMS"    },
+  nearMissEvents:   { title: "Near-Miss Register",        nabh: "NABH FMS.7"  },
+  otRegister:       { title: "OT Register",               nabh: "NABH COP.7"  },
+  antimicrobialUse: { title: "Antimicrobial Use",         nabh: "NABH IPC"    },
+};
+
+function ComplianceRegisters({ registers }) {
+  const reg = registers || {};
+  const present = Object.keys(REGISTER_META).filter((k) => Array.isArray(reg[k]) && reg[k].length > 0);
+  if (present.length === 0) return null;
+  return (
+    <>
+      <SectionHeader nabh="NABH">Safety &amp; Compliance Registers</SectionHeader>
+      {present.map((k) => {
+        const meta = REGISTER_META[k];
+        return (
+          <React.Fragment key={k}>
+            <SubHeader>{meta.title}{meta.nabh ? ` · ${meta.nabh}` : ""}</SubHeader>
+            <MiniTable
+              headers={["Date", "Detail", "Indication / Reason", "By", "Status"]}
+              widths={["16%","30%","26%","16%","12%"]}
+              rows={reg[k].map((x) => [
+                _cfmt(_pick(x,"eventDate","assessedAt","appliedAt","occurredAt","createdAt")),
+                _pick(x,"deviceType","stage","errorType","eventType","diagnosis","organism","detail","summary","description","title"),
+                _pick(x,"indication","reason","rootCause","cause","riskLevel","category"),
+                _pick(x,"recordedByName","orderedByName","assessedByName","recordedBy","actorName"),
+                _pick(x,"status","outcome","severity"),
+              ])}
+            />
+          </React.Fragment>
+        );
+      })}
+    </>
+  );
+}
 
 const Callout = ({ tone = "red", title, children }) => {
   const palette = tone === "amber"
@@ -573,7 +793,7 @@ const proseLine = (label, val) => {
     return <Para><strong>{label}:</strong> {inner}.</Para>;
   }
   if (String(val).trim() === "") return null;
-  return <Para><strong>{label}:</strong> {String(val).trim()}.</Para>;
+  return <Para><strong>{label}:</strong> {String(val).trim().replace(/\.+$/, "")}.</Para>;
 };
 
 /* =====================================================================
@@ -675,6 +895,31 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
   const nurNotesByDay = groupByDay(f.nursingNotes,   (n) => n.noteDate || n.createdAt);
   const ordersByDay   = groupByDay(f.doctorOrders,   (o) => o.orderedAt || o.createdAt);
   const handoverByDay = groupByDay(f.shiftHandovers, (h) => h.at);
+  // R7hu — per-day MAR: explode every order's administrationRecord and bucket
+  // each dose by its scheduled (or given) DAY, then by drug — so the day-wise
+  // chart shows one row per medicine with THAT day's doses (scheduled → given
+  // · by whom · on-time), instead of repeating the whole order under the day
+  // it was written. A drug running TDS is a single row with three dose lines.
+  const medsByDay = (() => {
+    const map = new Map(); // dayKey -> Map<drugKey, { o, doses[] }>
+    (f.doctorOrders || []).forEach((o) => {
+      (Array.isArray(o.admin) ? o.admin : []).forEach((a) => {
+        // Bucket by the day the dose was actually GIVEN (the truthful clinical
+        // day); fall back to the scheduled day for a dose that was never given
+        // (missed / pending), so those still surface on their chart day.
+        const when = a.givenAt || a.schedDate;
+        const dk = when ? dayKey(when) : null;
+        if (!dk) return;
+        if (!map.has(dk)) map.set(dk, new Map());
+        const day = map.get(dk);
+        const key = `${o.displayName}|${o.dose}|${o.route}|${o.frequency}|${o.orderType}`;
+        if (!day.has(key)) day.set(key, { o, doses: [] });
+        day.get(key).doses.push(a);
+      });
+    });
+    map.forEach((day) => day.forEach((e) => e.doses.sort((x, y) => _schedMin(x) - _schedMin(y))));
+    return map;
+  })();
   /* R7gt — Extend the day-wise journey to absorb the remaining time-
      stamped streams the user expects to read day-by-day: vital signs,
      intake/output, investigations, blood transfusion, nursing care
@@ -707,9 +952,9 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
   };
 
   /* ── Diagnosis triplet ──────────────────────────────────────── */
-  const dxProv  = f.admission?.provisionalDiagnosis || f.ia?.doctor?.provisionalDiagnosis || "";
-  const dxWork  = f.admission?.workingDiagnosis || f.ia?.doctor?.workingDiagnosis || "";
-  const dxFinal = f.admission?.finalDiagnosis || f.ia?.doctor?.finalDiagnosis || "";
+  const dxProv  = stripDot(f.admission?.provisionalDiagnosis || f.ia?.doctor?.provisionalDiagnosis || "");
+  const dxWork  = stripDot(f.admission?.workingDiagnosis || f.ia?.doctor?.workingDiagnosis || "");
+  const dxFinal = stripDot(f.admission?.finalDiagnosis || f.ia?.doctor?.finalDiagnosis || "");
 
   /* ── Investigations split ───────────────────────────────────── */
   const invs = (f.investigations || []).filter((i) => i.name);
@@ -803,7 +1048,8 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
               || null;
 
   /* ── Home meds ─────────────────────────────────────────────── */
-  const homeMeds = Array.isArray(f.history?.homeMeds) ? f.history.homeMeds : [];
+  const homeMeds = Array.isArray(f.history?.homeMeds) ? f.history.homeMeds
+                 : Array.isArray(f.ia?.nursing?.homeMedications) ? f.ia.nursing.homeMedications : [];
 
   /* ── Care plan (text or list) ───────────────────────────────── */
   const carePlan = f.ia?.nursing?.carePlan
@@ -816,15 +1062,17 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
   const n = f.ia?.nursing || {};
   const d = f.ia?.doctor || {};
 
-  const morseVal   = pick(n, "fallRisk", "morseTotal", "morseScore") ?? scalarOrNum(n.morse?.total);
-  const bradenVal  = pick(n, "pressureUlcer", "bradenTotal", "bradenScore") ?? scalarOrNum(n.braden?.total);
-  const painVal    = pick(n, "painScore", "vasPain") ?? scalarOrNum(n.pain?.score) ?? scalarOrNum(n.pain?.total);
+  const morseVal   = pick(n, "fallRisk", "morseTotal", "morseScore") ?? scalarOrNum(n.morse?.total) ?? scalarOrNum(n.riskAssessments?.morseFallScale?.totalScore);
+  const bradenVal  = pick(n, "pressureUlcer", "bradenTotal", "bradenScore") ?? scalarOrNum(n.braden?.total) ?? scalarOrNum(n.riskAssessments?.bradenScale?.totalScore);
+  const painVal    = pick(n, "painScore", "vasPain") ?? scalarOrNum(n.pain?.score) ?? scalarOrNum(n.pain?.total) ?? scalarOrNum(n.vitals?.painScore);
   const nutriVal   = pick(n, "nutritionScore", "must", "nutriRisk", "mna") ?? scalarOrNum(n.nutrition?.score) ?? scalarOrNum(n.nutri?.total);
   const vteVal     = pick(n, "vteRisk", "padua") ?? scalarOrNum(n.vte?.total) ?? scalarOrNum(d.vte?.total) ?? pick(d, "vteRisk", "padua");
   const dvtVal     = pick(n, "dvtRisk") ?? scalarOrNum(n.dvt?.total) ?? pick(d, "dvtRisk");
-  const gcsVal     = pick(d, "gcs", "GCS") ?? scalarOrNum(d.gcs?.total) ?? pick(n, "gcs", "GCS");
-  const morseRisk  = (typeof n.morse?.risk === "string") ? n.morse.risk : null;
-  const bradenRisk = (typeof n.braden?.risk === "string") ? n.braden.risk : null;
+  const gcsVal     = pick(d, "gcs", "GCS") ?? scalarOrNum(d.gcs?.total) ?? pick(n, "gcs", "GCS") ?? scalarOrNum(n.vitals?.gcs);
+  const morseRisk  = (typeof n.morse?.risk === "string") ? n.morse.risk
+                   : (typeof n.riskAssessments?.morseFallScale?.riskLevel === "string" ? n.riskAssessments.morseFallScale.riskLevel : null);
+  const bradenRisk = (typeof n.braden?.risk === "string") ? n.braden.risk
+                   : (typeof n.riskAssessments?.bradenScale?.riskLevel === "string" ? n.riskAssessments.bradenScale.riskLevel : null);
   const nutriRisk  = (typeof n.nutri?.risk === "string") ? n.nutri.risk : (typeof n.nutrition?.risk === "string" ? n.nutrition.risk : null);
   const vteRisk    = (typeof n.vte?.risk === "string") ? n.vte.risk : null;
 
@@ -850,8 +1098,8 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
 
   const famSocLine = (() => {
     const bits = [];
-    if (f.history?.family) bits.push(`family history: ${stripDot(f.history.family)}`);
-    if (f.history?.social) bits.push(`social history: ${stripDot(f.history.social)}`);
+    if (f.history?.family) bits.push(`Family history: ${stripDot(f.history.family)}`);
+    if (f.history?.social) bits.push(`Social history: ${stripDot(f.history.social)}`);
     return bits.length ? cleanSentence(bits.join(". ")) : "";
   })();
 
@@ -882,6 +1130,75 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
     const det = [o.displayName, o.dose, o.route, o.frequency].filter(Boolean).join(" · ");
     return det || "—";
   };
+  // Colour-coded administration status (given / missed / held / pending) for
+  // the per-order nursing-action table in the treatment chart.
+  const adminStatusCell = (s) => {
+    const v = String(s || "").toLowerCase();
+    const color = v === "given" ? "#15803d"
+                : v === "missed" ? "#b91c1c"
+                : v === "held"   ? "#b45309"
+                : "#6b7280";
+    return <span style={{ color, fontWeight: 600, textTransform: "capitalize" }}>{s || "—"}</span>;
+  };
+
+  /* ── Rich Nursing IA renderers (admission.nurseInitialAssessment) ────────
+     The comprehensive head-to-toe assessment the NurseInitialAssessmentPage
+     captures. Each sub-block prints as a 2-column table of every populated
+     field, so the Complete File shows the ENTIRE nursing IA. */
+  // Head-to-toe examination grouped by body system — one short prose line per
+  // system (like the doctor IA's per-category lines), instead of one 25-field
+  // run-on line that reads poorly and risks running off the page.
+  const NIA_SYS_GROUPS = [
+    ["Neurological",    { neuroStatus: "status", neuroNotes: "notes" }],
+    ["Respiratory",     { respiratoryPattern: "pattern", breathSounds: "breath sounds", oxygenSupport: "O₂ support", oxygenLPM: "O₂ flow (LPM)", respiratoryNotes: "notes" }],
+    ["Cardiovascular",  { heartSounds: "heart sounds", capRefill: "cap refill", peripheralPulse: "peripheral pulses", cvNotes: "notes" }],
+    ["Abdomen / GI",    { abdomen: "abdomen", bowelSounds: "bowel sounds", lastBowelMovement: "last bowel movement", nausea: "nausea", vomiting: "vomiting", giNotes: "notes" }],
+    ["Genitourinary",   { urinaryPattern: "pattern", catheter: "catheter", catheterSite: "detail", guNotes: "notes" }],
+    ["Musculoskeletal", { mobility: "mobility", assistiveDevice: "assistive device", musculoNotes: "notes" }],
+    ["Skin & wound",    { skinColor: "colour", skinTurgor: "turgor", skinIntact: "intact", woundPresent: "wound", woundLocation: "location", woundDescription: "description", edema: "edema", edemaLocation: "edema site" }],
+    ["IV access",       { ivAccess: "access", ivSite: "site", ivSize: "size", ivInsertedDate: "inserted" }],
+  ];
+  const NIA_PSYCHO_LABELS = {
+    anxietyLevel: "Anxiety", emotionalStatus: "Emotional status", cooperationLevel: "Cooperation",
+    cognitiveStatus: "Cognition", languageBarrier: "Language barrier", language: "Preferred language",
+    spiritualNeeds: "Spiritual needs", spiritualNotes: "Spiritual notes", physicalAbuseRisk: "Abuse risk", socialSupport: "Social support",
+  };
+  const NIA_NUTRI_LABELS = {
+    dietaryRestrictions: "Diet", allergies: "Food / other allergies", nutritionRisk: "Nutrition risk",
+    hydrationStatus: "Hydration", lastMealTime: "Last meal", swallowingDifficulty: "Swallowing difficulty", feedingMethod: "Feeding method", nutritionNotes: "Nutrition notes",
+  };
+  const NIA_DISCHARGE_LABELS = {
+    livesAlone: "Lives alone", caregiver: "Primary caregiver", homeSupportAvailable: "Home support",
+    anticipatedDischargeNeeds: "Anticipated needs", educationNeeded: "Education needed",
+    socialWorkReferral: "Social-work referral", dischargePlanNotes: "Notes",
+  };
+  // R7hu — render nursing-IA sub-blocks as bold-label PROSE lines, identical
+  // in style to the Doctor IA (e.g. "Review of systems: CVS: X; RS: Y."), not
+  // as tables — so both Initial Assessments read in the same format.
+  const IAGrid = (title, obj, labelMap) => {
+    if (!obj || typeof obj !== "object") return null;
+    const parts = Object.entries(labelMap)
+      .filter(([k]) => obj[k] != null && obj[k] !== "" && obj[k] !== false && typeof obj[k] !== "object")
+      .map(([k, label]) => `${label}: ${obj[k]}`);
+    if (!parts.length) return null;
+    return <Para key={title}><strong>{title}:</strong> {parts.join("; ").replace(/\.+$/, "")}.</Para>;
+  };
+  // Admission vitals — one prose line, mirroring the doctor's "Admission
+  // vitals: BP …, pulse …, temperature …" sentence.
+  const niaVitalsBlock = (() => {
+    const v = f.ia?.nursing?.vitals;
+    if (!v || typeof v !== "object") return null;
+    const parts = [];
+    const bp = (v.bpSys || v.bpDia) ? `${v.bpSys || "?"}/${v.bpDia || "?"} mmHg` : (typeof v.bp === "string" ? v.bp : "");
+    if (bp) parts.push(`BP ${bp}`);
+    const add = (label, val, unit = "") => { if (val != null && val !== "") parts.push(`${label} ${val}${unit}`); };
+    add("pulse", v.pulse, "/min"); if (v.temp != null && v.temp !== "") parts.push(`temperature ${fmtTemp(v.temp)}`); add("SpO₂", v.spo2, "%");
+    add("respiratory rate", v.rr, "/min"); add("pain", v.painScore, "/10");
+    add("consciousness", v.consciousnessLevel); add("GCS", v.gcs); add("pupils", v.pupils);
+    add("capillary glucose", v.glucometer, " mg/dL"); add("weight", v.weight, " kg"); add("height", v.height, " cm"); add("BMI", v.bmi);
+    if (!parts.length) return null;
+    return <Para><strong>Admission vitals:</strong> {parts.join(", ")}.</Para>;
+  })();
 
   /* ── Bills fallback (canonical doesn't normalise yet) ───────── */
   const bills = Array.isArray(f.bills) ? f.bills
@@ -992,6 +1309,46 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
               </td>
             </tr>
           ) : null}
+          {/* R7hr — coverage: registration demographics + ER context that
+              used to be dropped. Each row renders only when populated. */}
+          {(() => {
+            const px = f.patientExtra || {};
+            const addr = px.addressDetail || {};
+            const addrLine = [addr.completeAddress, addr.district, addr.city, addr.state, addr.pincode]
+              .filter(Boolean).join(", ");
+            const contact = [px.emergencyContact?.name,
+              px.emergencyContact?.relation && `(${px.emergencyContact.relation})`,
+              px.emergencyContact?.phone && `☎ ${px.emergencyContact.phone}`]
+              .filter(Boolean).join(" ");
+            const demo = [
+              f.patient?.mobile && `☎ ${f.patient.mobile}`,
+              px.email, px.maritalStatus,
+            ].filter(Boolean).join(" · ");
+            const payer = [
+              px.paymentType, px.tpaName,
+              px.policyNumber && `Policy ${px.policyNumber}`,
+            ].filter(Boolean).join(" · ");
+            const er = [
+              px.triageLevel && `Triage ${px.triageLevel}`, px.erType,
+              px.broughtBy && `brought by ${px.broughtBy}`,
+              px.policeStation && `PS ${px.policeStation}`,
+            ].filter(Boolean).join(" · ");
+            const Row = (label, val) => val ? (
+              <tr>
+                <td style={{ padding: "2px 6px", color: COL.muted }}>{label}</td>
+                <td style={{ padding: "2px 6px", color: COL.body }}>{val}</td>
+              </tr>
+            ) : null;
+            return (
+              <>
+                {Row("Contact", demo)}
+                {Row("Address", addrLine)}
+                {Row("Emergency contact", contact)}
+                {Row("Payer", payer)}
+                {Row("Emergency / triage", er)}
+              </>
+            );
+          })()}
         </tbody>
       </table>
 
@@ -1111,6 +1468,28 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
                   {dxFinal && dxFinal !== dxWork ? <><strong>Final diagnosis:</strong> {dxFinal}.</> : null}
                 </Para>
               ) : null}
+              {(d.differentialDiagnosis || d.differentialDx || d.nabh?.differentialDx) ? (
+                <Para><strong>Differential diagnosis:</strong> {stripDot(d.differentialDiagnosis || d.differentialDx || d.nabh?.differentialDx)}.</Para>
+              ) : null}
+              {(f.admission?.icd10 || d.icd10 || d.patientStatus || d.nabh?.patientStatus) ? (
+                <Para>
+                  {(f.admission?.icd10 || d.icd10) ? <><strong>ICD-10:</strong> {f.admission?.icd10 || d.icd10}{(f.admission?.icd10Desc || d.icd10Description) ? ` — ${f.admission?.icd10Desc || d.icd10Description}` : ""}. </> : null}
+                  {(d.patientStatus || d.nabh?.patientStatus) ? <><strong>Patient status:</strong> {d.patientStatus || d.nabh?.patientStatus}.</> : null}
+                </Para>
+              ) : null}
+              {(d.elosDays || d.goalOfCare || d.nabh?.elosDays || d.nabh?.goalOfCare) ? (
+                <Para>
+                  {(d.elosDays || d.nabh?.elosDays) ? <><strong>Estimated length of stay:</strong> {d.elosDays || d.nabh?.elosDays} day(s). </> : null}
+                  {(d.goalOfCare || d.nabh?.goalOfCare) ? <><strong>Goal of care:</strong> {d.goalOfCare || d.nabh?.goalOfCare}.</> : null}
+                </Para>
+              ) : null}
+              {typeof (d.investigations || d.plannedInvestigations) === "string" && (d.investigations || d.plannedInvestigations)
+                ? proseLine("Investigations advised", d.investigations || d.plannedInvestigations) : null}
+              {d.treatmentPlan ? proseLine("Treatment plan", d.treatmentPlan) : null}
+              {d.dietAdvice ? proseLine("Diet advice", d.dietAdvice) : null}
+              {d.activityAdvice ? proseLine("Activity / mobilisation advice", d.activityAdvice) : null}
+              {(d.prognosis || d.nabh?.prognosis) ? <Para><strong>Prognosis:</strong> {stripDot(d.prognosis || d.nabh?.prognosis)}.</Para> : null}
+              {(d.functionalEcog || d.nabh?.functionalEcog) ? <Para><strong>Functional status (ECOG):</strong> {d.functionalEcog || d.nabh?.functionalEcog}.</Para> : null}
               {Object.keys(d).length > 0 ? (
                 /* R7gu — Show signer's name + Emp ID + Reg + digital
                    signature image (when captured) on the IA summary
@@ -1124,7 +1503,7 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
                   {dIAAt ? <> · {fmtDateTime(dIAAt)}</> : null}
                   {dIASig && typeof dIASig === "string" && (dIASig.startsWith("data:image/") || dIASig.startsWith("/uploads/") || /^https?:\/\//.test(dIASig)) ? (
                     <div style={{ marginTop: 4 }}>
-                      <img src={dIASig} alt="Doctor signature"
+                      <SecureImage src={dIASig} alt="Doctor signature"
                         style={{ maxHeight: 36, maxWidth: 180, border: "1px solid #e2e8f0", background: "#fff", padding: 2, borderRadius: 3 }} />
                     </div>
                   ) : null}
@@ -1137,16 +1516,24 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
           {Object.keys(n).length > 0 ? (
             <>
               <SubHeader>Nursing Initial Assessment</SubHeader>
-              {n.modeOfAdmission ? (
-                <Para><strong>Mode of admission:</strong> {n.modeOfAdmission}.</Para>
+              {(n.modeOfAdmit || n.modeOfAdmission || n.ward || n.bedNo) ? (
+                <Para><strong>Admission:</strong> {[
+                  (n.modeOfAdmit || n.modeOfAdmission) && `via ${n.modeOfAdmit || n.modeOfAdmission}`,
+                  n.ward && `ward ${n.ward}`,
+                  n.bedNo && `bed ${n.bedNo}`,
+                ].filter(Boolean).join(" · ")}.</Para>
               ) : null}
+              {niaVitalsBlock}
+              {NIA_SYS_GROUPS.map(([title, lm]) => IAGrid(title, n.systemAssessment, lm))}
+              {IAGrid("Psychosocial assessment", n.psychosocial, NIA_PSYCHO_LABELS)}
+              {IAGrid("Nutrition & hydration", n.nutritionHydration, NIA_NUTRI_LABELS)}
               {n.identification ? proseLine("Identification", n.identification) : null}
               {n.anthropometry ? proseLine("Anthropometry", n.anthropometry) : null}
               {(f.alerts?.allergies || []).length > 0 ? (
                 <Para><strong>Allergies:</strong> {oxford(allergies)}.</Para>
               ) : null}
               {n.language ? <Para><strong>Preferred language:</strong> {n.language}.</Para> : null}
-              {n.psychosocial ? proseLine("Psycho-social", n.psychosocial) : null}
+              {typeof n.psychosocial === "string" ? proseLine("Psycho-social", n.psychosocial) : null}
               {n.familySupport ? proseLine("Family support", n.familySupport) : null}
 
               {/* Risk scores — compact one-liners */}
@@ -1248,7 +1635,9 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
               {n.bowelBladder ? proseLine("Bowel / bladder", n.bowelBladder) : null}
               {n.sleep ? proseLine("Sleep pattern", n.sleep) : null}
               {n.caregiver ? proseLine("Family caregiver", n.caregiver) : null}
-              {n.dischargePlanning ? proseLine("Discharge planning", n.dischargePlanning) : null}
+              {n.dischargePlanning && typeof n.dischargePlanning === "object"
+                ? IAGrid("Discharge planning", n.dischargePlanning, NIA_DISCHARGE_LABELS)
+                : n.dischargePlanning ? proseLine("Discharge planning", n.dischargePlanning) : null}
 
               {carePlan ? (
                 <Para><strong>Initial care plan:</strong> <em>{cleanSentence(carePlan)}</em></Para>
@@ -1264,13 +1653,70 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
                 {nIAAt ? <> · {fmtDateTime(nIAAt)}</> : null}
                 {nIASig && typeof nIASig === "string" && (nIASig.startsWith("data:image/") || nIASig.startsWith("/uploads/") || /^https?:\/\//.test(nIASig)) ? (
                   <div style={{ marginTop: 4 }}>
-                    <img src={nIASig} alt="Nurse signature"
+                    <SecureImage src={nIASig} alt="Nurse signature"
                       style={{ maxHeight: 36, maxWidth: 180, border: "1px solid #e2e8f0", background: "#fff", padding: 2, borderRadius: 3 }} />
                   </div>
                 ) : null}
               </div>
             </>
           ) : null}
+        </>
+      ) : null}
+
+      {/* ════════════════════════════════════════════════════════════
+          R7hr — PREVIOUS OPD ASSESSMENTS (latest 2)     [NABH AAC.4]
+          The two most recent saved OPD visit assessments before/around
+          this encounter, rendered like the on-page OPD assessment form
+          (visit header → complaint → vitals → 3-tier Dx → Rx table →
+          advice/follow-up). Empty ⇒ section collapses entirely.
+          ════════════════════════════════════════════════════════════ */}
+      {Array.isArray(file.opdAssessments) && file.opdAssessments.length > 0 ? (
+        <>
+          <SectionHeader nabh="NABH AAC.4">Previous OPD Assessments</SectionHeader>
+          {file.opdAssessments.map((v, i) => {
+            const vit = v.vitals || {};
+            const vitLine = [
+              vit.bloodPressure || vit.bp ? `BP ${vit.bloodPressure || vit.bp}` : "",
+              vit.pulse ? `Pulse ${vit.pulse}` : "",
+              vit.temperature || vit.temp ? `Temp ${vit.temperature || vit.temp}` : "",
+              vit.oxygenSaturation || vit.spo2 ? `SpO₂ ${vit.oxygenSaturation || vit.spo2}` : "",
+              vit.weight ? `Wt ${vit.weight}` : "",
+            ].filter(Boolean).join(" · ");
+            const rx = Array.isArray(v.prescribedMedications) ? v.prescribedMedications : [];
+            return (
+              <div key={v._id || i} style={{ border: "1px solid #e2e8f0", borderLeft: "4px solid #0891b2", borderRadius: 8, padding: "9px 12px", margin: "0 0 10px", pageBreakInside: "avoid" }}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "baseline", borderBottom: "1px solid #e2e8f0", paddingBottom: 5, marginBottom: 6 }}>
+                  <strong style={{ fontSize: 11.5 }}>{v.visitNumber ? (/^OPD/i.test(v.visitNumber) ? v.visitNumber : `OPD ${v.visitNumber}`) : `OPD Visit ${i + 1}`}</strong>
+                  <span style={{ fontSize: 10, color: COL.muted }}>
+                    {v.at ? fmtDate(v.at) : ""}{v.department ? ` · ${v.department}` : ""}{v.consultantName ? ` · ${v.consultantName}` : ""}{v.visitType ? ` · ${v.visitType}` : ""}
+                  </span>
+                </div>
+                {v.chiefComplaint ? <Para style={{ margin: "2px 0" }}><strong>Chief complaint:</strong> {v.chiefComplaint}</Para> : null}
+                {vitLine ? <Para style={{ margin: "2px 0" }}><strong>Vitals:</strong> <em>{vitLine}</em></Para> : null}
+                {(v.provisionalDiagnosis || v.workingDiagnosis || v.finalDiagnosis) ? (
+                  <Para style={{ margin: "2px 0" }}>
+                    <strong>Diagnosis:</strong>{" "}
+                    {[v.provisionalDiagnosis && `Provisional — ${v.provisionalDiagnosis}`,
+                      v.workingDiagnosis && `Working — ${v.workingDiagnosis}`,
+                      v.finalDiagnosis && `Final — ${v.finalDiagnosis}`].filter(Boolean).join("; ")}
+                  </Para>
+                ) : null}
+                {v.assessmentNote ? <Para style={{ margin: "2px 0" }}><strong>Assessment:</strong> {v.assessmentNote}</Para> : null}
+                {rx.length > 0 ? (
+                  <MiniTable
+                    headers={["Medicine", "Dosage", "Frequency", "Duration", "Instructions"]}
+                    widths={["28%", "14%", "16%", "14%", "28%"]}
+                    rows={rx.map((m) => [
+                      m.medicineName, m.dosage, m.frequency, m.duration,
+                      [m.instructions, m.mealStatus].filter(Boolean).join(" · "),
+                    ])}
+                  />
+                ) : null}
+                {v.advice ? <Para style={{ margin: "3px 0 0" }}><strong>Advice:</strong> {v.advice}</Para> : null}
+                {v.followUpDate ? <Para style={{ margin: "2px 0 0" }}><strong>Follow-up:</strong> {fmtDate(v.followUpDate)}{v.followUpInstructions ? ` — ${v.followUpInstructions}` : ""}</Para> : null}
+              </div>
+            );
+          })}
         </>
       ) : null}
 
@@ -1297,7 +1743,7 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
         // still surfaces as its own block.
         [docNotesByDay, nurNotesByDay, ordersByDay, marByDay, handoverByDay,
          vitalsByDay, ioByDay, invsByDay, bloodByDay, carePlanByDay,
-         nurAssByDay, consentByDay, icuByDay, xferByDay, mlcByDay].forEach((m) => {
+         nurAssByDay, consentByDay, icuByDay, xferByDay, mlcByDay, medsByDay].forEach((m) => {
           for (const k of m.keys()) allKeys.add(k);
         });
         if (allKeys.size === 0) return null;
@@ -1326,7 +1772,7 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
               const marRows  = marByDay.get(k)       || [];
               const handovrs = (handoverByDay.get(k) || []).slice().sort((a,b) =>
                 new Date(a.at || 0) - new Date(b.at || 0));
-              if (!notes.length && !orders.length && !marRows.length && !handovrs.length) return null;
+              if (!notes.length && !orders.length && !marRows.length && !handovrs.length && !(medsByDay.get(k)?.size)) return null;
 
               const dayMatch = dayIndex.find((d) => d.key === k);
               // R7gf — Always derive the heading from the day-key itself
@@ -1361,44 +1807,94 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
                   <Para style={{ fontWeight: 700, fontSize: 9.5, color: COL.muted, textTransform: "uppercase", letterSpacing: 0.4, margin: "4px 0 2px" }}>
                     Clinical Notes
                   </Para>
-                  {notes.map((n, idx) => {
+                  {notes.map((n, idx) => (
                     // R7gd — replace the prose summary with the EXACT same
                     // structured per-type card that renders in the
                     // individual note print path. Death MCCD, ICU bundle
                     // table, WHO Safety Checklist, Procedure metadata,
                     // Vitals/IV/Pain/Wound/Braden/MEWS — every card shape
                     // the user sees on the doctor- or nurse-notes page now
-                    // appears inline in the Complete File too.
-                    const isDoc = n._kind === "doctor";
-                    const html = isDoc ? buildDoctorNoteCardHtml(n) : buildNurseNoteCardHtml(n);
-                    return (
-                      <div
-                        key={`day-${k}-n-${idx}`}
-                        style={{ marginBottom: 6 }}
-                        dangerouslySetInnerHTML={{ __html: html }}
-                      />
-                    );
-                  })}
+                    // appears inline in the Complete File too. Wrapped in
+                    // EmbeddedNoteCard (top of file) so JWT-gated /uploads
+                    // signatures inline to data: URLs before injection.
+                    <EmbeddedNoteCard key={`day-${k}-n-${idx}`} note={n} />
+                  ))}
                 </div>
               ) : null;
 
-              // ── Orders sub-section ──
-              const ordersBlock = orders.length > 0 ? (
+              // ── Treatment Chart sub-section ──
+              // Each doctor order raised that day is printed WITH the nursing
+              // administration actions recorded against it (given / missed /
+              // held, dose given, route, by-whom, five-rights) — so an order
+              // and the nursing response to it read together, not as two
+              // disconnected lists. (order.admin ← DoctorOrder.administrationRecord)
+              // ── Treatment Chart sub-section ──
+              // A real drug-chart / MAR for the day: any orders WRITTEN that
+              // day as a compact list, then one row per medicine with THAT
+              // day's doses inline — scheduled slot → given time · by whom ·
+              // on-time/late. A TDS drug is a single row with three dose lines
+              // (the row grows with the number of doses). "medsByDay" buckets
+              // every order's administrationRecord by scheduled day + drug.
+              const dayMeds = medsByDay.get(k);
+              const _thin = { fontWeight: 700, fontSize: 9, color: COL.muted, textTransform: "uppercase", letterSpacing: 0.3, margin: "5px 0 2px" };
+              const ordersBlock = (orders.length > 0 || (dayMeds && dayMeds.size > 0)) ? (
                 <div key={`day-orders-${k}`} style={{ marginBottom: 6 }}>
                   <Para style={{ fontWeight: 700, fontSize: 9.5, color: COL.muted, textTransform: "uppercase", letterSpacing: 0.4, margin: "4px 0 2px" }}>
-                    Orders Raised
+                    Treatment Chart
                   </Para>
-                  <MiniTable
-                    headers={["Time", "Type", "Order detail", "Status", "Ordered by"]}
-                    rows={orders.map((o) => [
-                      fmtTimeOnly(o.orderedAt || o.createdAt),
-                      o.orderType || "—",
-                      orderDetailLine(o),
-                      o.status || "—",
-                      displayActor(o.orderedBy),
-                    ])}
-                    widths={["10%", "14%", "48%", "12%", "16%"]}
-                  />
+
+                  {/* Orders written this day (compact — one line each) */}
+                  {orders.length > 0 ? (
+                    <>
+                      <Para style={_thin}>Orders raised</Para>
+                      <MiniTable
+                        headers={["Time", "Type", "Order detail", "Priority", "Status", "Ordered by"]}
+                        rows={orders.map((o) => [
+                          fmtTimeOnly(o.orderedAt || o.createdAt),
+                          o.orderType || "—",
+                          orderDetailLine(o),
+                          (o.priority && !/^(routine|normal)$/i.test(o.priority))
+                            ? <span style={{ color: "#b91c1c", fontWeight: 700 }}>{o.priority}</span> : "—",
+                          o.status || "—",
+                          displayActor(o.orderedBy),
+                        ])}
+                        widths={["9%", "13%", "42%", "11%", "11%", "14%"]}
+                      />
+                    </>
+                  ) : null}
+
+                  {/* Medication administration — one row per drug, this day's doses */}
+                  {dayMeds && dayMeds.size > 0 ? (
+                    <>
+                      <Para style={_thin}>Medication administration — who · when · on-time</Para>
+                      <MiniTable
+                        headers={["Medication", "Route · Freq", "Doses this day — scheduled → given · by · timing"]}
+                        rows={[...dayMeds.values()].map(({ o, doses }) => [
+                          <span><strong>{o.displayName || o.orderType || "—"}</strong>{o.dose ? ` ${o.dose}` : ""}</span>,
+                          [o.route, o.frequency].filter(Boolean).join(" · ") || "—",
+                          <div>
+                            {doses.map((a, ai) => {
+                              const t = _doseTiming(a);
+                              const given = /given/i.test(a.status || "");
+                              return (
+                                <div key={ai} style={{ marginBottom: ai < doses.length - 1 ? 3 : 0, lineHeight: 1.35 }}>
+                                  <strong>{a.schedTime || "—"}</strong>{" → "}
+                                  {given ? (
+                                    <>given{a.givenAt ? ` ${fmtTimeOnly(a.givenAt)}` : ""}{a.doseGiven ? ` (${a.doseGiven})` : ""} by {displayActor(a.givenBy, "—")}
+                                      {t ? <span style={{ color: t.color, fontWeight: 700 }}>{` · ${t.label}`}</span> : null}
+                                      {a.fiveRights ? <span style={{ color: "#15803d" }}> · ✓5R</span> : null}</>
+                                  ) : (
+                                    <span style={{ color: "#b91c1c", fontWeight: 700 }}>{a.status || "not given"}</span>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>,
+                        ])}
+                        widths={["26%", "16%", "58%"]}
+                      />
+                    </>
+                  ) : null}
                 </div>
               ) : null;
 
@@ -1695,11 +2191,15 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
           as dead JSX in case a future change reinstates a longitudinal
           trend view (e.g. for graphical export).
           ════════════════════════════════════════════════════════════ */}
-      {false && (f.vitalsTrend || []).length > 0 ? (
+      {/* R7hr — Vital Signs Trend re-enabled. The section was gated behind
+          `{false && …}` because the VitalSheet GRID shape never mapped to flat
+          trend rows; normalizeData now expands the grid (per time-slot points)
+          so this renders the full observation chart. */}
+      {(f.vitalsTrend || []).length > 0 ? (
         <>
           <SectionHeader nabh="NABH COP.3">Vital Signs Trend</SectionHeader>
           <MiniTable
-            headers={["Time", "BP", "Pulse", "Temp", "SpO₂", "RR", "Recorded by"]}
+            headers={["Date / Time", "BP", "Pulse", "Temp", "SpO₂", "RR", "GCS", "Recorded by"]}
             // R7gc — user requirement: NO vitals truncation. Print every reading.
             rows={(f.vitalsTrend || []).map((v) => [
               fmtDateTime(v.at),
@@ -1708,11 +2208,11 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
               v.temp || "—",
               v.spo2 || "—",
               v.rr || "—",
+              v.gcs || "—",
               displayActor(v.recordedBy),
             ])}
-            widths={["18%", "12%", "10%", "10%", "10%", "10%", "30%"]}
+            widths={["18%", "12%", "9%", "10%", "9%", "9%", "8%", "25%"]}
           />
-          {/* R7gc — no truncation hint needed; we print every reading. */}
         </>
       ) : null}
 
@@ -1772,6 +2272,36 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
               {p.notes ? <> {cleanSentence(p.notes)}</> : null}
             </Para>
           ))}
+        </>
+      ) : null}
+
+      {/* ════════════════════════════════════════════════════════════
+          R7hr — DEVICES HISTORY                        [NABH HIC.5]
+          Lifecycle of every indwelling device (IV cannula, urinary
+          catheter, central line, ET tube …) in placement order:
+          placed → site changes → removed. Mirrors the on-page
+          devices strip; dwell time is the infection-control signal.
+          ════════════════════════════════════════════════════════════ */}
+      {Array.isArray(file.devices) && file.devices.length > 0 ? (
+        <>
+          <SectionHeader nabh="NABH HIC.5">Devices History</SectionHeader>
+          <MiniTable
+            headers={["Device", "Site", "Placed", "By", "Changes", "Removed", "Status"]}
+            widths={["18%", "13%", "15%", "13%", "16%", "15%", "10%"]}
+            rows={file.devices.map((d) => [
+              [d.deviceType, d.deviceName].filter(Boolean).join(" · "),
+              d.site,
+              d.placedAt ? fmtDateTime(d.placedAt) : "",
+              displayActor(d.placedBy),
+              (d.changes || []).length
+                ? (d.changes || []).map((c) =>
+                    [c.at ? fmtDate(c.at) : "", c.reason || c.site].filter(Boolean).join(" — ")
+                  ).join("; ")
+                : "",
+              d.removedAt ? `${fmtDateTime(d.removedAt)}${d.removedBy ? ` (${displayActor(d.removedBy)})` : ""}` : "",
+              d.status || (d.removedAt ? "Removed" : "Active"),
+            ])}
+          />
         </>
       ) : null}
 
@@ -1981,20 +2511,25 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
           (the per-day Handovers sub-block). Bed Transfers kept here
           as they're usually 1-2 events, not shift-paced.
           ════════════════════════════════════════════════════════════ */}
-      {/* R7gt — Suppressed; bed transfers render per-day inline. */}
-      {false && (f.bedTransfers || []).length > 0 ? (
+      {/* R7hs — Bed Transfers print as their own complete log: every transfer
+          (including any pre-admission / ER move that the day-wise journey drops
+          because it predates the admission anchor), with from → to, reason,
+          status and who handed over. A same-day transfer also surfaces briefly
+          inline in the day-wise journey for context. */}
+      {(f.bedTransfers || []).length > 0 ? (
         <>
           <SectionHeader nabh="NABH COP.6">Bed Transfers</SectionHeader>
           <MiniTable
-            headers={["Date / Time", "From", "To", "Reason", "By"]}
+            headers={["Date / Time", "From", "To", "Reason", "Status", "By"]}
             rows={f.bedTransfers.map((t) => [
               fmtDateTime(t.at),
               t.fromBed || "—",
               t.toBed || "—",
               t.reason || "—",
+              t.status || "—",
               displayActor(t.by),
             ])}
-            widths={["16%", "16%", "16%", "32%", "20%"]}
+            widths={["15%", "17%", "17%", "26%", "12%", "12%"]}
           />
         </>
       ) : null}
@@ -2122,6 +2657,12 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
         </>
       ) : null}
 
+      {/* R7hr — extended clinical + administrative records and the patient's
+          NABH safety registers render HERE (after the clinical narrative,
+          before the financial summary) so Billing closes the record. */}
+      <CoverageRecords file={f} />
+      <ComplianceRegisters registers={f.complianceRegisters} />
+
       {/* ════════════════════════════════════════════════════════════
           18. BILLING SUMMARY                                     [—]
           ════════════════════════════════════════════════════════════ */}
@@ -2160,6 +2701,7 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
           </>
         );
       })() : null}
+
 
       {/* ════════════════════════════════════════════════════════════
           19. ACTIVITY LOG                                 [NABH IMS.1]
@@ -2271,6 +2813,40 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
         Thank you for entrusting {obj || "the patient"} to our care. We
         remain available for any clarification regarding this admission.
       </p>
+
+      {/* ════════════════════════════════════════════════════════════
+          R7hr — RECORD AUTHENTICATION / ATTESTATION (medico-legal).
+          Closes the file with the treating consultant + Medical Records
+          sign-off and a computer-generated-record disclaimer.
+          ════════════════════════════════════════════════════════════ */}
+      <div style={{ marginTop: 14, borderTop: `2px solid ${COL.head}`, paddingTop: 10, pageBreakInside: "avoid" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 28, flexWrap: "wrap" }}>
+          {[
+            { name: f.admission?.consultant || f.signatures?.consultant || "Treating Consultant", role: "Treating Consultant — Signature & Date" },
+            { name: "Medical Records Officer", role: "Certified true copy — Signature & Date" },
+          ].map((s, i) => (
+            <div key={i} style={{ flex: 1, minWidth: 210 }}>
+              <div style={{ height: 30 }} />
+              <div style={{ borderTop: "1px solid #64748b", paddingTop: 3 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: COL.body }}>{s.name}</div>
+                <div style={{ fontSize: 9, color: COL.muted }}>{s.role}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <p style={{ fontSize: 8.5, color: COL.muted, margin: "12px 0 0", lineHeight: 1.5 }}>
+          Computer-generated Complete Patient File for <strong>{fullName}</strong> (UHID {f.meta?.uhid || f.patient?.uhid || "—"}{f.meta?.ipdNo ? ` · ${f.meta.ipdNo}` : ""}),
+          compiled from the hospital medical record on {fmtDateTime(f.meta?.printedAt) || fmtDateTime(new Date())}. This document reproduces the patient's
+          clinical record for the admission and is valid without a physical signature when digitally issued. Each page bears the patient identifier;
+          report any discrepancy to the Medical Records Department. — NABH IMS.1 / MCI 1.4.
+        </p>
+      </div>
+
+      {/* R7hr — per-page running footer: patient identity repeats on every
+          printed page (medico-legal). Hidden on screen; fixed in print. */}
+      <div className="pf-running-footer" aria-hidden="true">
+        {fullName} · UHID {f.meta?.uhid || f.patient?.uhid || "—"}{f.meta?.ipdNo ? ` · ${f.meta.ipdNo}` : ""} · Complete Patient File · Confidential
+      </div>
     </PrintShell>
   );
 };

@@ -93,8 +93,14 @@ router.use("/auth", authRoutes);
 // themselves with requireAction("users.read") + attemptAuth chain, so
 // they don't actually leak data to anonymous callers — they just don't
 // hit the global JWT wall.
-const { clientErrorRateLimit } = require("../middleware/rateLimitAuth");
+const { clientErrorRateLimit, publicFeedbackRateLimit } = require("../middleware/rateLimitAuth");
 router.use("/client-errors",    clientErrorRateLimit, require("./Admin/clientErrorRoutes"));
+
+// ── Patient feedback (public link / QR — anonymous-allowed, rate-limited) ──
+// Mounted ABOVE the global authenticate so a patient can open the feedback
+// link on their own phone without a login. Only a valid, unexpired,
+// unsubmitted token unlocks the form; the controller never leaks full PHI.
+router.use("/public-feedback",  publicFeedbackRateLimit, require("./Quality/feedbackPublicRoutes"));
 
 // ── R7dn: Pincode lookup (anonymous-allowed, rate-limited) ──
 // Just postal data, not PHI. Mounted ABOVE the global authenticate
@@ -362,6 +368,9 @@ router.use("/print-audit",      require("./Print/printAuditRoutes"));
 router.use("/critical-value-alerts", require("./Clinical/criticalValueAlertRoutes"));
 router.use("/adr-reports",           require("./Pharmacy/adrRoutes"));
 router.use("/grievances",            require("./Quality/grievanceRoutes"));
+// NABH PRE.3 — patient satisfaction & experience feedback (staff entry + link
+// dashboard). Public patient-submit surface is /public-feedback (above).
+router.use("/feedback",              require("./Quality/feedbackRoutes"));
 router.use("/credentials",           require("./HR/credentialRoutes"));
 router.use("/fire-drills",           require("./Compliance/fireDrillRoutes"));
 // R7bo — NABH compliance registers (RBS / Emergency / Blood Transfusion).

@@ -53,6 +53,62 @@ const toDate = (v) => {
 };
 const joinNonEmpty = (...parts) => parts.filter(p => p != null && p !== "").join(" ");
 
+/* R7hr — Vital Signs Trend fix. VitalSheet docs are a GRID: each doc holds
+   tableData[] of { time, values:{ "<vital name>": {value,unit} } } keyed by
+   the admin-configured vital names (Pulse / BP Systolic / Temperature / …).
+   The trend section expects one FLAT point per reading, so expand each grid
+   into per-time-slot points here; already-flat rows (legacy shape) pass
+   through untouched. Vital-name matching is fuzzy so custom column names
+   still map. */
+function _expandVitalSheets(arr) {
+  const out = [];
+  (Array.isArray(arr) ? arr : []).forEach((v) => {
+    if (v && Array.isArray(v.tableData) && v.tableData.length) {
+      const base = v.date || v.createdAt;
+      v.tableData.forEach((row) => {
+        const vals = row.values || {};
+        const cell = (...needles) => {
+          for (const key of Object.keys(vals)) {
+            const kl = key.toLowerCase();
+            if (needles.some((n) => kl.includes(n))) {
+              const c = vals[key];
+              const val = c && typeof c === "object" ? c.value : c;
+              if (val != null && val !== "") return val;
+            }
+          }
+          return "";
+        };
+        // Combine the sheet date with the row's "HH:MM" slot.
+        let at = base;
+        if (base && typeof row.time === "string" && /^\d{1,2}:\d{2}/.test(row.time)) {
+          const d = new Date(base);
+          if (!isNaN(d.getTime())) {
+            const [h, m] = row.time.split(":");
+            d.setHours(Number(h), Number(m), 0, 0);
+            at = d;
+          }
+        }
+        const sys = cell("systol"), dia = cell("diastol");
+        const bp = (sys || dia) ? `${sys || "?"}/${dia || "?"}` : cell("bp", "blood pressure");
+        out.push({
+          at,
+          bp,
+          pulse: cell("pulse", "heart rate", "hr"),
+          temp:  cell("temp"),
+          spo2:  cell("spo", "o2 sat", "saturation"),
+          rr:    cell("rr", "resp"),
+          gcs:   cell("gcs"),
+          painScore: cell("pain"),
+          recordedBy: row.recordedBy || row.nurseName || "",
+        });
+      });
+    } else if (v) {
+      out.push(v);   // already-flat trend row
+    }
+  });
+  return out;
+}
+
 /* ── public: normalize the raw receipt payload ──────────────── */
 export function normalizeFileData(receipt = {}) {
   const r = receipt || {};
@@ -61,7 +117,11 @@ export function normalizeFileData(receipt = {}) {
   const iaDoctor  = ia.doctor  || r.doctorIA  || {};
   const iaNursing = ia.nursing || r.nursingIA || {};
 
-  return {
+  // R7hr — the print is a bedside file: every list must read oldest→newest.
+  // Backend sections arrive newest-first (UI convenience); the sortChrono
+  // pass at the end of this function flips every canonical array into
+  // true chronological order for ALL themes at once.
+  const canonical = {
     meta: {
       ipdNo:       toStr(r.ipdNo || r.admissionNo),
       uhid:        toStr(r.uhid || r.uhId),
@@ -181,7 +241,12 @@ export function normalizeFileData(receipt = {}) {
                             || n.noteDetails?.lateReason),
       lateEntryAt:     toDate(n.lateEntryAt || n.lateEnteredAt
                             || n.noteDetails?.lateEntryAt),
-    })).filter(n => n.createdAt && n.content),  // skip empty-body notes
+    // R7hr — keep structured-payload notes even when they carry no free-text
+    // `content`. Death (MCCD), pre-op (WHO checklist) and post-op notes record
+    // their entire clinical record in noteDetails, not a narrative field — the
+    // old `n.content`-only filter silently dropped those whole note types from
+    // the Complete File. Their TYPE_BUILDER renders the structured card.
+    })).filter(n => n.createdAt && (n.content || (n.noteDetails && Object.keys(n.noteDetails).length > 0))),
 
     nursingNotes: toArr(r.nursingNotes).map(n => ({
       // R7ge — Spread ORIGINAL note first so per-type structured fields
@@ -295,7 +360,26 @@ export function normalizeFileData(receipt = {}) {
       route:        toStr(o.orderDetails?.route || o.route),
       frequency:    toStr(o.orderDetails?.frequency || o.frequency),
       status:       toStr(o.status),
+      priority:     toStr(o.priority),
       orderedBy:    toStr(o.orderedByName || o.doctorName || o.orderedBy),
+      // Nursing administration actions are embedded on the order itself
+      // (DoctorOrder.administrationRecord) — the MAR for THIS order. Carry
+      // them through so the print can pair each order with the nursing
+      // actions taken against it. `f.mar` (a separate collection) stays a
+      // fallback for deployments that record MAR out-of-band.
+      admin: toArr(o.administrationRecord).map(a => ({
+        schedDate:  toDate(a.scheduledDate),
+        schedTime:  toStr(a.scheduledTime),
+        status:     toStr(a.status),                       // given / missed / held / pending
+        givenAt:    toDate(a.givenAt),
+        givenBy:    toStr(a.givenBy || a.givenByName || a.nurseName),
+        givenByRole:toStr(a.givenByRole),
+        doseGiven:  toStr(a.doseGiven),
+        routeUsed:  toStr(a.routeUsed),
+        fiveRights: a.fiveRightsChecked === true,
+        adverse:    a.adverseEvent === true,
+        notes:      toStr(a.notes),
+      })),
     })),
 
     mar: toArr(r.mar).map(m => ({
@@ -310,17 +394,18 @@ export function normalizeFileData(receipt = {}) {
       administrations: toArr(m.administrations || m.givenDoses),
     })),
 
-    vitalsTrend: toArr(r.vitalsTrend || r.vitals).map(v => {
+    vitalsTrend: _expandVitalSheets(r.vitalsTrend || r.vitals).map(v => {
       const bp = typeof v.bp === "object" && v.bp
         ? `${v.bp.systolic ?? "?"}/${v.bp.diastolic ?? "?"}`
         : toStr(v.bp);
       return {
-        at:     toDate(v.recordedAt || v.createdAt || v.at),
+        at:     toDate(v.at || v.recordedAt || v.createdAt),
         bp:     bp || toStr(v.bloodPressure),
         pulse:  toStr(v.pulse || v.hr),
         temp:   toStr(v.temp || v.temperature),
         spo2:   toStr(v.spo2 || v.SpO2),
         rr:     toStr(v.rr || v.respiratoryRate),
+        gcs:    toStr(v.gcs),
         painScore:  toNum(v.painScore || v.pain || v.vasPain),
         recordedBy: toStr(v.recordedBy || v.recordedByName || v.nurseName),
       };
@@ -375,11 +460,13 @@ export function normalizeFileData(receipt = {}) {
     })),
 
     bedTransfers: toArr(r.bedTransfers).map(t => ({
-      at:       toDate(t.createdAt || t.transferDate),
-      fromBed:  toStr(t.fromBed || t.previousBed),
-      toBed:    toStr(t.toBed || t.newBed),
+      at:       toDate(t.transferredAt || t.handoverAt || t.requestedAt || t.createdAt || t.transferDate),
+      // Compose "Ward · Bed" from the real stored fields; fall back to the
+      // older flat fromBed/toBed shape if a deployment uses that instead.
+      fromBed:  toStr([t.fromWardName, t.fromRoomNumber, t.fromBedNumber].filter(Boolean).join(" · ") || t.fromBed || t.previousBed),
+      toBed:    toStr([t.toWardName, t.toRoomNumber, t.toBedNumber].filter(Boolean).join(" · ") || t.toBed || t.newBed),
       reason:   toStr(t.reason),
-      by:       toStr(t.transferredByName || t.by || t.requestedBy),
+      by:       toStr(t.handoverBy || t.transferredByName || t.by || t.requestedBy),
       status:   toStr(t.status),
     })),
 
@@ -466,11 +553,118 @@ export function normalizeFileData(receipt = {}) {
       raisedBy:    toStr(b.raisedByName || b.raisedBy || b.createdByName),
     })),
 
+    // R7hr — previous OPD assessments (latest 2, packed by buildReceipt).
+    // Spread the original first (mirrors doctorNotes) so the flexible
+    // department-payload / prescription blobs survive for the renderer.
+    opdAssessments: toArr(r.opdAssessments).map(v => ({
+      ...v,
+      at:             toDate(v.visitDate || v.createdAt),
+      visitNumber:    toStr(v.visitNumber),
+      department:     toStr(typeof v.department === "object" ? v.department?.departmentName : v.department),
+      consultantName: toStr(v.consultantName),
+      chiefComplaint: toStr(v.chiefComplaint),
+      visitType:      toStr(v.visitType),
+      status:         toStr(v.status),
+    })),
+
+    // R7hr — device lifecycle rows (IV cannula / catheter / ET tube …).
+    // placedBy/removedBy are ActorSchema objects ({name, employeeId, role})
+    // — resolve to the display name. deviceType is the backend enum key
+    // (IV_CANNULA) — humanise for print (IV Cannula).
+    devices: toArr(r.devices).map(d => {
+      const actor = (a) => typeof a === "string" ? a : toStr(a?.name || a?.userName || "");
+      const human = (k) => toStr(k)
+        .split("_")
+        .map(w => ["IV","ET","NG","CVC","PICC","ICD"].includes(w) ? w : (w.charAt(0) + w.slice(1).toLowerCase()))
+        .join(" ");
+      return {
+        ...d,
+        placedAt:   toDate(d.placedAt || d.createdAt),
+        removedAt:  toDate(d.removedAt),
+        deviceType: human(d.deviceType),
+        deviceName: toStr(d.deviceName || d.article),
+        site:       toStr(d.site),
+        status:     toStr(d.status),
+        placedBy:   actor(d.placedBy) || toStr(d.placedByName),
+        removedBy:  actor(d.removedBy) || toStr(d.removedByName),
+        changes:    toArr(d.changes),
+      };
+    }),
+
+    // ── R7hr — full-coverage collections ("everything captured must reach
+    // the Complete File"). Rows pass through as-is (renderer configs pick
+    // the display fields); the sortChrono pass below orders them. ──
+    emergencyCases:      toArr(r.emergencyCases),
+    prescriptions:       toArr(r.prescriptions),
+    medicalCertificates: toArr(r.medicalCertificates),
+    physioPlans:         toArr(r.physioPlans),
+    physioSessions:      toArr(r.physioSessions),
+    medReconciliation:   toArr(r.medReconciliation),
+    diabeticCharts:      toArr(r.diabeticCharts),
+    pharmacySales:       toArr(r.pharmacySales),
+    advances:            toArr(r.advances),
+    appointments:        toArr(r.appointments),
+    procedureNotes:      toArr(r.procedureNotes),
+    adrReports:          toArr(r.adrReports),
+    foodReactions:       toArr(r.foodReactions),
+    promPremSurveys:     toArr(r.promPremSurveys),
+    codeResponseEvents:  toArr(r.codeResponseEvents),
+    complianceRegisters: (r.complianceRegisters && typeof r.complianceRegisters === "object")
+      ? r.complianceRegisters : {},
+
+    // R7hr — registration demographics + ER context that never reached
+    // the print (coverage audit): rendered in the patient strip.
+    patientExtra: {
+      email:            toStr(r.email),
+      maritalStatus:    toStr(r.maritalStatus),
+      emergencyContact: r.emergencyContact || {},
+      addressDetail:    r.addressDetail || {},
+      paymentType:      toStr(r.paymentType),
+      tpaName:          toStr(r.tpaName),
+      policyNumber:     toStr(r.policyNumber),
+      triageLevel:      toStr(r.triageLevel),
+      erType:           toStr(r.erType),
+      broughtBy:        toStr(r.broughtBy),
+      policeStation:    toStr(r.policeStation),
+    },
+
     signatures: {
       consultant: toStr(r.consultantName || r.attendingDoctor),
       mro:        toStr(r.mro || r.medicalRecordsOfficer),
     },
   };
+
+  // ── R7hr — chronological pass (oldest → newest, bedside-file order) ──
+  const _chronoTime = (x) => {
+    const v = x?.at || x?.orderedAt || x?.placedAt || x?.startedAt || x?.visitDate
+      || x?.reportDate || x?.assignedAt || x?.ts || x?.givenAt || x?.signedAt
+      || x?.date || x?.createdAt || x?.reportedAt || 0;
+    const t = v instanceof Date ? v.getTime() : new Date(v || 0).getTime();
+    return Number.isFinite(t) ? t : 0;
+  };
+  const sortChrono = (arr) =>
+    Array.isArray(arr) ? [...arr].sort((a, b) => _chronoTime(a) - _chronoTime(b)) : arr;
+  [
+    "investigations", "doctorNotes", "nursingNotes", "doctorOrders", "mar",
+    // R7ht — `vitalsTrend` is the flat array every theme's Vital Signs Trend
+    // table renders; it was missing here, so a multi-day patient's trend
+    // printed newest-day-first (backend returns sheets DESC). Sort it too.
+    "vitalsTrend",
+    "procedures", "consents", "intakeOutput", "labReports", "shiftHandovers",
+    "nursingAssessments", "nursingCarePlans", "bedTransfers", "bloodTransfusion",
+    "dietPlans", "mlc", "bills", "activityLog", "opdAssessments", "devices",
+    // R7hr full-coverage collections
+    "emergencyCases", "prescriptions", "medicalCertificates", "physioPlans",
+    "physioSessions", "medReconciliation", "diabeticCharts", "pharmacySales",
+    "advances", "appointments", "procedureNotes", "adrReports", "foodReactions",
+    "promPremSurveys", "codeResponseEvents",
+  ].forEach((k) => { canonical[k] = sortChrono(canonical[k]); });
+  if (canonical.vitals) canonical.vitals.trend = sortChrono(canonical.vitals.trend);
+  Object.keys(canonical.complianceRegisters || {}).forEach((k) => {
+    canonical.complianceRegisters[k] = sortChrono(canonical.complianceRegisters[k]);
+  });
+
+  return canonical;
 }
 
 /* ── public: chronological event timeline ────────────────────

@@ -9,6 +9,9 @@
 //   hospitalSettings— from useHospitalSettings() — populates PrintShell
 
 import { buildPrintShellHtml } from "../../templates/PrintShell";
+// /uploads signatures are JWT-gated — inlined to data: URLs before the
+// print window's document is written (see printNurseNote below).
+import { inlineUploadsInHtml } from "../../utils/secureUploads";
 // R7gx — Shared NABH sub-bucket renderers so the nurse Initial
 // Assessment card mirrors every populated nursingNabh.* block, not
 // just the seven the original builder hard-coded (Identification,
@@ -960,7 +963,15 @@ export function printNurseNote(note, hospitalSettings = {}) {
 
   const w = window.open("", "_blank", "width=900,height=700");
   if (!w) return false;
-  w.document.write(html);
-  w.document.close();
+  // /uploads signature images are JWT-gated — a print window's <img> can't
+  // send the Authorization header, so resolve them to self-contained data:
+  // URLs first (fetched HERE, in the authenticated tab). window.open stays
+  // synchronous above (popup blockers require the user gesture), only the
+  // document write waits. inlineUploadsInHtml never rejects — on a fetch
+  // failure the src is left as-is and the img degrades gracefully.
+  inlineUploadsInHtml(html).then((finalHtml) => {
+    w.document.write(finalHtml);
+    w.document.close();
+  });
   return true;
 }

@@ -10,7 +10,8 @@
 FROM node:20-alpine AS build
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci 2>/dev/null || npm install
+# Strict `npm ci` — lockfile is committed; identical build for every hospital.
+RUN npm ci
 COPY . .
 # Relative base → axios calls /api/... → nginx proxies to the backend.
 ENV VITE_API_BASE_URL=/api

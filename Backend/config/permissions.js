@@ -359,6 +359,11 @@ const ACTIONS = {
   "mrd.read":              ["Admin", "Doctor", "MRD"],
   "mrd.list":              ["Admin", "Doctor", "MRD"],
   "mrd.write":             ["Admin"],
+  // Patient-scoped audit-bundle print (Complete File + activity/print/billing/
+  // clinical trails). Dedicated token so MRD can print a patient's audit
+  // appendix WITHOUT inheriting the hospital-wide reports.audit surfaces
+  // (billing audit register, print-audit register). Mirror of Frontend.
+  "patient-file.audit-print": ["Admin", "MRD"],
   // Same-day discharge undo — Admin ONLY, time-gated by
   // controller (≤ 24h since actualDischargeDate) and bed
   // must still be free.
@@ -534,6 +539,13 @@ const ACTIONS = {
   "pharmacy.adr.read":             ["Admin", "Doctor", "Pharmacist", "Nurse"],
   "quality.grievance.write":       ["Admin", "MRD", "Receptionist"],
   "quality.grievance.read":        ["Admin", "MRD", "Receptionist", "Doctor"],
+  //   feedback.read / feedback.write — PRE.3 patient satisfaction &
+  //       experience feedback. Reception + discharge-desk Nurse collect it
+  //       (or mint a patient link/QR); Admin/MRD read the dashboard. The
+  //       patient-facing submit surface (/api/public-feedback) is tokenised
+  //       + anonymous, so it needs no role.
+  "feedback.write":                ["Admin", "MRD", "Receptionist", "Nurse"],
+  "feedback.read":                 ["Admin", "MRD", "Receptionist"],
   "hr.credential.write":           ["Admin"],
   "hr.credential.read":            ["Admin", "Doctor"],
   "compliance.firedrill.write":    ["Admin", "Security"],

@@ -32,6 +32,7 @@ import { useParams, useSearchParams, useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
+import { roleCan } from "../../config/permissions";
 import { useAuth } from "../../context/AuthContext";
 import useHospitalSettings from "../../Components/print/useHospitalSettings";
 // R7fq Track D: shared SGRH/Max-style print shell for header/footer
@@ -167,6 +168,183 @@ function IdentityBanner({ patient, currentAdmission, role, onBack, onPrint, onPr
             title="Condensed handover for a referring colleague (2–4 pages)"
           >
             🤝 Referral Summary
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── R7hr — Print Center dialog ──────────────────────────────────
+   Section-picker shown when "🖨 Print Complete File" is clicked.
+   • Preset chips: Full File / Doctor Notes / Nursing / Treatment
+     Chart / Investigations / Billing / Audit Bundle — one click
+     configures the checklist, so "sirf doctor notes alag print"
+     is two clicks total.
+   • Section checkboxes map to CompleteIPDFile's SECTION_FIELDS
+     keys (data-level filter — every theme honours them).
+   • "Include audit logs" group renders ONLY for roles holding
+     patient-file.audit-print (Admin, MRD); selections fetch
+     /patient-file/:uhid/audit-bundle and print the AuditAppendix.
+*/
+const PF_PRINT_SECTIONS = [
+  { key: "initialAssessment", label: "Initial Assessment (Dr + Nursing)" },
+  { key: "opdAssessments",    label: "Previous OPD Assessments (last 2)" },
+  { key: "devices",           label: "Devices History" },
+  { key: "doctorNotes",       label: "Doctor Notes" },
+  { key: "nursingNotes",      label: "Nursing Notes & Assessments" },
+  { key: "treatmentChart",    label: "Treatment Chart (Orders + MAR)" },
+  { key: "vitals",            label: "Vitals Trend + Intake/Output" },
+  { key: "investigations",    label: "Investigations & Lab Reports" },
+  { key: "procedures",        label: "Procedure Notes" },
+  { key: "consents",          label: "Consent Forms" },
+  { key: "diet",              label: "Dietetic Care" },
+  { key: "transfusion",       label: "Blood Transfusion" },
+  { key: "mlc",               label: "Medico-Legal Records" },
+  { key: "handovers",         label: "Handovers & Bed Transfers" },
+  { key: "discharge",         label: "Discharge Summary" },
+  { key: "billing",           label: "Billing Summary" },
+  // R7ht — governs the extended-records + NABH-register block (Rx, ER visits,
+  // physio, pharmacy dispenses, advances, ADR, safety registers…). Ticking it
+  // off strips them from the print (they used to leak into every export).
+  { key: "coverageRecords",   label: "Extended Records & NABH Registers" },
+  { key: "timeline",          label: "Chronological Timeline" },
+];
+/* R7hr — full-coverage collections ("everything captured must reach the
+   Complete File"). One list drives BOTH receipt builders; the aggregator
+   returns these as arrays + a grouped complianceRegisters object. */
+const PF_EXTRA_COLLECTIONS = [
+  "emergencyCases", "prescriptions", "medicalCertificates",
+  "physioPlans", "physioSessions", "medReconciliation", "diabeticCharts",
+  "pharmacySales", "advances", "appointments", "procedureNotes",
+  "adrReports", "foodReactions", "promPremSurveys", "codeResponseEvents",
+];
+const packExtraCollections = (data) => ({
+  ...Object.fromEntries(
+    PF_EXTRA_COLLECTIONS.map((k) => [k, Array.isArray(data?.[k]) ? data[k] : []]),
+  ),
+  complianceRegisters:
+    data?.complianceRegisters && typeof data.complianceRegisters === "object"
+      ? data.complianceRegisters
+      : {},
+});
+/* Demographics + ER-context fields captured at registration that never
+   reached the print (coverage audit): emergency contact, email, marital
+   status, structured address, TPA/policy, triage. */
+const packPatientExtras = (patient, adm) => ({
+  email:            patient?.email || "",
+  maritalStatus:    patient?.maritalStatus || "",
+  emergencyContact: {
+    name:     patient?.companionName || "",
+    relation: patient?.companionRelationship || "",
+    phone:    patient?.companionContact || "",
+  },
+  addressDetail:    patient?.address || {},
+  paymentType:      patient?.paymentType || "",
+  tpaName:          patient?.tpa?.tpaName || "",
+  policyNumber:     patient?.policyNumber || "",
+  triageLevel:      adm?.triageLevel || "",
+  erType:           adm?.erType || "",
+  broughtBy:        adm?.broughtBy || "",
+  policeStation:    adm?.policeStation || "",
+});
+
+const PF_AUDIT_SECTIONS = [
+  { key: "activityLog",   label: "Activity log — who opened/edited the file (IMS.1)" },
+  { key: "printAudit",    label: "Print history — who printed what, copy no. (IMS.4)" },
+  { key: "billingAudit",  label: "Billing audit trail — payments/refunds with actor" },
+  { key: "clinicalAudit", label: "Clinical action trail — notes/MAR/consent events (AAC.7)" },
+];
+const PF_PRINT_PRESETS = [
+  { label: "Full File",       sections: PF_PRINT_SECTIONS.map((s) => s.key) },
+  { label: "Doctor Notes",    sections: ["doctorNotes"] },
+  { label: "Nursing Notes",   sections: ["nursingNotes"] },
+  { label: "Treatment Chart", sections: ["treatmentChart"] },
+  { label: "Investigations",  sections: ["investigations"] },
+  { label: "Billing",         sections: ["billing"] },
+];
+
+function PrintCenterDialog({ canAudit, busy, onCancel, onConfirm }) {
+  const [sel, setSel]       = React.useState(() => new Set(PF_PRINT_SECTIONS.map((s) => s.key)));
+  const [auditSel, setASel] = React.useState(() => new Set());
+
+  const toggle = (set, setter, key) => {
+    const n = new Set(set);
+    if (n.has(key)) n.delete(key); else n.add(key);
+    setter(n);
+  };
+  const applyPreset = (p) => { setSel(new Set(p.sections)); setASel(new Set()); };
+  const auditOnly = () => { setSel(new Set()); setASel(new Set(PF_AUDIT_SECTIONS.map((a) => a.key))); };
+
+  const chip = (active) => ({
+    padding: "5px 12px", borderRadius: 999, fontSize: 12, fontWeight: 700, cursor: "pointer",
+    border: `1.5px solid ${active ? "#4338ca" : "#cbd5e1"}`,
+    background: active ? "#eef2ff" : "#fff", color: active ? "#4338ca" : "#475569",
+  });
+  const row = { display: "flex", alignItems: "flex-start", gap: 8, fontSize: 12.5, padding: "4px 2px", cursor: "pointer" };
+
+  return (
+    <div
+      style={{ position: "fixed", inset: 0, zIndex: 5000, background: "rgba(15,23,42,.55)", display: "flex", alignItems: "center", justifyContent: "center", padding: 18 }}
+      onClick={onCancel}
+    >
+      <div
+        style={{ background: "#fff", borderRadius: 14, width: "min(680px, 96vw)", maxHeight: "88vh", overflow: "auto", padding: "18px 20px", boxShadow: "0 30px 70px -20px rgba(2,6,23,.5)" }}
+        onClick={(e) => e.stopPropagation()}
+        role="dialog" aria-modal="true" aria-label="Print options"
+      >
+        <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
+          <div style={{ fontSize: 17, fontWeight: 800, color: "#0f172a" }}>🖨 Print Center</div>
+          <div style={{ marginLeft: "auto", fontSize: 11.5, color: "#64748b" }}>Patient header hamesha print hota hai</div>
+        </div>
+
+        {/* Presets */}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 7, margin: "10px 0 14px" }}>
+          {PF_PRINT_PRESETS.map((p) => (
+            <button key={p.label} type="button" style={chip(false)} onClick={() => applyPreset(p)}>{p.label}</button>
+          ))}
+          {canAudit && (
+            <button type="button" style={{ ...chip(false), borderColor: "#b45309", color: "#b45309" }} onClick={auditOnly}>
+              Audit Bundle
+            </button>
+          )}
+        </div>
+
+        {/* Section checklist */}
+        <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".6px", color: "#64748b", textTransform: "uppercase", margin: "0 0 6px" }}>Sections</div>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1px 18px", marginBottom: 6 }}>
+          {PF_PRINT_SECTIONS.map((s) => (
+            <label key={s.key} style={row}>
+              <input type="checkbox" checked={sel.has(s.key)} onChange={() => toggle(sel, setSel, s.key)} style={{ marginTop: 2, accentColor: "#4338ca" }} />
+              <span>{s.label}</span>
+            </label>
+          ))}
+        </div>
+
+        {/* Audit group — Admin/MRD only */}
+        {canAudit && (
+          <div style={{ marginTop: 12, border: "1.5px dashed #f1c27d", background: "#fffbeb", borderRadius: 10, padding: "10px 12px" }}>
+            <div style={{ fontSize: 11, fontWeight: 800, letterSpacing: ".6px", color: "#b45309", textTransform: "uppercase", marginBottom: 5 }}>
+              🔐 Include audit logs <span style={{ fontWeight: 600, textTransform: "none", letterSpacing: 0 }}>(Admin / Medical Records only — appendix at the end of the print)</span>
+            </div>
+            {PF_AUDIT_SECTIONS.map((a) => (
+              <label key={a.key} style={row}>
+                <input type="checkbox" checked={auditSel.has(a.key)} onChange={() => toggle(auditSel, setASel, a.key)} style={{ marginTop: 2, accentColor: "#b45309" }} />
+                <span>{a.label}</span>
+              </label>
+            ))}
+          </div>
+        )}
+
+        {/* Actions */}
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8, marginTop: 16 }}>
+          <button type="button" className="pf-banner__btn" onClick={onCancel} disabled={busy}>Cancel</button>
+          <button
+            type="button" className="pf-banner__btn pf-banner__btn--solid"
+            disabled={busy || (sel.size === 0 && auditSel.size === 0)}
+            onClick={() => onConfirm({ sections: [...sel], audit: canAudit ? [...auditSel] : [] })}
+          >
+            {busy ? "Preparing…" : `Print${auditSel.size ? " + audit" : ""}`}
           </button>
         </div>
       </div>
@@ -3932,6 +4110,44 @@ export default function CompletePatientFilePage() {
   // Real RBAC role from the authenticated user — used to gate role-specific
   // CTAs (e.g. Dietician's "Edit in console" button on the diet section).
   const viewerRole = user?.role || "";
+
+  /* R7hr — Print Center (section-picker + audit-logs option). The
+     buildReceipt/fireFallback closures live inside the IdentityBanner
+     IIFE below; onPrint stashes them here so the dialog's confirm
+     handler can reuse them without restructuring the IIFE. */
+  const printCtxRef = useRef(null);
+  const [printCenterOpen, setPrintCenterOpen] = useState(false);
+  const [printBusy, setPrintBusy] = useState(false);
+  const canAuditPrint = roleCan(viewerRole, "patient-file.audit-print");
+
+  const handlePrintCenterConfirm = async ({ sections, audit }) => {
+    const ctx = printCtxRef.current || {};
+    setPrintBusy(true);
+    let auditBundle = null;
+    let auditSelections = null;
+    if (canAuditPrint && Array.isArray(audit) && audit.length > 0) {
+      try {
+        const params = currentAdmission?._id ? { admissionId: currentAdmission._id } : {};
+        const r = await axios.get(`${BASE}/patient-file/${uhid}/audit-bundle`, { params });
+        auditBundle = r.data?.data || null;
+        auditSelections = audit;
+      } catch (e) {
+        toast.error("Audit logs could not be loaded — printing without the audit appendix.");
+      }
+    }
+    try {
+      const receipt = {
+        ...(typeof ctx.buildReceipt === "function" ? ctx.buildReceipt() : {}),
+        printSections: sections,
+        ...(auditBundle ? { auditBundle, auditSelections } : {}),
+      };
+      openPrint("ipd-file", receipt);
+    } catch (e) {
+      if (typeof ctx.fireFallback === "function") ctx.fireFallback();
+    }
+    setPrintBusy(false);
+    setPrintCenterOpen(false);
+  };
   const [data, setData] = useState(null);
   const [err, setErr]   = useState("");
   const [active, setActive] = useState("admission");
@@ -4096,8 +4312,20 @@ export default function CompletePatientFilePage() {
     const iaNurseNote = allNursingNotes.find(n => n.noteType === "initial") ||
                         allDoctorNotes.find(n => (n.noteType === "initial") && n.noteDetails?.nursing);
     const iaDocRaw   = iaDocNote?.noteDetails?.doctor || adm.initialAssessment || data.initialAssessment || {};
-    const iaNurseRaw = iaNurseNote?.noteDetails?.nursing || iaNurseNote?.noteData?.nursing
-                       || adm.nurseInitialAssessment || data.nurseInitialAssessment || {};
+    // Prefer the dedicated, comprehensive Nursing Initial Assessment the
+    // NurseInitialAssessmentPage form saves (admission.nurseInitialAssessment —
+    // full head-to-toe: vitals / systemAssessment / psychosocial / nutrition /
+    // riskAssessments / dischargePlanning) over the thin nurse-note payload, so
+    // the Complete File prints the ENTIRE assessment. Fall back to the note.
+    const richNurseIA = adm.nurseInitialAssessment || data.nurseInitialAssessment;
+    const noteNurseIA = iaNurseNote?.noteDetails?.nursing || iaNurseNote?.noteData?.nursing || {};
+    // R7ht — MERGE, don't replace. When BOTH a rich admission IA and a nurse
+    // note IA exist, spread the note first and let the rich form win per-field,
+    // so note-only fields (identification, psychosocial narrative, sleep,
+    // caregiver, discharge-planning text) survive instead of being discarded.
+    const iaNurseRaw = (richNurseIA && (richNurseIA.systemAssessment || richNurseIA.vitals || richNurseIA.riskAssessments))
+                       ? { ...noteNurseIA, ...richNurseIA }
+                       : (Object.keys(noteNurseIA).length ? noteNurseIA : (richNurseIA || {}));
     /* R7gu-FIX — lift signer fields from the parent IA note onto the
        nested noteDetails payload so the IA signature pill in Narrative
        can show name + Emp ID + Reg + sign image instead of falling back
@@ -4160,7 +4388,9 @@ export default function CompletePatientFilePage() {
       allergies: data.allergies || iaDoc.allergies?.list || iaNurse.allergies?.list || patient?.allergyList || patient?.allergies || [],
       isolationFlags: adm.isolationFlags || iaDoc.isolationFlags || [],
       crossCheckAlerts: iaNurse.crossCheckAlerts || iaDoc.crossCheckAlerts || [],
-      vitalsOnAdmission: flatVitals, vitalsTrend: data.vitalSheet || data.vitalsTrend || [],
+      // R7hr — aggregator returns VitalSheet docs under `vitals` (not
+      // `vitalSheet`); read that so the Vital Signs Trend actually populates.
+      vitalsOnAdmission: flatVitals, vitalsTrend: data.vitalSheet || data.vitals || data.vitalsTrend || [],
       chiefComplaints: iaDoc.chiefComplaints || iaDoc.cc || iaDoc.complaints
                        || iaNurse.chiefComplaint || iaNurse.cc || adm.chiefComplaints || adm.reasonForAdmission || "",
       history: iaDoc.hopi || iaDoc.historyOfPresentingIllness || iaDoc.history || iaDoc.presentingIllness
@@ -4227,6 +4457,15 @@ export default function CompletePatientFilePage() {
       icuBundles: Array.isArray(data.icuBundles) ? data.icuBundles : [],
       mlc: Array.isArray(data.mlc) ? data.mlc : [],
       bills: Array.isArray(data.bills) ? data.bills : [],
+      // R7hr — chronological Complete File additions. opdVisits arrive
+      // newest-first from the aggregator → slice(0,2) = the two most
+      // recent PREVIOUS OPD assessments. devices = full lifecycle rows.
+      opdAssessments: (Array.isArray(data.opdVisits) ? data.opdVisits : []).slice(0, 2),
+      devices: Array.isArray(data.devices) ? data.devices : [],
+      // R7hr — full-coverage: every captured collection + registration
+      // demographics reach the print.
+      ...packExtraCollections(data),
+      ...packPatientExtras(patient, adm),
       activityLog: ["Admin", "Doctor", "MRD", "Accountant"].includes(viewerRole)
         ? (Array.isArray(data.activityLog) ? data.activityLog : []) : [],
       ...((ds) => {
@@ -4270,7 +4509,17 @@ export default function CompletePatientFilePage() {
           </div>
           <div style={{ flex: 1 }} />
           <button
-            onClick={() => { try { openPrint("ipd-file", receipt); } catch { window.print(); } }}
+            onClick={() => {
+              // R7hr — open the Print Center (section picker + audit option)
+              // instead of firing the full print directly. The already-built
+              // `receipt` is the payload; the dialog merges printSections +
+              // (Admin/MRD) auditBundle before openPrint.
+              printCtxRef.current = {
+                buildReceipt: () => receipt,
+                fireFallback: () => { try { window.print(); } catch { /* noop */ } },
+              };
+              setPrintCenterOpen(true);
+            }}
             style={{
               border: "none", background: "linear-gradient(90deg,#7c3aed,#4c1d95)", color: "#fff",
               padding: "7px 18px", borderRadius: 7, cursor: "pointer", fontSize: 13, fontWeight: 700,
@@ -4289,6 +4538,17 @@ export default function CompletePatientFilePage() {
             viewerRole={String(viewerRole || "").toLowerCase()}
           />
         </div>
+        {/* R7hr — Print Center dialog (section picker + audit-logs option).
+            Lives here in the canonical mirror layout — the IdentityBanner
+            legacy layout below is permanently bypassed. */}
+        {printCenterOpen && (
+          <PrintCenterDialog
+            canAudit={canAuditPrint}
+            busy={printBusy}
+            onCancel={() => setPrintCenterOpen(false)}
+            onConfirm={handlePrintCenterConfirm}
+          />
+        )}
       </div>
     );
   }
@@ -4479,7 +4739,7 @@ export default function CompletePatientFilePage() {
                 /* vitals on admission — flattened above; bp is now a
                    "120/80" string, not a {systolic,diastolic} object. */
                 vitalsOnAdmission: flatVitals,
-                vitalsTrend:       data.vitalSheet || data.vitalsTrend || [],
+                vitalsTrend:       data.vitalSheet || data.vitals || data.vitalsTrend || [],
 
                 /* history & exam — every alias path the R7fa/R7fb/R7fc
                    IA forms can land in. The doctor IA's hopi field is
@@ -4599,6 +4859,14 @@ export default function CompletePatientFilePage() {
                 // R7gb P0-11: surface backend bills so the Narrative
                 // bills section is wired.
                 bills:               Array.isArray(data.bills)               ? data.bills               : [],
+                // R7hr — chronological Complete File additions (mirror of
+                // buildPrintReceipt): latest 2 previous OPD assessments +
+                // device lifecycle rows.
+                opdAssessments:      (Array.isArray(data.opdVisits) ? data.opdVisits : []).slice(0, 2),
+                devices:             Array.isArray(data.devices)             ? data.devices             : [],
+                // R7hr — full-coverage collections + registration demographics.
+                ...packExtraCollections(data),
+                ...packPatientExtras(patient, adm),
                 // R7gb P0-12: activity log is operational/PHI-adjacent
                 // — gate to the same roles permitted on-page (line
                 // 2586). Other viewers get an empty array so the

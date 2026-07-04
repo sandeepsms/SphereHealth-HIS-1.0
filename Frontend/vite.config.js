@@ -19,6 +19,18 @@ export default defineConfig({
       '@': path.resolve(__dirname, 'src'),
     },
   },
+  server: {
+    proxy: {
+      // Dev parity with the Docker nginx proxy: stored PHI file URLs are
+      // origin-relative (`/uploads/...`), served by the authenticated
+      // backend route (Backend/routes/Files/uploadsRoutes.js). Forward
+      // them to the backend in dev exactly like nginx does in prod.
+      '/uploads': {
+        target: 'http://localhost:5050',
+        changeOrigin: true,
+      },
+    },
+  },
   build: {
     // R7bf-J/A8-CRIT-5: aggressive vendor splitting. Pre-R7bf the
     // catch-all `vendor-misc` ballooned to 857 KB — bootstrap +
