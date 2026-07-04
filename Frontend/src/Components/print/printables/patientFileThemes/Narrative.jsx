@@ -332,35 +332,39 @@ const DayLabel = ({ n, date, totalDays }) => (
   </div>
 );
 
-const MiniTable = ({ headers, rows, widths }) => (
-  <table
-    className="pr-table"
-    style={{
-      width: "100%",
-      borderCollapse: "collapse",
-      marginBottom: 6,
-      fontSize: 9,
-      pageBreakInside: "auto",
-    }}
-  >
-    <thead>
-      <tr>
-        {headers.map((h, i) => (
-          <th key={`th-${i}`} style={{ ...CELL_TH, width: widths?.[i] || "auto" }}>{h}</th>
-        ))}
-      </tr>
-    </thead>
-    <tbody>
-      {rows.map((cells, ri) => (
-        <tr key={`tr-${ri}`} className="bill-line-row">
-          {cells.map((c, ci) => (
-            <td key={`td-${ri}-${ci}`} style={CELL_TD}>{c == null || c === "" ? "—" : c}</td>
+// R7hr — MiniTable drops any column whose every cell is empty, so a table
+// never prints a phantom "—" column (e.g. SpO₂/RR when the vital sheet didn't
+// capture them). Column 0 (the row anchor — date/time/no.) is always kept.
+const _cellEmpty = (c) => c == null || c === "" || c === "—";
+const MiniTable = ({ headers, rows, widths }) => {
+  const keep = headers.map((_, ci) => ci === 0 || rows.some((cells) => !_cellEmpty(cells[ci])));
+  const H = headers.filter((_, i) => keep[i]);
+  const W = widths ? widths.filter((_, i) => keep[i]) : null;
+  const R = rows.map((cells) => cells.filter((_, i) => keep[i]));
+  return (
+    <table
+      className="pr-table"
+      style={{ width: "100%", borderCollapse: "collapse", marginBottom: 6, fontSize: 9, pageBreakInside: "auto" }}
+    >
+      <thead>
+        <tr>
+          {H.map((h, i) => (
+            <th key={`th-${i}`} style={{ ...CELL_TH, width: W?.[i] || "auto" }}>{h}</th>
           ))}
         </tr>
-      ))}
-    </tbody>
-  </table>
-);
+      </thead>
+      <tbody>
+        {R.map((cells, ri) => (
+          <tr key={`tr-${ri}`} className="bill-line-row">
+            {cells.map((c, ci) => (
+              <td key={`td-${ri}-${ci}`} style={CELL_TD}>{_cellEmpty(c) ? "—" : c}</td>
+            ))}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+};
 
 // Alias kept for any legacy reference inside helpers.
 const Table = MiniTable;
@@ -449,8 +453,21 @@ function _cnum(v) {
   return Number.isFinite(n) ? n.toLocaleString("en-IN") : "";
 }
 
+// Clinical records first, then administrative / feedback — a readable
+// medical-record order regardless of the config array's authoring order.
+const COVERAGE_ORDER = [
+  "emergencyCases", "prescriptions", "medReconciliation", "procedureNotes",
+  "diabeticCharts", "physioPlans", "physioSessions", "adrReports",
+  "foodReactions", "codeResponseEvents", "medicalCertificates",
+  "appointments", "pharmacySales", "advances", "promPremSurveys",
+];
 function CoverageRecords({ file }) {
   const blocks = COVERAGE_BLOCKS
+    .slice()
+    .sort((a, b) => {
+      const ia = COVERAGE_ORDER.indexOf(a.key), ib = COVERAGE_ORDER.indexOf(b.key);
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+    })
     .map((b) => ({ b, rows: Array.isArray(file?.[b.key]) ? file[b.key] : [] }))
     .filter(({ rows }) => rows.length > 0);
   if (blocks.length === 0) return null;
@@ -2411,6 +2428,12 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
         </>
       ) : null}
 
+      {/* R7hr — extended clinical + administrative records and the patient's
+          NABH safety registers render HERE (after the clinical narrative,
+          before the financial summary) so Billing closes the record. */}
+      <CoverageRecords file={f} />
+      <ComplianceRegisters registers={f.complianceRegisters} />
+
       {/* ════════════════════════════════════════════════════════════
           18. BILLING SUMMARY                                     [—]
           ════════════════════════════════════════════════════════════ */}
@@ -2450,22 +2473,6 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
         );
       })() : null}
 
-      {/* ════════════════════════════════════════════════════════════
-          R7hr — FULL-COVERAGE RECORDS
-          Every remaining captured collection, rendered config-driven so
-          "everything the system records reaches the file". Each block is
-          a compact chronological table that self-elides when empty.
-          ════════════════════════════════════════════════════════════ */}
-      <CoverageRecords file={f} />
-
-      {/* ════════════════════════════════════════════════════════════
-          R7hr — SAFETY & COMPLIANCE REGISTERS (patient-linked)
-          The NABH registers this patient appears in — restraint, falls,
-          pressure ulcer, medication error, sentinel, HAI, LAMA, mortality,
-          near-miss, OT, antimicrobial. Self-elides when the patient has
-          no register rows at all.
-          ════════════════════════════════════════════════════════════ */}
-      <ComplianceRegisters registers={f.complianceRegisters} />
 
       {/* ════════════════════════════════════════════════════════════
           19. ACTIVITY LOG                                 [NABH IMS.1]
