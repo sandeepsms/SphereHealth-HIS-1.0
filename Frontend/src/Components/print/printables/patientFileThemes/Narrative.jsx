@@ -754,7 +754,7 @@ const proseLine = (label, val) => {
     return <Para><strong>{label}:</strong> {inner}.</Para>;
   }
   if (String(val).trim() === "") return null;
-  return <Para><strong>{label}:</strong> {String(val).trim()}.</Para>;
+  return <Para><strong>{label}:</strong> {String(val).trim().replace(/\.+$/, "")}.</Para>;
 };
 
 /* =====================================================================
@@ -1034,8 +1034,8 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
 
   const famSocLine = (() => {
     const bits = [];
-    if (f.history?.family) bits.push(`family history: ${stripDot(f.history.family)}`);
-    if (f.history?.social) bits.push(`social history: ${stripDot(f.history.social)}`);
+    if (f.history?.family) bits.push(`Family history: ${stripDot(f.history.family)}`);
+    if (f.history?.social) bits.push(`Social history: ${stripDot(f.history.social)}`);
     return bits.length ? cleanSentence(bits.join(". ")) : "";
   })();
 
@@ -1399,6 +1399,28 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
                   {dxFinal && dxFinal !== dxWork ? <><strong>Final diagnosis:</strong> {dxFinal}.</> : null}
                 </Para>
               ) : null}
+              {(d.differentialDiagnosis || d.differentialDx || d.nabh?.differentialDx) ? (
+                <Para><strong>Differential diagnosis:</strong> {stripDot(d.differentialDiagnosis || d.differentialDx || d.nabh?.differentialDx)}.</Para>
+              ) : null}
+              {(f.admission?.icd10 || d.icd10 || d.patientStatus || d.nabh?.patientStatus) ? (
+                <Para>
+                  {(f.admission?.icd10 || d.icd10) ? <><strong>ICD-10:</strong> {f.admission?.icd10 || d.icd10}{(f.admission?.icd10Desc || d.icd10Description) ? ` — ${f.admission?.icd10Desc || d.icd10Description}` : ""}. </> : null}
+                  {(d.patientStatus || d.nabh?.patientStatus) ? <><strong>Patient status:</strong> {d.patientStatus || d.nabh?.patientStatus}.</> : null}
+                </Para>
+              ) : null}
+              {(d.elosDays || d.goalOfCare || d.nabh?.elosDays || d.nabh?.goalOfCare) ? (
+                <Para>
+                  {(d.elosDays || d.nabh?.elosDays) ? <><strong>Estimated length of stay:</strong> {d.elosDays || d.nabh?.elosDays} day(s). </> : null}
+                  {(d.goalOfCare || d.nabh?.goalOfCare) ? <><strong>Goal of care:</strong> {d.goalOfCare || d.nabh?.goalOfCare}.</> : null}
+                </Para>
+              ) : null}
+              {typeof (d.investigations || d.plannedInvestigations) === "string" && (d.investigations || d.plannedInvestigations)
+                ? proseLine("Investigations advised", d.investigations || d.plannedInvestigations) : null}
+              {d.treatmentPlan ? proseLine("Treatment plan", d.treatmentPlan) : null}
+              {d.dietAdvice ? proseLine("Diet advice", d.dietAdvice) : null}
+              {d.activityAdvice ? proseLine("Activity / mobilisation advice", d.activityAdvice) : null}
+              {(d.prognosis || d.nabh?.prognosis) ? <Para><strong>Prognosis:</strong> {stripDot(d.prognosis || d.nabh?.prognosis)}.</Para> : null}
+              {(d.functionalEcog || d.nabh?.functionalEcog) ? <Para><strong>Functional status (ECOG):</strong> {d.functionalEcog || d.nabh?.functionalEcog}.</Para> : null}
               {Object.keys(d).length > 0 ? (
                 /* R7gu — Show signer's name + Emp ID + Reg + digital
                    signature image (when captured) on the IA summary
