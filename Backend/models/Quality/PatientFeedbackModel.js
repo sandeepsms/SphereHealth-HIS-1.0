@@ -76,8 +76,11 @@ const PatientFeedbackSchema = new mongoose.Schema(
   { timestamps: true, toJSON: { virtuals: true }, toObject: { virtuals: true } },
 );
 
-PatientFeedbackSchema.index({ status: 1, createdAt: -1 });
-PatientFeedbackSchema.index({ visitType: 1, createdAt: -1 });
+// Index on submittedAt (not createdAt): the dashboard/list/stats queries all
+// filter the date range and sort on submittedAt, so this is the field the
+// planner needs to avoid a scan-and-in-memory-sort at scale.
+PatientFeedbackSchema.index({ status: 1, submittedAt: -1 });
+PatientFeedbackSchema.index({ visitType: 1, submittedAt: -1 });
 
 // Mean of the answered (non-zero) category ratings.
 PatientFeedbackSchema.virtual("avgRating").get(function () {

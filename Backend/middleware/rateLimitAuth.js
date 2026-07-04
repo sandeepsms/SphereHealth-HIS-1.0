@@ -125,11 +125,14 @@ const rosterRateLimit = rateLimit({
 // ── /api/public-feedback/:token ────────────────────────────────────
 // Patient satisfaction feedback submitted by the patient on their phone via
 // a shareable link / QR — no login. Anonymous surface, so throttle per IP to
-// stop a bot spamming junk feedback while staying generous for a real patient
-// (a few GETs to load the form + one POST to submit): 20 / 10 min / IP.
+// stop a bot spamming junk feedback. R7ht — raised to 60 / 10 min / IP: many
+// patients at a busy discharge desk share ONE egress IP (hospital guest WiFi,
+// Indian mobile CGNAT), and each does ~2-3 requests (GET form + POST submit),
+// so the old cap of 20 started 429-ing legitimate patients after ~8 of them.
+// Every submit still burns a single-use token, so junk volume stays bounded.
 const publicFeedbackRateLimit = rateLimit({
   windowMs: 10 * 60 * 1000,
-  max: 20,
+  max: 60,
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req, res) => ipKeyGenerator(req.ip),

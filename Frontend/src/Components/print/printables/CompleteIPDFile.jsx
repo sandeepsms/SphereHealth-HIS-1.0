@@ -40,7 +40,7 @@ import AuditAppendix  from "./patientFileThemes/AuditAppendix";
    themes with zero per-theme edits. Absent/empty printSections
    (old payloads, demo mode, gallery) ⇒ print everything.          */
 const SECTION_FIELDS = {
-  initialAssessment: ["ia", "chiefComplaints", "history", "medicalHistory", "surgicalHistory", "familyHistory", "socialHistory", "generalExamination", "systemicExamination", "vitalsOnAdmission"],
+  initialAssessment: ["ia", "chiefComplaints", "history", "medicalHistory", "surgicalHistory", "familyHistory", "socialHistory", "generalExamination", "systemicExamination", "vitalsOnAdmission", "patientExtra"],
   opdAssessments:    ["opdAssessments"],
   devices:           ["devices"],
   doctorNotes:       ["doctorNotes"],
@@ -57,6 +57,16 @@ const SECTION_FIELDS = {
   discharge:         ["discharge", "dischargeSummary", "dischargeAdvice", "dischargeMedications"],
   billing:           ["bills"],
   activityLog:       ["activityLog"],
+  // R7ht — the full-coverage records + NABH safety registers. Previously in
+  // NO section, so an unticked / audit-only / single-preset print still leaked
+  // them (pharmacy sales, advances, ADR, restraint/mortality/LAMA registers…).
+  // Governed by one "coverageRecords" section (checkbox in PF_PRINT_SECTIONS).
+  // Keep this key list in sync with PF_EXTRA_COLLECTIONS in CompletePatientFilePage.
+  coverageRecords:   ["emergencyCases", "prescriptions", "medicalCertificates",
+                      "physioPlans", "physioSessions", "medReconciliation", "diabeticCharts",
+                      "pharmacySales", "advances", "appointments", "procedureNotes",
+                      "adrReports", "foodReactions", "promPremSurveys", "codeResponseEvents",
+                      "complianceRegisters"],
   // `timeline` (section 21) is handled via the events array below.
 };
 export const PRINT_SECTION_KEYS = [...Object.keys(SECTION_FIELDS), "timeline"];

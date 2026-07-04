@@ -204,6 +204,10 @@ const PF_PRINT_SECTIONS = [
   { key: "handovers",         label: "Handovers & Bed Transfers" },
   { key: "discharge",         label: "Discharge Summary" },
   { key: "billing",           label: "Billing Summary" },
+  // R7ht — governs the extended-records + NABH-register block (Rx, ER visits,
+  // physio, pharmacy dispenses, advances, ADR, safety registers…). Ticking it
+  // off strips them from the print (they used to leak into every export).
+  { key: "coverageRecords",   label: "Extended Records & NABH Registers" },
   { key: "timeline",          label: "Chronological Timeline" },
 ];
 /* R7hr — full-coverage collections ("everything captured must reach the
@@ -4314,10 +4318,14 @@ export default function CompletePatientFilePage() {
     // riskAssessments / dischargePlanning) over the thin nurse-note payload, so
     // the Complete File prints the ENTIRE assessment. Fall back to the note.
     const richNurseIA = adm.nurseInitialAssessment || data.nurseInitialAssessment;
+    const noteNurseIA = iaNurseNote?.noteDetails?.nursing || iaNurseNote?.noteData?.nursing || {};
+    // R7ht — MERGE, don't replace. When BOTH a rich admission IA and a nurse
+    // note IA exist, spread the note first and let the rich form win per-field,
+    // so note-only fields (identification, psychosocial narrative, sleep,
+    // caregiver, discharge-planning text) survive instead of being discarded.
     const iaNurseRaw = (richNurseIA && (richNurseIA.systemAssessment || richNurseIA.vitals || richNurseIA.riskAssessments))
-                       ? richNurseIA
-                       : (iaNurseNote?.noteDetails?.nursing || iaNurseNote?.noteData?.nursing
-                          || richNurseIA || {});
+                       ? { ...noteNurseIA, ...richNurseIA }
+                       : (Object.keys(noteNurseIA).length ? noteNurseIA : (richNurseIA || {}));
     /* R7gu-FIX — lift signer fields from the parent IA note onto the
        nested noteDetails payload so the IA signature pill in Narrative
        can show name + Emp ID + Reg + sign image instead of falling back

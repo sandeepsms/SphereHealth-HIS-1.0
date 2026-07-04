@@ -140,12 +140,23 @@ const isResultAbnormal = (resultText) => {
   return ABNORMAL_RX.test(resultText);
 };
 
+// Temperature arrives as °F from most capture forms (NurseInitialAssessment,
+// NursingNotes vitals, IPD IA) and as °C from a few (MEWS, daily toggle) — and
+// no unit is stored with the value. Infer by magnitude: a body temperature
+// ≥ 45 is Fahrenheit (normal 97–99), below that Celsius (normal 36–38). This
+// prints "98.6°F" and "37.0°C" correctly instead of the old fixed label that
+// turned a real 98.6°F reading into a lethal-looking "98.6°C".
+const fmtTemp = (v) => {
+  const n = Number(v);
+  if (!Number.isFinite(n)) return v == null ? "" : String(v);
+  return `${v}°${n >= 45 ? "F" : "C"}`;
+};
 const vitalsSentence = (v) => {
   if (!v || typeof v !== "object") return "";
   const bits = [];
   if (v.bp)    bits.push(`BP ${v.bp}`);
   if (v.pulse) bits.push(`pulse ${v.pulse}/min`);
-  if (v.temp)  bits.push(`temperature ${v.temp}°C`);
+  if (v.temp)  bits.push(`temperature ${fmtTemp(v.temp)}`);
   if (v.spo2)  bits.push(`SpO₂ ${v.spo2}%`);
   if (v.rr)    bits.push(`respiratory rate ${v.rr}/min`);
   if (!bits.length) return "";
@@ -1122,7 +1133,7 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
     const bp = (v.bpSys || v.bpDia) ? `${v.bpSys || "?"}/${v.bpDia || "?"} mmHg` : (typeof v.bp === "string" ? v.bp : "");
     if (bp) rows.push(["Blood pressure", bp]);
     const add = (label, val, unit = "") => { if (val != null && val !== "") rows.push([label, `${val}${unit}`]); };
-    add("Pulse", v.pulse, " /min"); add("Temperature", v.temp, " °C"); add("SpO₂", v.spo2, " %");
+    add("Pulse", v.pulse, " /min"); if (v.temp != null && v.temp !== "") rows.push(["Temperature", fmtTemp(v.temp)]); add("SpO₂", v.spo2, " %");
     add("Respiratory rate", v.rr, " /min"); add("Pain score", v.painScore, "/10");
     add("Consciousness", v.consciousnessLevel); add("GCS", v.gcs); add("Pupils", v.pupils);
     add("Capillary glucose", v.glucometer, " mg/dL"); add("Weight", v.weight, " kg"); add("Height", v.height, " cm"); add("BMI", v.bmi);

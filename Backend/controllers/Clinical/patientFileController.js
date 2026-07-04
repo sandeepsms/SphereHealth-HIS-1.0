@@ -166,7 +166,10 @@ exports.getCompleteFile = async (req, res) => {
       safe("dischargeSummary", () => DischargeSummary.find({ UHID }).sort({ createdAt: -1 }).limit(50).lean()),
       safe("nursingAssessments", () => NursingAssessment.find({ UHID }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
       safe("nursingCarePlans",   () => NursingCarePlan.find({ UHID }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
-      safe("shiftHandovers",     () => ShiftHandover.find({ UHID }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
+      // R7ht — shiftHandoverModel keys on lowercase `uhid` (like VitalSheet
+      // above), so the old `{ UHID }` query matched zero app-written handovers
+      // and only the demo seed (which writes both spellings) ever printed.
+      safe("shiftHandovers",     () => ShiftHandover.find({ $or: [{ uhid: UHID }, { UHID }] }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean()),
       safe("bedTransfers",       () => BedTransfer ? BedTransfer.find({ UHID }).sort({ createdAt: -1 }).limit(50).lean() : []),
       safe("mar",                () => MAR ? MAR.find({ UHID }).sort({ createdAt: -1 }).limit(PER_SECTION_LIMIT).lean() : []),
       // R7bu — VitalSheet schema uses `uhid` (lowercase) NOT `UHID`, and

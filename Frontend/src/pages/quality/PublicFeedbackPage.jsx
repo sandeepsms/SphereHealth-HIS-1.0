@@ -13,6 +13,35 @@ import { CategoryRatings, NpsScale, FeedbackTextFields, emptyRatings } from "./f
 
 const PUBLIC = `${API_BASE_URL}/public-feedback`;
 
+/* R7ht — Shell + Card live at MODULE scope, not inside the component. When
+   they were defined in the render body, every keystroke gave them a fresh
+   function identity, so React unmounted+remounted the whole subtree and the
+   textarea lost focus (and the mobile keyboard closed) after every character. */
+function Shell({ settings, hospital, children }) {
+  return (
+    <div style={{ minHeight: "100dvh", background: "linear-gradient(180deg,#eef2ff,#f8fafc 240px)", fontFamily: "'DM Sans',system-ui,sans-serif", padding: "0 0 48px" }}>
+      <div style={{ maxWidth: 560, margin: "0 auto", padding: "0 16px" }}>
+        <div style={{ textAlign: "center", padding: "28px 0 14px" }}>
+          {settings?.logo ? (
+            <img src={settings.logo} alt="" style={{ height: 54, objectFit: "contain", marginBottom: 8 }} />
+          ) : null}
+          <div style={{ fontSize: 20, fontWeight: 800, color: "#3730a3" }}>{hospital}</div>
+          <div style={{ fontSize: 13, color: "#64748b", marginTop: 2 }}>Patient Feedback</div>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+function Card({ children }) {
+  return (
+    <div style={{ background: "#fff", borderRadius: 18, boxShadow: "0 10px 30px rgba(30,41,59,.08)", border: "1px solid #eef2f7", padding: 20 }}>
+      {children}
+    </div>
+  );
+}
+
 export default function PublicFeedbackPage() {
   const { token } = useParams();
   const { settings } = useHospitalSettings();
@@ -67,41 +96,22 @@ export default function PublicFeedbackPage() {
     }
   };
 
-  const Shell = ({ children }) => (
-    <div style={{ minHeight: "100vh", background: "linear-gradient(180deg,#eef2ff,#f8fafc 240px)", fontFamily: "'DM Sans',system-ui,sans-serif", padding: "0 0 48px" }}>
-      <div style={{ maxWidth: 560, margin: "0 auto", padding: "0 16px" }}>
-        <div style={{ textAlign: "center", padding: "28px 0 14px" }}>
-          {settings?.logoUrl ? (
-            <img src={settings.logoUrl} alt="" style={{ height: 54, objectFit: "contain", marginBottom: 8 }} />
-          ) : null}
-          <div style={{ fontSize: 20, fontWeight: 800, color: "#3730a3" }}>{hospital}</div>
-          <div style={{ fontSize: 13, color: "#64748b", marginTop: 2 }}>Patient Feedback</div>
-        </div>
-        {children}
-      </div>
-    </div>
-  );
-
-  const Card = ({ children }) => (
-    <div style={{ background: "#fff", borderRadius: 18, boxShadow: "0 10px 30px rgba(30,41,59,.08)", border: "1px solid #eef2f7", padding: 20 }}>
-      {children}
-    </div>
-  );
+  const wrap = (children) => <Shell settings={settings} hospital={hospital}><Card>{children}</Card></Shell>;
 
   if (phase === "loading") {
-    return <Shell><Card><div style={{ textAlign: "center", color: "#64748b", padding: 30 }}><i className="pi pi-spin pi-spinner" style={{ fontSize: 26, color: "#4338ca" }} /><div style={{ marginTop: 10 }}>Loading…</div></div></Card></Shell>;
+    return wrap(<div style={{ textAlign: "center", color: "#64748b", padding: 30 }}><i className="pi pi-spin pi-spinner" style={{ fontSize: 26, color: "#4338ca" }} /><div style={{ marginTop: 10 }}>Loading…</div></div>);
   }
 
   if (phase === "error") {
-    return <Shell><Card><div style={{ textAlign: "center", padding: 24 }}>
+    return wrap(<div style={{ textAlign: "center", padding: 24 }}>
       <i className="pi pi-exclamation-triangle" style={{ fontSize: 34, color: "#dc2626" }} />
       <div style={{ fontWeight: 700, fontSize: 16, marginTop: 12, color: "#1e293b" }}>Link unavailable</div>
       <div style={{ color: "#64748b", marginTop: 6 }}>{errMsg}</div>
-    </div></Card></Shell>;
+    </div>);
   }
 
   if (phase === "already" || phase === "done") {
-    return <Shell><Card><div style={{ textAlign: "center", padding: 24 }}>
+    return wrap(<div style={{ textAlign: "center", padding: 24 }}>
       <i className="pi pi-check-circle" style={{ fontSize: 40, color: "#16a34a" }} />
       <div style={{ fontWeight: 800, fontSize: 18, marginTop: 12, color: "#1e293b" }}>
         {phase === "done" ? "Thank you!" : "Already submitted"}
@@ -111,12 +121,12 @@ export default function PublicFeedbackPage() {
           ? "Your feedback has been recorded. We truly appreciate you taking the time — it helps us serve you better."
           : "This feedback has already been submitted. Thank you for your time!"}
       </div>
-    </div></Card></Shell>;
+    </div>);
   }
 
   // phase === "form"
   return (
-    <Shell>
+    <Shell settings={settings} hospital={hospital}>
       <Card>
         <div style={{ marginBottom: 16 }}>
           <div style={{ fontSize: 17, fontWeight: 800, color: "#1e293b" }}>

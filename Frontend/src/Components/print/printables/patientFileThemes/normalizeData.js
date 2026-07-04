@@ -646,6 +646,10 @@ export function normalizeFileData(receipt = {}) {
     Array.isArray(arr) ? [...arr].sort((a, b) => _chronoTime(a) - _chronoTime(b)) : arr;
   [
     "investigations", "doctorNotes", "nursingNotes", "doctorOrders", "mar",
+    // R7ht — `vitalsTrend` is the flat array every theme's Vital Signs Trend
+    // table renders; it was missing here, so a multi-day patient's trend
+    // printed newest-day-first (backend returns sheets DESC). Sort it too.
+    "vitalsTrend",
     "procedures", "consents", "intakeOutput", "labReports", "shiftHandovers",
     "nursingAssessments", "nursingCarePlans", "bedTransfers", "bloodTransfusion",
     "dietPlans", "mlc", "bills", "activityLog", "opdAssessments", "devices",
