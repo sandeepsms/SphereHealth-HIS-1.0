@@ -104,13 +104,13 @@ const COMPACT_GRID_CSS = `<style>
      half of the page and added blank space / extra pages. The title, section
      headings, signature and any table span BOTH columns; a field line never
      splits across a column. */
-  .pfx-note{font-size:11px;color:#1e293b;line-height:1.4;column-count:2;column-gap:24px;-webkit-column-count:2}
-  .pfx-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:#334155;margin:0 0 6px;padding-bottom:3px;border-bottom:2px solid #e2e8f0;column-span:all;-webkit-column-span:all}
-  .pfx-h{margin:8px 0 2px;font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;column-span:all;-webkit-column-span:all;break-after:avoid}
-  .pfx-line{margin:3px 0;font-size:11px;line-height:1.4;color:#1e293b;white-space:pre-wrap;break-inside:avoid;-webkit-column-break-inside:avoid}
+  .pfx-note{font-size:11px;color:#1e293b;line-height:1.4;display:grid;grid-template-columns:1fr 1fr;column-gap:26px;row-gap:1px;align-content:start}
+  .pfx-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:#334155;margin:0 0 5px;padding-bottom:3px;border-bottom:2px solid #e2e8f0;grid-column:1 / -1}
+  .pfx-h{margin:7px 0 1px;font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;grid-column:1 / -1}
+  .pfx-line{margin:2px 0;font-size:11px;line-height:1.4;color:#1e293b;white-space:pre-wrap;break-inside:avoid;min-width:0}
   .pfx-line strong{color:#0f172a;font-weight:700}
-  .pfx-sign{margin-top:9px;padding-top:5px;border-top:1px solid #e2e8f0;font-size:10px;color:#475569;column-span:all;-webkit-column-span:all}
-  .pfx-note table{column-span:all;-webkit-column-span:all}
+  .pfx-sign{margin-top:8px;padding-top:5px;border-top:1px solid #e2e8f0;font-size:10px;color:#475569;grid-column:1 / -1}
+  .pfx-note table{grid-column:1 / -1}
 </style>`;
 
 // R7hu — when true, the shared helpers below emit the PROSE variant (bold-label
