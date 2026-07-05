@@ -171,8 +171,11 @@ const buildBuilder = (note) => {
         const body = filled.map((r) =>
           `<tr><td><strong>${escapeHtml(r.time)}</strong></td>${cols.map((c) => `<td>${escapeHtml(cellOf(r, c))}</td>`).join("")}${showNotes ? `<td>${escapeHtml(r.notes || "")}</td>` : ""}${showNurse ? `<td>${escapeHtml(r.nurseName || "")}</td>` : ""}</tr>`
         ).join("");
+        // R7hu — a fully-configured VitalSheet can have 10+ columns; table-
+        // layout:fixed + a compact font keeps the grid inside the A4 print
+        // width, and the wrapper lets it scroll on screen.
         return _section(`Vital Signs — Hourly Chart${sheet.date ? ` · ${sheet.date}` : ""}`, "#dc2626",
-          `<table class="nfx-tbl">${head}${body}</table>`);
+          `<div style="overflow-x:auto"><table class="nfx-tbl" style="table-layout:fixed;font-size:${cols.length > 7 ? "9px" : "11px"}">${head}${body}</table></div>`);
       }
       // Fallback — single reading (legacy single-snapshot vitals note).
       const v = get("vitals");
@@ -321,18 +324,33 @@ const buildBuilder = (note) => {
     // ─── SKIN / BRADEN ───────────────────────────────────────────────
     skin: () => {
       const s = get("skinAssessment");
+      // R7hu — live form saves the six Braden sub-scores as b1..b6 (+ stage /
+      // intervention / repositioned / repositionFreq / area), not the
+      // bradenSensoryPerception…/bradenTotal/riskBand/actions the old builder
+      // read — so every sub-scale + the total printed "—". Read both shapes,
+      // auto-sum the total, and derive the risk band from it.
       const rows = [
-        ["Sensory Perception", s.bradenSensoryPerception],
-        ["Moisture", s.bradenMoisture],
-        ["Activity", s.bradenActivity],
-        ["Mobility", s.bradenMobility],
-        ["Nutrition", s.bradenNutrition],
-        ["Friction & Shear", s.bradenFrictionShear],
-      ];
-      const bradenTbl = `<table class="nfx-tbl"><tr><th>Braden Sub-scale</th><th style="width:30%">Score</th></tr>${rows.map(r => `<tr><td>${escapeHtml(r[0])}</td><td>${fmtVal(r[1]) || "—"}</td></tr>`).join("")}<tr style="background:#f0fdf4"><td><strong>Total</strong></td><td><strong>${s.bradenTotal ?? "—"}</strong></td></tr></table>`;
+        ["Sensory Perception", s.b1 ?? s.bradenSensoryPerception],
+        ["Moisture",           s.b2 ?? s.bradenMoisture],
+        ["Activity",           s.b3 ?? s.bradenActivity],
+        ["Mobility",           s.b4 ?? s.bradenMobility],
+        ["Nutrition",          s.b5 ?? s.bradenNutrition],
+        ["Friction & Shear",   s.b6 ?? s.bradenFrictionShear],
+      ].filter((r) => fmtVal(r[1]));
+      const nums = rows.map((r) => Number(r[1])).filter((n) => Number.isFinite(n));
+      const total = s.bradenTotal ?? (nums.length === 6 ? nums.reduce((a, b) => a + b, 0) : null);
+      const band = s.riskBand || (total == null ? "" :
+        total <= 9 ? "Very High Risk" : total <= 12 ? "High Risk" :
+        total <= 14 ? "Moderate Risk" : total <= 18 ? "Mild Risk" : "No Risk");
+      const bradenTbl = rows.length
+        ? `<table class="nfx-tbl"><tr><th>Braden Sub-scale</th><th style="width:30%">Score</th></tr>${rows.map((r) => `<tr><td>${escapeHtml(r[0])}</td><td>${escapeHtml(fmtVal(r[1]))}</td></tr>`).join("")}${total != null ? `<tr style="background:#f0fdf4"><td><strong>Total</strong></td><td><strong>${escapeHtml(String(total))} / 23</strong></td></tr>` : ""}</table>`
+        : "";
       return _section("Skin Assessment (Braden)", "#475569", bradenTbl + _grid([
-        _kv("Risk Band", s.riskBand, true),
-        _kv("Actions", s.actions, true),
+        _kv("Body Area", s.area),
+        _kv("Risk Band", band, true),
+        _kv("Pressure-ulcer Stage", s.stage),
+        _kv("Repositioned", s.repositioned === true ? `Yes${s.repositionFreq ? ` · ${s.repositionFreq}` : ""}` : (s.repositioned === false ? "No" : null)),
+        _kv("Intervention / Actions", s.intervention || s.actions, true),
       ]));
     },
 
@@ -439,7 +457,6 @@ const buildBuilder = (note) => {
         [m.dbp ? "Blood Pressure" : "Systolic BP", _bp],
         ["Temperature", m.temperature ?? m.temp],
         ["Consciousness", m.consciousness ?? m.avpu],
-        ["Urine Output", m.urineOutput],
       ];
       const tbl = `<table class="nfx-tbl"><tr><th>MEWS Parameter</th><th style="width:30%">Score</th></tr>${rows.map(r => `<tr><td>${escapeHtml(r[0])}</td><td>${fmtVal(r[1]) || "—"}</td></tr>`).join("")}<tr style="background:#fffbeb"><td><strong>Total</strong></td><td><strong>${m.total ?? "—"}</strong></td></tr></table>`;
       return _section("MEWS Score (Modified Early Warning)", "#d97706", tbl + _grid([
@@ -483,15 +500,25 @@ const buildBuilder = (note) => {
 
     // ─── PROCEDURE (nurse-side) ──────────────────────────────────────
     procedure: () => {
+      // R7hu — the nurse procedure form saves site/laterality/performedBy/
+      // designation/assistant/sterile/position/outcome/specimen*/followUp; the
+      // old builder read ghost fields (urineColour/initialDrainage the form
+      // never saves) and dropped every real one. Read the actual keys.
       const p = get("procedure");
       return _section(`Procedure — ${p.procedureName || "—"}`, "#ea580c", _grid([
         _kv("Indication", p.indication, true),
-        _kv("Consent", p.consentObtained),
-        _kv("Asepsis", p.asepsisMaintained),
+        _kv("Site", p.laterality ? `${p.site || ""} (${p.laterality})`.trim() : p.site),
+        _kv("Performed By", [p.performedBy, p.designation].filter(Boolean).join(" · ") || null),
+        _kv("Assistant", p.assistant),
+        _kv("Time", p.time),
+        _kv("Consent", typeof p.consentObtained === "boolean" ? (p.consentObtained ? "Obtained" : "Not obtained") : p.consentObtained),
+        _kv("Aseptic / Sterile", typeof p.sterile === "boolean" ? (p.sterile ? "Yes" : "No") : (p.sterile || p.asepsisMaintained)),
+        _kv("Position", p.position),
+        _kv("Outcome", p.outcome, true),
         _kv("Complications", p.complications, true),
-        _kv("Urine Colour", p.urineColour),
-        _kv("Initial Drainage", p.initialDrainage),
+        _kv("Specimen", typeof p.specimenSent === "boolean" ? (p.specimenSent ? (p.specimenType || "Sent") : "") : (p.specimenType || null)),
         _kv("Post-procedure Vitals", p.postProcVitals, true),
+        _kv("Follow-up", p.followUp, true),
       ]));
     },
 
@@ -568,27 +595,53 @@ const buildBuilder = (note) => {
     // ─── CARE PLAN ───────────────────────────────────────────────────
     careplan: () => {
       const c = get("carePlan");
-      return _section("Nursing Care Plan", "#16a34a", _grid([
-        _kv("Problem", c.problem, true),
-        _kv("Goal", c.goal, true),
-        _kv("Interventions", c.interventions, true),
-        _kv("Expected Outcome", c.expectedOutcome, true),
-        _kv("Evaluation Date", c.evaluationDate),
-      ]));
+      // R7hu — live form saves carePlan.problems[] (NANDA rows: statement /
+      // relatedTo / evidencedBy / priority / goals / targetDate / interventions
+      // / evaluation / status). The old builder read flat c.problem/c.goal, so
+      // the whole plan was blank. Render every problem; keep the flat shape as
+      // a fallback for any legacy note.
+      const probs = Array.isArray(c.problems) ? c.problems.filter(Boolean)
+        : (c.problem || c.goal || c.interventions)
+          ? [{ statement: c.problem, goals: c.goal, interventions: c.interventions, evaluation: c.expectedOutcome, targetDate: c.evaluationDate }]
+          : [];
+      if (!probs.length) return "";
+      const body = probs.map((p, i) => _grid([
+        _kv(`Problem${probs.length > 1 ? ` ${i + 1}` : ""}`, p.statement || p.problem, true),
+        _kv("Related To", p.relatedTo),
+        _kv("Evidenced By", p.evidencedBy),
+        _kv("Priority", p.priority),
+        _kv("Goals", p.goals || p.goal, true),
+        _kv("Target Date", p.targetDate),
+        _kv("Interventions", p.interventions, true),
+        _kv("Evaluation", p.evaluation || p.expectedOutcome, true),
+        _kv("Status", p.status),
+      ])).join('<div style="height:4px"></div>');
+      return _section("Nursing Care Plan", "#16a34a", body);
     },
 
     // ─── NUTRITIONAL (NRS-2002) ──────────────────────────────────────
     nutrition: () => {
       const n = get("nutritionalAssessment");
+      // R7hu — render the fields the NRS-2002 form actually saves (BMI, diet
+      // type/consistency, appetite, swallowing, feeding mode, dietitian
+      // referral…). The old builder read riskBand/weightChange/recommendations
+      // (never saved → always blank) and printed the boolean ageScore as a raw
+      // "true".
+      const yn = (v) => v === true ? "Yes" : v === false ? "No" : v;
       return _section("Nutritional Assessment (NRS-2002)", "#65a30d", _grid([
+        _kv("NRS Total", n.nrsTotal),
         _kv("Nutrition Score", n.nutritionScore),
         _kv("Disease Score", n.diseaseScore),
-        _kv("Age Score", n.ageScore),
-        _kv("NRS Total", n.nrsTotal),
-        _kv("Risk Band", n.riskBand, true),
+        _kv("BMI", n.bmi),
+        _kv("Weight", n.weight != null && n.weight !== "" ? `${n.weight} kg` : null),
         _kv("Appetite", n.appetite),
-        _kv("Weight Change", n.weightChange),
-        _kv("Recommendations", n.recommendations, true),
+        _kv("Swallowing", n.swallowing),
+        _kv("Diet Type", n.dietType),
+        _kv("Consistency", n.consistency),
+        _kv("Feeding Mode", n.feedingMode),
+        _kv("NGT Present", yn(n.ngtPresent)),
+        _kv("Fluid Restriction", n.fluidRestriction ? (n.fluidLimit ? `Yes · ${n.fluidLimit}` : "Yes") : null),
+        _kv("Dietitian Referral", n.dietitianReferral ? (n.referralReason ? `Yes · ${n.referralReason}` : "Yes") : null),
       ]));
     },
 
@@ -656,6 +709,26 @@ const buildBuilder = (note) => {
     // ─── DISCHARGE PLANNING ──────────────────────────────────────────
     discharge: () => {
       const d = get("discharge");
+      // R7hu — the nurse "Discharge / Handover" note is an SBAR SHIFT HANDOVER
+      // (situation / background / assessment / recommendation + incoming nurse),
+      // NOT discharge-planning. The old builder read homeSupport/primaryCaregiver
+      // /… so every handover card printed an empty body. Render the SBAR block;
+      // fall back to the discharge-planning keys for any legacy note.
+      const isSbar = d.situation || d.background || d.assessment || d.recommendation || d.incomingNurse;
+      if (isSbar) {
+        const yn = (v) => v === true ? "Yes" : v === false ? "No" : v;
+        return _section(`Shift Handover${d.type ? ` — ${d.type}` : " (SBAR)"}`, "#0891b2", _grid([
+          _kv("S — Situation", d.situation, true),
+          _kv("B — Background", d.background, true),
+          _kv("A — Assessment", d.assessment, true),
+          _kv("R — Recommendation", d.recommendation, true),
+          _kv("Patient Status", d.patientStatus),
+          _kv("Incoming Nurse", d.incomingNurse),
+          _kv("Education Given", d.educationGiven ? (d.educationTopics ? `Yes · ${d.educationTopics}` : "Yes") : null),
+          _kv("Follow-up Date", d.followUpDate),
+          _kv("Valuables Handed Over", yn(d.valuablesHandedOver)),
+        ]));
+      }
       return _section("Discharge Planning", "#16a34a", _grid([
         _kv("Home Support", d.homeSupport),
         _kv("Primary Caregiver", d.primaryCaregiver),
@@ -795,7 +868,7 @@ export function buildNurseNoteCardHtml(note) {
     blood: "Blood Transfusion", procedure: "Procedure Note",
     daily: "Daily Assessment", careplan: "Care Plan", dvt: "DVT / VTE Risk",
     nutrition: "Nutritional Assessment", education: "Patient Education",
-    discharge: "Discharge Planning", initial: "Initial Assessment",
+    discharge: "Discharge / Handover", initial: "Initial Assessment",
     general: "General Observation",
   };
   const typeLabel = TYPE_LABELS[note.noteType] || (note.noteType || "Nursing Note").toUpperCase();
@@ -902,7 +975,7 @@ export function printNurseNote(note, hospitalSettings = {}) {
     blood: "Blood Transfusion", procedure: "Procedure Note",
     daily: "Daily Assessment", careplan: "Care Plan", dvt: "DVT / VTE Risk",
     nutrition: "Nutritional Assessment", education: "Patient Education",
-    discharge: "Discharge Planning", initial: "Initial Assessment",
+    discharge: "Discharge / Handover", initial: "Initial Assessment",
     general: "General Observation",
   };
   const typeLabel = TYPE_LABELS[note.noteType] || (note.noteType || "Nursing Note").toUpperCase();
