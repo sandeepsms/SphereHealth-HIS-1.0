@@ -63,7 +63,14 @@ import { useInlinedUploadsHtml } from "@/utils/secureUploads";
    signature inlining hook can run per-card (hooks can't live in a .map). */
 function EmbeddedNoteCard({ note }) {
   const isDoc = note._kind === "doctor";
-  const raw = isDoc ? buildDoctorNoteCardHtml(note) : buildNurseNoteCardHtml(note);
+  // R7hu — mirror the timeline + panel: hide the "nursing intake / cross-
+  // disciplinary" tail on a DOCTOR Initial Assessment card so the note renders
+  // identically on all three surfaces. Was `buildDoctorNoteCardHtml(note)` with
+  // no opts (default false → the block showed only in the Complete File print).
+  const isDoctorIA = note.noteType === "initial" || note.noteType === "initialAssessment";
+  const raw = isDoc
+    ? buildDoctorNoteCardHtml(note, isDoctorIA ? { hideNursingExtras: true } : {})
+    : buildNurseNoteCardHtml(note);
   const html = useInlinedUploadsHtml(raw);
   return (
     <div

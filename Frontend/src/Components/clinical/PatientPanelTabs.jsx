@@ -243,7 +243,7 @@ export function InitialAssessmentTab({ doctorNotes = [], nursingNotes = [], admi
              nothing → default-preserving (R25 safe). */
           [...docInitial]
             .sort((a, b) => new Date(b.visitDate || b.createdAt) - new Date(a.visitDate || a.createdAt))
-            .map((n) => <NoteCardEmbed key={n._id} note={n} role="doctor" hideNursingExtras={nurseInitial.length === 0} />)
+            .map((n) => <NoteCardEmbed key={n._id} note={n} role="doctor" hideNursingExtras={true} />)
         )}
       </div>
 

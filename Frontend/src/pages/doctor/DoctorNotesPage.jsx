@@ -854,7 +854,7 @@ function DoctorNotesContent({ selectedPatient }) {
       final:            note.finalDiagnosis       || "",
       icd10Code:        note.icd10Code            || "",
       icd10Description: note.icd10Description     || "",
-      status:           note.noteDetails?.status  || "Stable",
+      status:           note.patientStatus || note.noteDetails?.status || "Stable",   // R7hu — saveNote writes top-level `patientStatus` (not noteDetails.status); reading only the latter reset the status to "Stable" on every edit.
     });
     setInvx((note.investigations || []).join(", "));
     setOrders(note.orders || []);
