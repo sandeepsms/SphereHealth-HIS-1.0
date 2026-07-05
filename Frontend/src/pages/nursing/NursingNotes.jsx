@@ -515,6 +515,37 @@ function NursingNotesContent({ selectedPatient }) {
   }, [searchUHID, patient]);
 
   const [notes,      setNotes]      = useState([]);
+  // R7hu — the hourly Vital Chart (VitalSheet) per note-day, so a "Vital Signs"
+  // note card renders the whole day's grid (same as the Complete File print)
+  // instead of a single BP/pulse snapshot. Vitals notes dual-write to the
+  // VitalSheet on save, so the day's grid is always available to fetch.
+  const [vitalSheets, setVitalSheets] = useState({}); // "YYYY-MM-DD" -> sheet | null
+  const vitalDateKey = (n) => {
+    const d = new Date(n?.visitDate || n?.noteDate || n?.createdAt || 0);
+    if (isNaN(d.getTime())) return null;
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+  useEffect(() => {
+    const uhid = patient?.uhid || patient?.UHID || searchUHID;
+    if (!uhid || !notes.length) return;
+    const want = [...new Set(notes.filter((n) => n.noteType === "vitals").map(vitalDateKey).filter(Boolean))]
+      .filter((d) => !(d in vitalSheets));
+    if (!want.length) return;
+    let cancelled = false;
+    (async () => {
+      const pairs = await Promise.all(want.map(async (date) => {
+        try {
+          const res = await getVitalSheet(uhid, date);
+          const s = res?.data && Array.isArray(res.data.tableData) ? res.data
+                  : Array.isArray(res?.tableData) ? res : null;
+          return [date, s];
+        } catch { return [date, null]; }
+      }));
+      if (!cancelled) setVitalSheets((prev) => { const nx = { ...prev }; pairs.forEach(([d, s]) => { nx[d] = s; }); return nx; });
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notes, patient, searchUHID]);
   const [loading,    setLoading]    = useState(false);
   const [activeModal,setActiveModal]= useState(null);
   const [editingNote,setEditingNote]= useState(null);
@@ -2526,7 +2557,11 @@ function NursingNotesContent({ selectedPatient }) {
                         className="tnc-body-embed pf-tint--nurse"
                         style={{ marginBottom: 8 }}
                         // eslint-disable-next-line react/no-danger
-                        dangerouslySetInnerHTML={{ __html: buildNurseNoteCardHtml(note) }}
+                        dangerouslySetInnerHTML={{ __html: buildNurseNoteCardHtml(
+                          note.noteType === "vitals" && vitalSheets[vitalDateKey(note)]
+                            ? { ...note, vitalSheet: vitalSheets[vitalDateKey(note)] }
+                            : note
+                        ) }}
                       />
                       {false && (
                         <div style={{ display: "flex", gap: 12, flexWrap: "wrap", padding: "10px 16px", background: `linear-gradient(to right, ${ns.bg}60, white)`, borderRadius: 10, marginBottom: 8 }}>

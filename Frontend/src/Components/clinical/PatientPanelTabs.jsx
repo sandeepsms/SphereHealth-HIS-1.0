@@ -30,6 +30,7 @@ import "./patient-panel-tabs.css";
 // templates, same headers, same vitals tables.
 import { buildDoctorNoteCardHtml } from "../../pages/doctor/buildDoctorNoteCardHtml";
 import { buildNurseNoteCardHtml }  from "../../pages/nursing/printNurseNote";
+import { getVitalSheet } from "../../Services/vital/vitalService";
 
 /* ──────────────────────── Formatters ───────────────────────── */
 const fmtDateTime = (d) =>
@@ -394,6 +395,44 @@ export function NursingNotesExpandedTab({ nursingNotes = [], admission }) {
     education: "📚 Education",
   };
 
+  // R7hu — attach each vitals note's day VitalSheet so its card shows that
+  // day's hourly grid (matching the Complete File print + the nurse timeline)
+  // instead of a single snapshot. Self-contained fetch — vitals notes
+  // dual-write the sheet on save, so it's always available; the card falls
+  // back to the snapshot until the sheet loads.
+  const _vsUhid = (nursingNotes || []).map((n) => n.patientUHID || n.UHID).find(Boolean)
+    || admission?.UHID || admission?.patientId?.UHID || admission?.uhid;
+  const [vitalSheets, setVitalSheets] = useState({});
+  const vitalDateKey = (n) => {
+    const d = new Date(n?.noteDate || n?.visitDate || n?.createdAt || 0);
+    if (isNaN(d.getTime())) return null;
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+  useEffect(() => {
+    if (!_vsUhid) return;
+    const want = [...new Set(filtered.filter((n) => n.noteType === "vitals").map(vitalDateKey).filter(Boolean))]
+      .filter((d) => !(d in vitalSheets));
+    if (!want.length) return;
+    let cancelled = false;
+    (async () => {
+      const pairs = await Promise.all(want.map(async (date) => {
+        try {
+          const res = await getVitalSheet(_vsUhid, date);
+          const s = res?.data && Array.isArray(res.data.tableData) ? res.data
+                  : Array.isArray(res?.tableData) ? res : null;
+          return [date, s];
+        } catch { return [date, null]; }
+      }));
+      if (!cancelled) setVitalSheets((prev) => { const nx = { ...prev }; pairs.forEach(([d, s]) => { nx[d] = s; }); return nx; });
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtered, _vsUhid]);
+  const withSheet = (n) =>
+    (n.noteType === "vitals" && vitalSheets[vitalDateKey(n)])
+      ? { ...n, vitalSheet: vitalSheets[vitalDateKey(n)] }
+      : n;
+
   return (
     <div className="ppt-tab">
       <div className="ppt-tab-header">
@@ -427,7 +466,7 @@ export function NursingNotesExpandedTab({ nursingNotes = [], admission }) {
                 <span className="ppt-day-date">{dayHeading(k)}</span>
                 <span className="ppt-day-count">{notes.length} note{notes.length === 1 ? "" : "s"}</span>
               </div>
-              {notes.map((n) => <NoteCardEmbed key={n._id} note={n} role="nurse" />)}
+              {notes.map((n) => <NoteCardEmbed key={n._id} note={withSheet(n)} role="nurse" />)}
             </div>
           );
         })
