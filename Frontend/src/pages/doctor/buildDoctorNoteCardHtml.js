@@ -95,7 +95,22 @@ const COMPACT_GRID_CSS = `<style>
   .ndx-tbl td{padding:4px 6px;border:1px solid #eef2f6;color:#0f172a;font-size:10.5px;word-break:break-word;overflow-wrap:anywhere;vertical-align:top}
   .dfx-narr{margin:6px 0 11px;padding:9px 13px;background:#f8fafc;border-left:3px solid #cbd5e1;border-radius:0 6px 6px 0;font-size:11.5px;white-space:pre-wrap;line-height:1.45}
   .dfx-banner{margin:6px 0 12px;padding:9px 14px;border-radius:7px;font-size:12px;font-weight:700}
+  /* R7hu — PROSE variant (Complete File print): every note renders as flowing
+     bold-label lines like the Doctor Initial Assessment narrative, no card
+     chrome. Triggered by opts.prose; the card classes above are untouched so
+     the Doctor Notes timeline + patient panel keep the card design. */
+  .pfx-note{font-size:11.5px;color:#1e293b;line-height:1.5}
+  .pfx-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:#334155;margin:0 0 7px;padding-bottom:3px;border-bottom:2px solid #e2e8f0}
+  .pfx-h{margin:10px 0 3px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.5px}
+  .pfx-line{margin:4px 0;font-size:11.5px;line-height:1.5;color:#1e293b;white-space:pre-wrap}
+  .pfx-line strong{color:#0f172a;font-weight:700}
+  .pfx-sign{margin-top:10px;padding-top:6px;border-top:1px solid #e2e8f0;font-size:10.5px;color:#475569}
 </style>`;
+
+// R7hu — when true, the shared helpers below emit the PROSE variant (bold-label
+// lines) instead of the card grid. Set per-call at the top of the exported
+// builder from opts.prose; JS is single-threaded so a module-level flag is safe.
+let _prose = false;
 
 // R7hu — omit a field whose value is only a placeholder dash (— / – / - / --)
 // or N/A / null / undefined; the standing rule is that "—" never prints where
@@ -105,21 +120,24 @@ const _isPlaceholderDash = (s) =>
 const _kv = (label, value, isFull = false) => {
   const v = fmtVal(value);
   if (!v || _isPlaceholderDash(v)) return "";
+  if (_prose) return `<div class="pfx-line"><strong>${escapeHtml(label)}:</strong> ${escapeHtml(v)}</div>`;
   return `<div${isFull ? ' class="full"' : ""}><span class="lbl">${escapeHtml(label)}</span><span class="val">${escapeHtml(v)}</span></div>`;
 };
 const _section = (title, color, bodyHtml) =>
-  bodyHtml ? `<div class="dfx-h" style="background:${color}20;color:${color};border-left:3px solid ${color}">${escapeHtml(title)}</div>${bodyHtml}` : "";
+  !bodyHtml ? ""
+  : _prose ? `<div class="pfx-h" style="color:${color}">${escapeHtml(title)}</div>${bodyHtml}`
+  : `<div class="dfx-h" style="background:${color}20;color:${color};border-left:3px solid ${color}">${escapeHtml(title)}</div>${bodyHtml}`;
 const _grid = (cells) => {
   const kept = cells.filter(Boolean);
-  return kept.length ? `<div class="dfx-grid">${kept.join("")}</div>` : "";
+  return kept.length ? (_prose ? kept.join("") : `<div class="dfx-grid">${kept.join("")}</div>`) : "";
 };
 // R7hr-108 — 3-column grid for chip-style sections (used by
 // Examination Findings sub-blocks where each value is 1–2 words).
 const _grid3 = (cells) => {
   const kept = cells.filter(Boolean);
-  return kept.length ? `<div class="dfx-grid dfx-grid--3col">${kept.join("")}</div>` : "";
+  return kept.length ? (_prose ? kept.join("") : `<div class="dfx-grid dfx-grid--3col">${kept.join("")}</div>`) : "";
 };
-const _narr = (text) => text ? `<div class="dfx-narr">${escapeHtml(String(text))}</div>` : "";
+const _narr = (text) => text ? (_prose ? `<div class="pfx-line">${escapeHtml(String(text))}</div>` : `<div class="dfx-narr">${escapeHtml(String(text))}</div>`) : "";
 
 // Per-type builders — compact equivalents of DoctorNotesPage TYPE_BUILDERS.
 // R7hr-100 — `opts` (default {}) is forwarded from the outer
@@ -823,6 +841,7 @@ export function buildDoctorNoteCardHtml(note, opts = {}) {
   // The Complete File print (Narrative.jsx) and Doctor Notes timeline
   // never pass this option, so they continue to render the full card
   // exactly as before. R25-safe: additive, default-preserving.
+  _prose = !!opts.prose;   // R7hu — prose variant for the Complete File print
   const fmtDate = (d) => d ? new Date(d).toLocaleString("en-IN", {
     day: "2-digit", month: "short", year: "numeric",
     hour: "2-digit", minute: "2-digit",
@@ -906,6 +925,35 @@ ${parts.map(p => `<div style="margin-bottom:6px;border-left:3px solid ${p[1]};pa
   // (prints, timelines) keep their unchanged behaviour.
   const builder = buildBuilder(note, opts);
   const typeBody = builder ? builder() : "";
+
+  if (_prose) {
+    // R7hu — Complete File print: render the note as flowing bold-label prose
+    // (matching the Doctor Initial Assessment narrative), no card chrome — one
+    // uppercase type title, the per-type body (helpers emit prose lines above),
+    // and a single signed line. Reset the module flag before returning.
+    const pv = (v && (v.bp || v.pulse || v.temp || v.spo2 || v.rr)) ? (() => {
+      const cells = [
+        v.bp ? `BP ${v.bp.systolic || "—"}/${v.bp.diastolic || "—"} mmHg` : "",
+        v.pulse ? `Pulse ${v.pulse}/min` : "", v.temp ? `Temp ${v.temp}°C` : "",
+        v.spo2 ? `SpO₂ ${v.spo2}%` : "", v.rr ? `RR ${v.rr}/min` : "",
+      ].filter(Boolean);
+      return cells.length ? `<div class="pfx-line"><strong>Vitals:</strong> ${escapeHtml(cells.join(", "))}</div>` : "";
+    })() : "";
+    const ps = (note.soap && !["admission","icu","procedure","consultation","discharge","death","amendment","operative","preop","postop","initial"].includes(note.noteType)) ? (() => {
+      const parts = [["Subjective", note.soap.subjective], ["Objective", note.soap.objective], ["Assessment", note.soap.assessment], ["Plan", note.soap.plan]].filter((p) => p[1]);
+      return parts.map((p) => `<div class="pfx-line"><strong>${p[0]}:</strong> ${escapeHtml(p[1])}</div>`).join("");
+    })() : "";
+    const pd = diagParts.length ? `<div class="pfx-line">${diagParts.join(" &nbsp;·&nbsp; ")}</div>` : "";
+    const _empId = note.signedByEmpId || note.doctorEmpId || "";
+    const _reg = note.doctorRegNo || note.signedByReg;
+    const _when = note.signedAt ? fmtDate(note.signedAt) : noteDate;
+    const psign = isSigned
+      ? `<div class="pfx-sign">✓ <strong>${escapeHtml(typeLabel)} signed</strong> · By: <strong>${escapeHtml(note.doctorName || note.signedByName || "Doctor")}</strong>${_empId ? ` · Emp ${escapeHtml(_empId)}` : ""}${_reg ? ` · Reg ${escapeHtml(_reg)}` : ""} · ${escapeHtml(_when)}</div>`
+      : `<div class="pfx-sign">✎ Draft — not yet signed</div>`;
+    const out = COMPACT_GRID_CSS + `<div class="pfx-note"><div class="pfx-title">${escapeHtml(typeLabel)}</div>${lateBanner}${pv}${ps}${pd}${typeBody}${psign}</div>`;
+    _prose = false;
+    return out;
+  }
 
   // Signature footer
   // R7go — Render the signer's hospital employee ID next to name + MCI reg

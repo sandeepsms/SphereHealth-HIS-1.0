@@ -86,7 +86,20 @@ const COMPACT_GRID_CSS = `<style>
   .nfx-tbl th{padding:5px 8px;border:1px solid #e7edf3;background:#f6f8fb;font-size:10px;font-weight:800;text-align:left;color:#475569;text-transform:uppercase;letter-spacing:.3px}
   .nfx-tbl td{padding:5px 8px;border:1px solid #eef2f6;color:#0f172a}
   .nfx-narr{margin:6px 0 11px;padding:9px 13px;background:#f8fafc;border-left:3px solid #cbd5e1;border-radius:0 6px 6px 0;font-size:11.5px;white-space:pre-wrap;line-height:1.45}
+  /* R7hu — PROSE variant (Complete File print): flowing bold-label lines, no
+     card chrome, matching the Doctor Initial Assessment narrative. Triggered by
+     opts.prose; the nfx-* card classes above stay for the timeline + panel. */
+  .pfx-note{font-size:11.5px;color:#1e293b;line-height:1.5}
+  .pfx-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:#334155;margin:0 0 7px;padding-bottom:3px;border-bottom:2px solid #e2e8f0}
+  .pfx-h{margin:10px 0 3px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.5px}
+  .pfx-line{margin:4px 0;font-size:11.5px;line-height:1.5;color:#1e293b;white-space:pre-wrap}
+  .pfx-line strong{color:#0f172a;font-weight:700}
+  .pfx-sign{margin-top:10px;padding-top:6px;border-top:1px solid #e2e8f0;font-size:10.5px;color:#475569}
 </style>`;
+
+// R7hu — when true, the shared helpers emit the PROSE variant instead of the
+// card grid. Set per-call at the top of buildNurseNoteCardHtml from opts.prose.
+let _prose = false;
 
 // R7hu — a value that is only a placeholder dash (— / – / - / -- ) or N/A /
 // null / undefined must NOT print as a field: the standing rule is that "—"
@@ -99,17 +112,18 @@ const _isPlaceholderDash = (s) =>
 const _kv = (label, value, isFull = false) => {
   const v = fmtVal(value);
   if (!v || _isPlaceholderDash(v)) return "";
+  if (_prose) return `<div class="pfx-line"><strong>${escapeHtml(label)}:</strong> ${escapeHtml(v)}</div>`;
   return `<div${isFull ? ' class="full"' : ""}><span class="lbl">${escapeHtml(label)}</span><span class="val">${escapeHtml(v)}</span></div>`;
 };
 const _section = (title, color, bodyHtml) =>
-  bodyHtml
-    ? `<div class="nfx-h" style="background:${color}20;color:${color};border-left:3px solid ${color}">${escapeHtml(title)}</div>${bodyHtml}`
-    : "";
+  !bodyHtml ? ""
+  : _prose ? `<div class="pfx-h" style="color:${color}">${escapeHtml(title)}</div>${bodyHtml}`
+  : `<div class="nfx-h" style="background:${color}20;color:${color};border-left:3px solid ${color}">${escapeHtml(title)}</div>${bodyHtml}`;
 const _grid = (cells) => {
   const kept = cells.filter(Boolean);
-  return kept.length ? `<div class="nfx-grid">${kept.join("")}</div>` : "";
+  return kept.length ? (_prose ? kept.join("") : `<div class="nfx-grid">${kept.join("")}</div>`) : "";
 };
-const _narr = (text) => (text ? `<div class="nfx-narr">${escapeHtml(String(text))}</div>` : "");
+const _narr = (text) => (text ? (_prose ? `<div class="pfx-line">${escapeHtml(String(text))}</div>` : `<div class="nfx-narr">${escapeHtml(String(text))}</div>`) : "");
 
 // ── Per-type builders ──────────────────────────────────────────────
 // Each builder reads from `nd` (note.noteData first, then note top-level
@@ -909,7 +923,8 @@ const buildBuilder = (note) => {
  * Complete Patient File Narrative theme to embed identical per-type
  * cards inside the day-wise Clinical Journey.
  */
-export function buildNurseNoteCardHtml(note) {
+export function buildNurseNoteCardHtml(note, opts = {}) {
+  _prose = !!opts.prose;   // R7hu — prose variant for the Complete File print
   const fmtDate = (d) => d ? new Date(d).toLocaleString("en-IN", {
     day: "2-digit", month: "short", year: "numeric",
     hour: "2-digit", minute: "2-digit",
@@ -945,6 +960,22 @@ export function buildNurseNoteCardHtml(note) {
 
   const builder = buildBuilder(note);
   const typeBody = builder();
+
+  if (_prose) {
+    // R7hu — Complete File print: flowing bold-label prose (matching the Doctor
+    // Initial Assessment narrative), no card chrome. Reset the flag before return.
+    const _empId = note.signedByEmpId || note.nurseEmployeeId || "";
+    const _when = note.signedAt ? fmtDate(note.signedAt) : noteDate;
+    const prem = (note.remarks && note.noteType !== "general")
+      ? `<div class="pfx-line"><strong>Remarks:</strong> ${escapeHtml(note.remarks)}</div>` : "";
+    const psign = isSigned
+      ? `<div class="pfx-sign">✓ <strong>${escapeHtml(typeLabel)} — signed</strong> · By: <strong>${escapeHtml(note.nurseName || note.signedByName || "Nurse")}</strong>${_empId ? ` · Emp ${escapeHtml(_empId)}` : ""} · ${escapeHtml(_when)}</div>`
+      : `<div class="pfx-sign">✎ Draft — not yet signed</div>`;
+    const out = COMPACT_GRID_CSS + `<div class="pfx-note"><div class="pfx-title">${escapeHtml(typeLabel)}</div>${lateBanner}${typeBody}${prem}${psign}</div>`;
+    _prose = false;
+    return out;
+  }
+
   const remarks = (note.remarks && note.noteType !== "general")
     ? `<div style="margin-top:8px;padding:6px 10px;background:#f8fafc;border-left:3px solid #94a3b8;font-size:11.5px;white-space:pre-wrap">${escapeHtml(note.remarks)}</div>` : "";
   // R7go — Surface hospital employee ID next to the signer's name so

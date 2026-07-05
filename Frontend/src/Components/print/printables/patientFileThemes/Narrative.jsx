@@ -68,9 +68,13 @@ function EmbeddedNoteCard({ note }) {
   // identically on all three surfaces. Was `buildDoctorNoteCardHtml(note)` with
   // no opts (default false → the block showed only in the Complete File print).
   const isDoctorIA = note.noteType === "initial" || note.noteType === "initialAssessment";
+  // R7hu — the Complete File print renders every note in the PROSE variant
+  // (flowing bold-label lines like the Doctor Initial Assessment narrative), so
+  // the whole printed file reads in one consistent design. The Doctor Notes
+  // timeline + patient panel pass no `prose`, so they keep the card design.
   const raw = isDoc
-    ? buildDoctorNoteCardHtml(note, isDoctorIA ? { hideNursingExtras: true } : {})
-    : buildNurseNoteCardHtml(note);
+    ? buildDoctorNoteCardHtml(note, { prose: true, hideNursingExtras: isDoctorIA })
+    : buildNurseNoteCardHtml(note, { prose: true });
   const html = useInlinedUploadsHtml(raw);
   return (
     <div
