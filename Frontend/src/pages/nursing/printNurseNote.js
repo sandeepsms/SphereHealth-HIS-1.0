@@ -746,6 +746,62 @@ const buildBuilder = (note) => {
     initial: () => {
       const nrs = nd.nursing || {};
       const nNabh = nd.nursingNabh || {};
+      // R7hu — the NursingNotes.jsx "Initial Assessment" modal saves a FLAT
+      // shape under noteData.initialAssessment (not the nd.nursing/nursingNabh
+      // shape the canonical IA form writes), so those notes rendered a blank
+      // body. When that flat shape is the only one present, render a compact
+      // flat card and return.
+      const flat = nd.initialAssessment;
+      if (flat && typeof flat === "object" && Object.keys(nrs).length === 0 && Object.keys(nNabh).length === 0) {
+        const yn = (x) => x === true ? "Yes" : x === false ? "No" : x;
+        const sum = (keys) => { const ns = keys.map((k) => Number(flat[k])).filter(Number.isFinite); return ns.length === 6 ? ns.reduce((a, b) => a + b, 0) : null; };
+        const braden = sum(["b1", "b2", "b3", "b4", "b5", "b6"]);
+        const morse  = sum(["m1", "m2", "m3", "m4", "m5", "m6"]);
+        const bp = (flat.bp_sys || flat.bp_dia) ? `${flat.bp_sys || "—"}/${flat.bp_dia || "—"} mmHg` : null;
+        return [
+          _section("Chief Complaint & History", "#0d9488", _grid([
+            _kv("Admission Mode", flat.admissionMode),
+            _kv("Chief Complaint", flat.chiefComplaint, true),
+            _kv("Duration", flat.duration),
+            _kv("History of Illness", flat.historyOfIllness, true),
+            _kv("Past Medical", flat.pastMedical, true),
+            _kv("Past Surgical", flat.pastSurgical, true),
+            _kv("Home Medications", flat.medications, true),
+            _kv("Allergies", flat.allergies, true),
+            _kv("Family History", flat.familyHistory, true),
+          ])),
+          _section("Admission Vitals", "#dc2626", _grid([
+            _kv("BP", bp), _kv("Pulse", flat.pulse), _kv("Temp", flat.temp),
+            _kv("SpO₂", flat.spo2), _kv("RR", flat.rr),
+            _kv("Weight", flat.weight ? `${flat.weight} kg` : null), _kv("Height", flat.height ? `${flat.height} cm` : null),
+          ])),
+          _section("Systems Review", "#475569", _grid([
+            _kv("Respiratory", flat.respiratory), _kv("Cardiovascular", flat.cardiovascular),
+            _kv("Gastrointestinal", flat.gastrointestinal), _kv("Genitourinary", flat.genitourinary),
+            _kv("Musculoskeletal", flat.musculoskeletal), _kv("Neurological", flat.neurological),
+          ])),
+          _section("Risk Screens", "#d97706", _grid([
+            _kv("Braden Total", braden != null ? `${braden} / 23` : null),
+            _kv("Morse Total", morse != null ? String(morse) : null),
+            _kv("Pain Level", flat.painLevel),
+          ])),
+          _section("Psychosocial & Needs", "#7c3aed", _grid([
+            _kv("Anxiety", flat.anxiety), _kv("Depression", flat.depression),
+            _kv("Sleep Pattern", flat.sleepPattern), _kv("Cognition", flat.cognition),
+            _kv("Communication", flat.communication), _kv("Religion", flat.religion),
+            _kv("Language Barrier", yn(flat.languageBarrier)),
+            _kv("Nutrition Status", flat.nutritionStatus), _kv("Appetite", flat.appetiteStatus),
+            _kv("Swallowing", flat.swallowing), _kv("Special Needs", flat.specialNeeds, true),
+          ])),
+          _section("Discharge Planning & IV Access", "#0891b2", _grid([
+            _kv("Discharge Plan", flat.dischargePlan, true),
+            _kv("Caregiver Available", yn(flat.caregiverAvailable)),
+            _kv("Caregiver Name", flat.caregiverName),
+            _kv("IV Site", flat.ivSite), _kv("IV Type", flat.ivType),
+            _kv("IV Date", flat.ivDate), _kv("IV Condition", flat.ivCondition),
+          ])),
+        ].join("");
+      }
       const v = nrs.vitals || {};
       const anthro = nNabh.anthropometry || {};
 
