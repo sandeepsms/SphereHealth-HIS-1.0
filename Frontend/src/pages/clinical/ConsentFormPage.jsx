@@ -9,6 +9,7 @@ import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
 import { openPrint } from "../../Components/print/openPrint";
 import useHospitalSettings from "../../Components/print/useHospitalSettings";
+import Letterhead from "../../Components/print/Letterhead";
 import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
 import { useAutoSave } from "../../hooks/useAutoSave";
@@ -615,12 +616,9 @@ function ConsentPrintView({ data, type, onClose }) {
 
         {/* Consent document */}
         <div style={{ flex: 1, overflowY: "auto", padding: "24px 28px" }} ref={printRef}>
-          <div style={{ textAlign: "center", marginBottom: 6 }}>
-            <div style={{ fontWeight: 800, fontSize: 15, textTransform: "uppercase", letterSpacing: ".5px" }}>{settings.hospitalName || "Hospital"}</div>
-            {settings.tagline ? (
-              <div style={{ fontSize: 11, color: C.muted }}>{settings.tagline}</div>
-            ) : null}
-          </div>
+          {/* R7hr — canonical letterhead (identical to the print + every
+              other surface); consent preview previously showed only name+tag. */}
+          <Letterhead settings={settings} screen />
           <hr style={{ border: "none", borderTop: `2px solid ${type?.color}`, marginBottom: 12 }} />
 
           <h2 style={{ textAlign: "center", fontWeight: 800, fontSize: 17, marginBottom: 4, fontFamily: "serif" }}>{data.consentTitle}</h2>

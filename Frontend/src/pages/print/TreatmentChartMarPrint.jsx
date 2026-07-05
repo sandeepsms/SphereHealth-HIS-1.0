@@ -23,6 +23,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import axios from "axios";
 import TreatmentChartDayStack from "../../Components/clinical/TreatmentChartDayStack";
+import Letterhead from "../../Components/print/Letterhead";
 import { API_BASE_URL as API } from "../../config/api";
 
 const PRINT_CSS = `
@@ -73,19 +74,13 @@ export default function TreatmentChartMarPrint() {
   }), [sp]);
 
   // ── Hospital letterhead from settings (best-effort) ────────────
-  const [hospital, setHospital] = useState({ hospitalName: "", address: "" });
+  // R7hr — store the RAW settings so the shared <Letterhead> gets the full
+  // canonical identity (address parts, Reg No, ROHINI, PAN, NABH…) instead of
+  // the old lossy remap that only kept name/address-string/phone/gstin/logo.
+  const [hospital, setHospital] = useState({});
   useEffect(() => {
     axios.get(`${API}/hospital-settings`)
-      .then((r) => {
-        const h = r.data?.data || r.data || {};
-        setHospital({
-          hospitalName: h.hospitalName || h.name || "Hospital",
-          address:      h.address      || h.fullAddress || "",
-          phone:        h.phone        || h.contactPhone || "",
-          gstin:        h.gstin        || "",
-          logoUrl:      h.logoUrl      || h.logo       || "",
-        });
-      })
+      .then((r) => { setHospital(r.data?.data || r.data || {}); })
       .catch(() => { /* best-effort only */ });
   }, []);
 
@@ -178,27 +173,13 @@ export default function TreatmentChartMarPrint() {
     <>
       <style>{PRINT_CSS}</style>
       <div className="mar-print-shell">
-        {/* Letterhead */}
-        <div className="mar-print-head">
-          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            {hospital.logoUrl && (
-              <img src={hospital.logoUrl} alt="logo" style={{ width: 54, height: 54, objectFit: "contain" }} />
-            )}
-            <div>
-              <div className="mar-print-title">{hospital.hospitalName || "Hospital"}</div>
-              <div className="mar-print-sub">
-                {hospital.address}{hospital.phone ? ` · ☎ ${hospital.phone}` : ""}
-              </div>
-              <div className="mar-print-sub" style={{ marginTop: 4 }}>
-                <strong style={{ color: "#0f172a" }}>Treatment Chart — Medication Administration Record (MAR)</strong>
-                {" · NABH MOM.2 / MOM.3 / COP.3"}
-              </div>
-            </div>
-            <div style={{ marginLeft: "auto", textAlign: "right", fontSize: 10, color: "#64748b" }}>
-              Printed: <strong>{printedAt}</strong>
-            </div>
-          </div>
-        </div>
+        {/* Letterhead — shared canonical identity band (same as every surface) */}
+        <Letterhead
+          settings={hospital}
+          documentTitle="Treatment Chart — Medication Administration Record (MAR)"
+          documentSubtitle="NABH MOM.2 / MOM.3 / COP.3"
+          serialNo={`Printed: ${printedAt}`}
+        />
 
         {/* Patient strip */}
         <div className="mar-print-pt">
