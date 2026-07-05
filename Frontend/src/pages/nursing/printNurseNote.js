@@ -1085,9 +1085,11 @@ export function printNurseNote(note, hospitalSettings = {}) {
   <div style="flex:1">${escapeHtml(note.lateEntryReason || "Retrospective entry — NABH HIC.6 backdated-documentation justification on file")}${note.lateEntryAt ? ` · Recorded: ${fmtDate(note.lateEntryAt)}` : ""}</div>
 </div>` : "";
 
-  // Body via per-type builder
-  const builder = buildBuilder(note);
-  const typeBody = builder();
+  // R7hr — the single-note print body now comes from the SAME shared
+  // buildNurseNoteCardHtml() in the SAME prose mode the Complete IPD File uses
+  // (Narrative EmbeddedNoteCard), so an individual nursing note prints
+  // byte-identical to how it renders inside the full file. (Was calling the
+  // per-type buildBuilder() directly in card mode — a style divergence.)
 
   // Free-form remarks footer (if any in addition to structured body)
   const remarks = (note.remarks && note.noteType !== "general")
@@ -1115,15 +1117,18 @@ export function printNurseNote(note, hospitalSettings = {}) {
 </div>`;
 
   // Assembly
-  const bodyHtml = COMPACT_GRID_CSS + `
+  // The type title, structured body and signed line all come from the shared
+  // builder (below); the print adds only a status strip (no type pill — the
+  // builder + the shell's "Nursing Note — …" title already name the type),
+  // the late-entry banner, free-form remarks and the rich signature block.
+  const bodyHtml = `
   <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #e2e8f0">
-    <div style="padding:5px 14px;border-radius:6px;font-size:13px;font-weight:800;background:#fce7f3;color:#9d174d">${escapeHtml(typeLabel)}</div>
     ${statusBadge}
     ${critical}
     <div style="margin-left:auto;font-size:12px;color:#64748b">Shift: <strong style="text-transform:capitalize">${escapeHtml(shift)}</strong> · Recorded: ${noteDate}</div>
   </div>
   ${lateBanner}
-  ${typeBody}
+  ${buildNurseNoteCardHtml(note, { prose: true })}
   ${remarks}
   ${sigHtml}`;
 
