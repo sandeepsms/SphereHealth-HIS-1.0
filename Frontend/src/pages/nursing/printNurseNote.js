@@ -89,12 +89,16 @@ const COMPACT_GRID_CSS = `<style>
   /* R7hu — PROSE variant (Complete File print): flowing bold-label lines, no
      card chrome, matching the Doctor Initial Assessment narrative. Triggered by
      opts.prose; the nfx-* card classes above stay for the timeline + panel. */
-  .pfx-note{font-size:11.5px;color:#1e293b;line-height:1.5}
-  .pfx-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:#334155;margin:0 0 7px;padding-bottom:3px;border-bottom:2px solid #e2e8f0}
-  .pfx-h{margin:10px 0 3px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.5px}
-  .pfx-line{margin:4px 0;font-size:11.5px;line-height:1.5;color:#1e293b;white-space:pre-wrap}
+  /* R7hu — 2-column "book" layout (see buildDoctorNoteCardHtml for rationale):
+     fields flow into two columns; title / section heading / signature / tables
+     span both; a field line never splits across a column. */
+  .pfx-note{font-size:11px;color:#1e293b;line-height:1.4;column-count:2;column-gap:24px;-webkit-column-count:2}
+  .pfx-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:#334155;margin:0 0 6px;padding-bottom:3px;border-bottom:2px solid #e2e8f0;column-span:all;-webkit-column-span:all}
+  .pfx-h{margin:8px 0 2px;font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;column-span:all;-webkit-column-span:all;break-after:avoid}
+  .pfx-line{margin:3px 0;font-size:11px;line-height:1.4;color:#1e293b;white-space:pre-wrap;break-inside:avoid;-webkit-column-break-inside:avoid}
   .pfx-line strong{color:#0f172a;font-weight:700}
-  .pfx-sign{margin-top:10px;padding-top:6px;border-top:1px solid #e2e8f0;font-size:10.5px;color:#475569}
+  .pfx-sign{margin-top:9px;padding-top:5px;border-top:1px solid #e2e8f0;font-size:10px;color:#475569;column-span:all;-webkit-column-span:all}
+  .pfx-note table{column-span:all;-webkit-column-span:all}
 </style>`;
 
 // R7hu — when true, the shared helpers emit the PROSE variant instead of the
