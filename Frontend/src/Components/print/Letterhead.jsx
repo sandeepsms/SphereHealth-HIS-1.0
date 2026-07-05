@@ -144,9 +144,9 @@ export default function Letterhead({
         </div>
         <div className="lh-meta">
           {s.gstin          ? <div><strong>GSTIN:</strong> {s.gstin}</div> : null}
-          {s.registrationNo ? <div><strong>Reg No:</strong> {s.registrationNo}</div> : null}
+          {s.registrationNo ? <div><strong>Hospital Reg. No.:</strong> {s.registrationNo}</div> : null}
           {s.panNumber      ? <div><strong>PAN:</strong> {s.panNumber}</div> : null}
-          {s.rohiniId       ? <div><strong>ROHINI:</strong> {s.rohiniId}</div> : null}
+          {s.rohiniId       ? <div><strong>ROHINI ID:</strong> {s.rohiniId}</div> : null}
           {(showNabh || s.nabl) ? (
             <div style={{ marginTop: 4 }}>
               {showNabh ? (
@@ -201,9 +201,9 @@ export function buildLetterheadHtml({
 
   const metaRows = [
     s.gstin          ? `<div><strong>GSTIN:</strong> ${esc(s.gstin)}</div>` : "",
-    s.registrationNo ? `<div><strong>Reg No:</strong> ${esc(s.registrationNo)}</div>` : "",
+    s.registrationNo ? `<div><strong>Hospital Reg. No.:</strong> ${esc(s.registrationNo)}</div>` : "",
     s.panNumber      ? `<div><strong>PAN:</strong> ${esc(s.panNumber)}</div>` : "",
-    s.rohiniId       ? `<div><strong>ROHINI:</strong> ${esc(s.rohiniId)}</div>` : "",
+    s.rohiniId       ? `<div><strong>ROHINI ID:</strong> ${esc(s.rohiniId)}</div>` : "",
     (showNabh || s.nabl)
       ? `<div style="margin-top:4px;">${
           showNabh ? `<span class="lh-accred lh-accred--nabh" title="NABH Accredited · Cert ${esc(s.nabhCertNumber)}">NABH</span>` : ""
