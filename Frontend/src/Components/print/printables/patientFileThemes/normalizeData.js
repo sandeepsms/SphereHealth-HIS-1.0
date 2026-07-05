@@ -114,7 +114,15 @@ export function normalizeFileData(receipt = {}) {
   const r = receipt || {};
 
   const ia = r.ia || r.initialAssessment || {};
-  const iaDoctor  = ia.doctor  || r.doctorIA  || {};
+  // R7hu — the IPD doctor IA form nests all NABH P0/P1/P2 fields under `.nabh`
+  // (reviewOfSystems, comorbidities, codeStatus, riskAcknowledgement, prognosis,
+  // functionalEcog, clinicalExamination, elosDays, goalOfCare, differentialDx …)
+  // while every print theme reads them flat — so on REAL records those sections
+  // printed blank (and FlagLine asserted a false "none reported" on a legal doc).
+  // Flatten `.nabh` up once here so all five themes see them; the flat legacy /
+  // demo fields still win on the rare key collision.
+  const _iaDoctorRaw = ia.doctor || r.doctorIA || {};
+  const iaDoctor  = { ...(_iaDoctorRaw.nabh || {}), ..._iaDoctorRaw };
   const iaNursing = ia.nursing || r.nursingIA || {};
 
   // R7hr — the print is a bedside file: every list must read oldest→newest.

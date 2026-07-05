@@ -85,6 +85,14 @@ const COMPACT_GRID_CSS = `<style>
   .dfx-tbl{width:100%;border-collapse:collapse;font-size:11px;margin:5px 0 10px;page-break-inside:avoid;break-inside:avoid}
   .dfx-tbl th{padding:5px 8px;border:1px solid #e7edf3;background:#f6f8fb;font-size:10px;font-weight:800;text-align:left;color:#475569;text-transform:uppercase;letter-spacing:.3px}
   .dfx-tbl td{padding:5px 8px;border:1px solid #eef2f6;color:#0f172a}
+  /* R7hu — the Rx / Infusions / Lab-order tables use class .ndx-tbl, which was
+     never defined here → they rendered as unstyled browser-default tables that
+     overflowed the ~703px A4 print width and split mid-row across pages. Define
+     it: fixed layout keeps the 6 columns in-bounds, word-break wraps long
+     instructions, page-break-inside:avoid keeps each drug row whole. */
+  .ndx-tbl{width:100%;border-collapse:collapse;table-layout:fixed;font-size:10.5px;margin:5px 0 10px;page-break-inside:avoid;break-inside:avoid}
+  .ndx-tbl th{padding:4px 6px;border:1px solid #e7edf3;background:#f6f8fb;font-size:9.5px;font-weight:800;text-align:left;color:#475569;text-transform:uppercase;letter-spacing:.3px;word-break:break-word}
+  .ndx-tbl td{padding:4px 6px;border:1px solid #eef2f6;color:#0f172a;font-size:10.5px;word-break:break-word;overflow-wrap:anywhere;vertical-align:top}
   .dfx-narr{margin:6px 0 11px;padding:9px 13px;background:#f8fafc;border-left:3px solid #cbd5e1;border-radius:0 6px 6px 0;font-size:11.5px;white-space:pre-wrap;line-height:1.45}
   .dfx-banner{margin:6px 0 12px;padding:9px 14px;border-radius:7px;font-size:12px;font-weight:700}
 </style>`;

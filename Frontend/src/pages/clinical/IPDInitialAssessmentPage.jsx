@@ -40,6 +40,7 @@ const C = {
   green: "#16a34a", greenL: "#dcfce7",
   red: "#dc2626", redL: "#fef2f2",
   amber: "#d97706", amberL: "#fffbeb",
+  warn: "#d97706", warnL: "#fffbeb",   // R7hu — `warn`/`warnL` were referenced (Special Precautions / Barthel / NRS banners) but never defined → undefined CSS colours; alias to amber.
   teal: "#0d9488", tealL: "#f0fdfa",
   purple: "#7c3aed", purpleL: "#f5f3ff",
   orange: "#ea580c", orangeL: "#fff7ed",
@@ -1547,10 +1548,19 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
               }));
             }
             if (dNabh.anthropometry)    setDocAnthropo(a => ({ ...a, ...dNabh.anthropometry }));
-            if (dNabh.localExamination) setLocalExam(e => ({ ...e, ...dNabh.localExamination }));
-            if (dNabh.referrals)        setReferrals(r => ({ ...r, ...dNabh.referrals }));
+            // R7hu — these were spread with the wrong container type on load,
+            // corrupting state when a saved IA is reopened to edit:
+            //  • localExamination is a STRING — spreading it built a char-indexed
+            //    object that later printed as "[object Object]".
+            //  • referrals is an ARRAY — spreading into {} made it a non-array,
+            //    so referrals.map / .filter THREW and the form crashed on reopen.
+            //  • consentRequired is an OBJECT — coercing with !! set the whole
+            //    consent state to a boolean, losing every saved consent flag.
+            // Restore each in its native shape.
+            if (typeof dNabh.localExamination === "string") setLocalExam(dNabh.localExamination);
+            if (Array.isArray(dNabh.referrals))        setReferrals(dNabh.referrals);
             if (dNabh.prognosis)        setPrognosis(p => ({ ...p, ...dNabh.prognosis }));
-            if (dNabh.consentRequired !== undefined) setConsentNeeded(!!dNabh.consentRequired);
+            if (dNabh.consentRequired && typeof dNabh.consentRequired === "object") setConsentNeeded(c => ({ ...c, ...dNabh.consentRequired }));
             if (dNabh.obstetricGynae)   setObGyn(o => ({ ...o, ...dNabh.obstetricGynae }));
             if (dNabh.immunisationStatus) setImmunisation(i => ({ ...i, ...dNabh.immunisationStatus }));
             if (dNabh.functionalEcog)   setEcog(e => ({ ...e, ...dNabh.functionalEcog }));
@@ -1816,13 +1826,14 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
 
       ${block("Vitals on Admission", "NABH AAC.1.b", `
         <div class="grid grid-4">
-          ${kv("BP", vitals?.bp)}
+          ${kv("BP", vitals?.bpSys && vitals?.bpDia ? `${vitals.bpSys}/${vitals.bpDia} mmHg` : "")}
           ${kv("Pulse", vitals?.pulse)}
           ${kv("RR", vitals?.rr)}
           ${kv("Temp", vitals?.temp)}
           ${kv("SpO2", vitals?.spo2)}
-          ${kv("RBS", vitals?.rbs)}
+          ${kv("Weight", vitals?.weight ? `${vitals.weight} kg` : "")}
         </div>`)}
+          ${/* R7hu — was kv("BP", vitals.bp) + kv("RBS", vitals.rbs): state holds bpSys/bpDia and has no `bp`/`rbs` key, so BP always printed "—" and RBS was a permanent dead row. Build BP from bpSys/bpDia; show captured Weight instead of the non-existent RBS field. */""}
 
       ${block("Anthropometry", "Safety", `
         <div class="grid grid-4">
@@ -2388,7 +2399,16 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           // After POST, the row is still draft; if `sign` requested, hit
           // /sign now on the freshly-created row.
           if (sign) {
-            try { await axios.patch(`${API_ENDPOINTS.DOCTOR_NOTES}/${newId}/sign`); } catch (_) {}
+            // R7hu — was `catch (_) {}`: a failed /sign left the row as DRAFT on
+            // the server yet the code still showed "signed ✓" and locked the
+            // form. Surface it; the draft id is already set, so pressing Sign
+            // again takes the PUT+sign path on the existing row.
+            try {
+              await axios.patch(`${API_ENDPOINTS.DOCTOR_NOTES}/${newId}/sign`);
+            } catch (e) {
+              toast.error("Saved as draft — sign-off failed, please press Sign again. " + (e.response?.data?.message || ""));
+              return;   // outer finally still clears `saving`; skip the "signed ✓" success path
+            }
           }
         }
       }
@@ -2420,13 +2440,15 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
             status:         sign ? "submitted" : "draft",
             ...(sign ? { submittedAt: new Date().toISOString() } : {}),
             vitals: {
-              bp:    { systolic: Number(vitals?.bp?.split("/")?.[0]) || undefined,
-                       diastolic: Number(vitals?.bp?.split("/")?.[1]) || undefined },
+              // R7hu — state holds bpSys/bpDia (no `bp` string) and has no `rbs`
+              // key; the old reads (vitals.bp.split / vitals.rbs) always yielded
+              // undefined, so BP + blood-sugar never mirrored to the nurse timeline.
+              bp:    { systolic:  Number(vitals?.bpSys) || undefined,
+                       diastolic: Number(vitals?.bpDia) || undefined },
               pulse:      Number(vitals?.pulse) || undefined,
               temp:       Number(vitals?.temp)  || undefined,
               rr:         Number(vitals?.rr)    || undefined,
               spo2:       Number(vitals?.spo2)  || undefined,
-              bloodSugar: Number(vitals?.rbs)   || undefined,
             },
             painScore: Number(painScore) || 0,
             painAssessment: painPresent
@@ -2444,7 +2466,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
               nursing:     payload.noteDetails.nursing,
               nursingNabh: payload.noteDetails.nursingNabh,
               section:     "nursing",
-              linkedDoctorNoteId: noteId || res.data?.data?._id || res.data?._id,
+              linkedDoctorNoteId: res.data?.data?._id || res.data?._id,   // R7hu — was `noteId || …`; `noteId` is undefined in this scope (a swallowed ReferenceError), so the mirror never actually linked back to the DoctorNote.
               assessmentDate: payload.assessmentDate,
             },
           };
