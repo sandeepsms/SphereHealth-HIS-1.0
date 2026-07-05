@@ -2382,57 +2382,12 @@ function ActivityFeed({ activityLog }) {
   );
 }
 
-/* ── Print template ─────────────────────────────────────────── */
-function PrintLetterhead({ patient, currentAdmission, role, hs = {} }) {
-  const initials = (patient?.fullName || "P").split(/\s+/).map((s) => s[0]).slice(0, 2).join("").toUpperCase();
-  const ageDisp = patient?.age || (patient?.dateOfBirth
-    ? Math.floor((Date.now() - new Date(patient.dateOfBirth)) / (365.25 * 24 * 3600 * 1000)) + "y"
-    : "—");
-  // R7cb-B: hospital identity from live Settings — hospitalName replaces the
-  // legacy hardcoded brand and tagline becomes admin-configurable.
-  const hospName    = hs.hospitalName || "Hospital";
-  const hospTagline = hs.tagline || "";
-  const logoLetter  = (hospName.trim() || "H").charAt(0).toUpperCase();
-  return (
-    <header className="pf-print-letterhead">
-      <div className="pf-print-letterhead__brand">
-        {hs.logo
-          ? <img src={hs.logo} alt="" className="pf-print-letterhead__logo" style={{ maxHeight: 48, objectFit: "contain" }} />
-          : <div className="pf-print-letterhead__logo">{logoLetter}</div>}
-        <div>
-          <div className="pf-print-letterhead__hospital">{hospName}</div>
-          {hospTagline && <div className="pf-print-letterhead__sub">{hospTagline}</div>}
-        </div>
-      </div>
-      <div className="pf-print-letterhead__doc">
-        <div className="pf-print-letterhead__doc-title">Complete Patient File</div>
-        <div className="pf-print-letterhead__doc-sub">
-          {role === "nurse" ? "Nursing View" : "Doctor View"} ·
-          Generated {new Date().toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}
-        </div>
-      </div>
-
-      <div className="pf-print-patient">
-        <div className="pf-print-patient__avatar">{initials}</div>
-        <div className="pf-print-patient__main">
-          <div className="pf-print-patient__name">{patient?.title ? `${patient.title} ` : ""}{patient?.fullName || "—"}</div>
-          <div className="pf-print-patient__meta">
-            <span><strong>UHID:</strong> {patient?.UHID}</span>
-            <span><strong>Age / Sex:</strong> {ageDisp} / {patient?.gender || "—"}</span>
-            {patient?.bloodGroup && <span><strong>Blood:</strong> {patient.bloodGroup}</span>}
-            {patient?.contactNumber && <span><strong>☎</strong> {patient.contactNumber}</span>}
-          </div>
-        </div>
-        <div className="pf-print-patient__adm">
-          <div><strong>IPD No.:</strong> {currentAdmission?.admissionNumber || "—"}</div>
-          <div><strong>Bed / Ward:</strong> {[currentAdmission?.bedNumber, currentAdmission?.wardName].filter(Boolean).join(" — ") || "—"}</div>
-          <div><strong>Doctor:</strong> {currentAdmission?.attendingDoctor || "—"}</div>
-          <div><strong>Admitted:</strong> {currentAdmission?.admissionDate ? fmtDT(currentAdmission.admissionDate) : "—"}</div>
-        </div>
-      </div>
-    </header>
-  );
-}
+/* ── Print template ───────────────────────────────────────────
+   R7hr — the hand-rolled PrintLetterhead (logo + name + a top-right
+   "Complete Patient File" doc-label + patient strip) is DELETED. It was
+   already dead (print mode routes through PrintBody → PrintShell → the
+   shared <Letterhead>), and its top-right doc-label was the inconsistent
+   block being retired in favour of ONE canonical letterhead everywhere. */
 
 function PrintBody({ data, docInitial, nurseInitial, docOther, nurseOther, viewerRole,
   // R7fq Track D: PrintShell needs the same identity/admission props the
