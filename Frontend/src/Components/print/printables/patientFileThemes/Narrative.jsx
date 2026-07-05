@@ -954,7 +954,11 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
   // save timestamp, so 8 am notes appear before 8 pm notes regardless
   // of which one was filed first.
   const notesForDay = (dayKeyStr) => {
-    const docs  = (docNotesByDay.get(dayKeyStr) || []).map((n) => ({ ...n, _kind: "doctor"  }));
+    // R7hu — Initial Assessments (doctor + nurse) render in their own dedicated
+    // prose sections above the journey, so drop them here to avoid printing the
+    // IA twice (once in its section, once in the day-wise stream).
+    const _isIA = (n) => n.noteType === "initial" || n.noteType === "initialAssessment";
+    const docs  = (docNotesByDay.get(dayKeyStr) || []).filter((n) => !_isIA(n)).map((n) => ({ ...n, _kind: "doctor"  }));
     // R7hu — vitals are entered in the hourly Vital Chart (VitalSheet); the day
     // renders that as a full hourly grid below (vitalsBlock). So when this day
     // HAS a grid, drop the redundant single-snapshot "Vital Signs" note card —
