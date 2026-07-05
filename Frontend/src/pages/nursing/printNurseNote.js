@@ -144,6 +144,37 @@ const buildBuilder = (note) => {
   const BUILDERS = {
     // ─── VITAL SIGNS ─────────────────────────────────────────────────
     vitals: () => {
+      // R7hu — user requirement: nurses enter vitals in the HOURLY Vital Chart
+      // (VitalSheet grid), so a "Vital Signs" note must show that whole day's
+      // grid — one day's readings together — not a single snapshot. When the
+      // day's sheet is attached as `note.vitalSheet = {activeVitals, tableData,
+      // date}` (done by the Complete File print, the nurse timeline and the
+      // patient panel), render the full hourly table; otherwise fall back to
+      // the single reading (legacy single-snapshot note) so nothing regresses.
+      const sheet = note.vitalSheet || nd.vitalSheet;
+      const rows = Array.isArray(sheet?.tableData) ? sheet.tableData.filter((r) => r && r.time) : [];
+      const cellOf = (r, c) => {
+        const raw = r.values instanceof Map ? r.values.get(c) : r.values?.[c];
+        const val = raw && typeof raw === "object" ? raw.value : raw;
+        return val === 0 || val ? String(val) : "";
+      };
+      const cols = rows.length
+        ? (Array.isArray(sheet.activeVitals) && sheet.activeVitals.length
+            ? sheet.activeVitals.map((a) => a.name || a)
+            : [...new Set(rows.flatMap((r) => (r.values instanceof Map ? [...r.values.keys()] : Object.keys(r.values || {}))))])
+        : [];
+      const filled = rows.filter((r) => cols.some((c) => cellOf(r, c) !== "") || (r.notes && String(r.notes).trim()));
+      if (filled.length) {
+        const showNurse = filled.some((r) => r.nurseName);
+        const showNotes = filled.some((r) => r.notes && String(r.notes).trim());
+        const head = `<tr><th>Time</th>${cols.map((c) => `<th>${escapeHtml(c)}</th>`).join("")}${showNotes ? "<th>Remarks</th>" : ""}${showNurse ? "<th>By</th>" : ""}</tr>`;
+        const body = filled.map((r) =>
+          `<tr><td><strong>${escapeHtml(r.time)}</strong></td>${cols.map((c) => `<td>${escapeHtml(cellOf(r, c))}</td>`).join("")}${showNotes ? `<td>${escapeHtml(r.notes || "")}</td>` : ""}${showNurse ? `<td>${escapeHtml(r.nurseName || "")}</td>` : ""}</tr>`
+        ).join("");
+        return _section(`Vital Signs — Hourly Chart${sheet.date ? ` · ${sheet.date}` : ""}`, "#dc2626",
+          `<table class="nfx-tbl">${head}${body}</table>`);
+      }
+      // Fallback — single reading (legacy single-snapshot vitals note).
       const v = get("vitals");
       const bp = v.bp || (v.bp_sys ? { systolic: v.bp_sys, diastolic: v.bp_dia } : null);
       return _section("Vital Signs", "#dc2626", _grid([

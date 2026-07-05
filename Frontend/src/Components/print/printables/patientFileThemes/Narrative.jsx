@@ -951,7 +951,15 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
   // of which one was filed first.
   const notesForDay = (dayKeyStr) => {
     const docs  = (docNotesByDay.get(dayKeyStr) || []).map((n) => ({ ...n, _kind: "doctor"  }));
-    const nurs  = (nurNotesByDay.get(dayKeyStr) || []).map((n) => ({ ...n, _kind: "nursing" }));
+    // R7hu — vitals are entered in the hourly Vital Chart (VitalSheet); the day
+    // renders that as a full hourly grid below (vitalsBlock). So when this day
+    // HAS a grid, drop the redundant single-snapshot "Vital Signs" note card —
+    // the user's "vitals aise show he nhi honge". A day with a vitals note but
+    // no grid still shows the note (fallback), so nothing is ever lost.
+    const hasVitalGrid = (vitalsByDay.get(dayKeyStr) || []).length > 0;
+    const nurs  = (nurNotesByDay.get(dayKeyStr) || [])
+      .filter((n) => !(hasVitalGrid && n.noteType === "vitals"))
+      .map((n) => ({ ...n, _kind: "nursing" }));
     return [...docs, ...nurs].sort((a, b) =>
       new Date(a.noteDate || a.createdAt || 0).getTime()
       - new Date(b.noteDate || b.createdAt || 0).getTime()
@@ -2035,19 +2043,23 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
 
               const vitalsBlock = vitals.length > 0 ? (
                 <div key={`day-vit-${k}`} style={{ marginBottom: 6 }}>
-                  <Para style={subHeadStyle}>Vital Signs</Para>
+                  <Para style={subHeadStyle}>Vital Signs — Hourly Chart</Para>
                   <MiniTable
-                    headers={["Time", "BP", "P", "T", "SpO₂", "RR", "By"]}
+                    // R7hu — one day's hourly readings together; GCS added, and
+                    // empty cells stay blank (never a "—" placeholder). MiniTable
+                    // auto-drops any column that is empty for every row.
+                    headers={["Time", "BP", "Pulse", "Temp", "SpO₂", "RR", "GCS", "By"]}
                     rows={vitals.map((v) => [
                       fmtTimeOnly(v.at || v.recordedAt || v.createdAt),
-                      v.bp || v.bloodPressure || "—",
-                      v.pulse != null ? String(v.pulse) : "—",
-                      v.temp != null ? String(v.temp) : "—",
-                      v.spo2 != null ? String(v.spo2) : "—",
-                      v.rr   != null ? String(v.rr)   : "—",
-                      displayActor(v.recordedBy || v.by) || "—",
+                      v.bp || v.bloodPressure || "",
+                      v.pulse != null ? String(v.pulse) : "",
+                      v.temp != null ? String(v.temp) : "",
+                      v.spo2 != null ? String(v.spo2) : "",
+                      v.rr   != null ? String(v.rr)   : "",
+                      (v.gcs != null && v.gcs !== "") ? String(v.gcs) : "",
+                      displayActor(v.recordedBy || v.by) || "",
                     ])}
-                    widths={["12%", "16%", "10%", "10%", "12%", "10%", "30%"]}
+                    widths={["11%", "15%", "10%", "10%", "11%", "9%", "9%", "25%"]}
                   />
                 </div>
               ) : null;
