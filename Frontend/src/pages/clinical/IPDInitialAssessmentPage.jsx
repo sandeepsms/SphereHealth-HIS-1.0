@@ -95,7 +95,7 @@ function Grid3({ children }) {
   return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>{children}</div>;
 }
 function Grid4({ children }) {
-  return <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>{children}</div>;
+  return <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>{children}</div>;
 }
 
 function Field({ label, required, children, hint }) {
@@ -3122,7 +3122,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
 
           {/* ── Admission Details ── */}
           <Section title="Admission Details" icon="pi-calendar-plus" color={C.teal} disabled={ro}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 14 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 14 }}>
               <Field label="Admit Date"><input type="date" value={admitDate} onChange={e => setAdmitDate(e.target.value)} className="his-field" /></Field>
               <Field label="Admit Time"><input type="time" value={admitTime} onChange={e => setAdmitTime(e.target.value)} className="his-field" /></Field>
               <Field label="IPD Number"><input value={ipdNo} onChange={e => setIpdNo(e.target.value)} placeholder="IPD-XXXX" className="his-field" /></Field>
@@ -3132,7 +3132,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
                 </select>
               </Field>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
               <Field label="Admitting Nurse"><input value={nurseName} onChange={e => setNurseName(e.target.value)} placeholder="Nurse name" className="his-field" /></Field>
               <Field label="Ward"><input value={ward} onChange={e => setWard(e.target.value)} placeholder="Ward name" className="his-field" /></Field>
               <Field label="Bed No."><input value={bedNo} onChange={e => setBedNo(e.target.value)} placeholder="Bed number" className="his-field" /></Field>
@@ -3156,7 +3156,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
 
           {/* ── Vitals ── */}
           <Section title="Vitals on Admission" icon="pi-heart-fill" color={C.red} badge="NABH Required" disabled={ro}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 12 }}>
               {[
                 { label: "BP Systolic", key: "bpSys", unit: "mmHg" },
                 { label: "BP Diastolic", key: "bpDia", unit: "mmHg" },
@@ -3171,7 +3171,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
                 </div>
               ))}
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
               {[
                 { label: "SpO₂", key: "spo2", unit: "%" },
                 { label: "Resp Rate", key: "rr", unit: "/min" },
@@ -3387,7 +3387,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
 
           {/* ── N1 · Patient Identification (PSQ.1 two-identifier) ── */}
           <Section title="Patient Identification" icon="pi-id-card" color={C.teal} badge="NABH PSQ.1" disabled={ro}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 12, fontSize: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12, fontSize: 12 }}>
               <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
                 <input type="checkbox" checked={idBand.bandAttached}
                   onChange={e => setIdBand(b => ({ ...b, bandAttached: e.target.checked }))} />
@@ -3577,7 +3577,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
               const total = cfg.reduce((s, [k]) => s + Number(barthel[k] || 0), 0);
               return (
                 <>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 8, fontSize: 11.5 }}>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 8, fontSize: 11.5 }}>
                     {cfg.map(([k, label, opts]) => (
                       <div key={k} style={{ display: "grid", gridTemplateColumns: "160px 1fr", gap: 6, alignItems: "center" }}>
                         <span style={{ fontWeight: 600, color: C.muted }}>{label}</span>
@@ -3655,7 +3655,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
                 )}
               </div>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, fontSize: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8, fontSize: 12 }}>
               {[
                 ["suicide", "Suicide precaution"],
                 ["fallPrecaution", "Fall precaution"],
@@ -3676,7 +3676,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
 
           {/* ── N9 · Education Needs ── */}
           <Section title="Patient Education Needs" icon="pi-book" color={C.green} badge="NABH AAC.6 + PRE.5" disabled={ro}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 12 }}>
               <Field label="Preferred language">
                 <select value={educationNeeds.preferredLanguage}
                   onChange={e => setEducationNeeds(p => ({ ...p, preferredLanguage: e.target.value }))} className="his-field">
@@ -3750,7 +3750,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
               <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, marginBottom: 6, textTransform: "uppercase", letterSpacing: ".4px" }}>
                 Equipment likely needed at discharge
               </div>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, fontSize: 12 }}>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8, fontSize: 12 }}>
                 {["Walker", "Wheelchair", "Oxygen concentrator", "Commode", "Hospital bed", "Suction machine", "Nebuliser", "Glucometer"].map(item => (
                   <label key={item} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
                     <input type="checkbox" checked={dischargePlan.equipmentNeeded.includes(item)}
@@ -4020,7 +4020,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
             <div style={{ fontSize: 10.5, color: C.muted, marginBottom: 8 }}>
               Flag drives observation frequency, escalation protocols, and discharge planning urgency.
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, fontSize: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8, fontSize: 12 }}>
               {[
                 ["pediatric", "Pediatric (<18y)"],
                 ["geriatric", "Geriatric (>65y)"],
@@ -4267,7 +4267,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
 
           {/* ── Doctor Header ── */}
           <Section title="Doctor & Admission Info" icon="pi-id-card" color={C.accent} disabled={ro}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
               <Field label="Doctor Name" required>
                 <input value={doctorName} onChange={e => setDoctorName(e.target.value)} placeholder="Dr. Full Name" className="his-field" />
               </Field>
@@ -4313,7 +4313,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
                 <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 8 }}>
                   Past Surgical History
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, fontSize: 12, marginBottom: 8 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 8, fontSize: 12, marginBottom: 8 }}>
                   {PSH_OPTIONS.map(([k, label]) => (
                     <label key={k} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
                       <input type="checkbox" checked={!!pshStruct[k]}
@@ -4332,7 +4332,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
                 <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 8 }}>
                   Family History (hereditary conditions)
                 </div>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, fontSize: 12, marginBottom: 8 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 8, fontSize: 12, marginBottom: 8 }}>
                   {FAMHX_OPTIONS.map(([k, label]) => (
                     <label key={k} style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
                       <input type="checkbox" checked={!!famHxStruct[k]}
@@ -4394,7 +4394,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
               print block + downstream consumers without a schema
               change. */}
           <Section title="Co-morbidities" icon="pi-list-check" color={C.purple} badge="NABH AAC.1" disabled={ro}>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, fontSize: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 8, fontSize: 12 }}>
               {[
                 ["diabetes", "Diabetes Mellitus"],   ["hypertension", "Hypertension"],
                 ["cad", "CAD / IHD"],                ["ckd", "Chronic Kidney Disease"],
@@ -4466,6 +4466,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
               {!noKnownAllergies && (
                 <>
                   {allergyList.length > 0 && (
+                    <div style={{ overflowX: "auto" }}>
                     <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 6, fontSize: 11.5 }}>
                       <thead>
                         <tr style={{ background: C.redL }}>
@@ -4502,6 +4503,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
                         ))}
                       </tbody>
                     </table>
+                    </div>
                   )}
                   <button onClick={() => setAllergyList(l => [...l, { type: "Drug", agent: "", severity: "Mild", reaction: "" }])}
                     style={{ padding: "5px 12px", border: `1.5px dashed ${C.red}60`, borderRadius: 6,
@@ -4525,6 +4527,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
                   Continue/Hold dropdown for those rows. Doctor-added
                   rows (not in nurse's homeMeds) remain fully editable. */}
               {medRecon.length > 0 && (
+                <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 6, fontSize: 11.5 }}>
                   <thead>
                     <tr style={{ background: "#f8fafc" }}>
@@ -4608,6 +4611,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
                     })}
                   </tbody>
                 </table>
+                </div>
               )}
               {homeMeds.length > 0 && medRecon.length === 0 && (
                 <div style={{ fontSize: 11, color: C.muted, fontStyle: "italic", marginTop: 4 }}>
@@ -5095,7 +5099,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
                     Ht / Wt / BMI measured by nursing — read-only here. Only IBW is doctor-editable.
                   </div>
                 )}
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>
                   <Field label={fromNursing ? "Height (cm) · from nursing" : "Height (cm)"}>
                     <input type="number" value={docAnthropo.heightCm} readOnly={fromNursing}
                       onChange={e => {
@@ -5149,6 +5153,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
           {/* ── D12 · Cross-Consultation / Referrals ── */}
           <Section title="Cross-Consultation / Referrals" icon="pi-users" color={C.accent} badge="NABH COP" disabled={ro}>
             {referrals.length > 0 && (
+              <div style={{ overflowX: "auto" }}>
               <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 8, fontSize: 11.5 }}>
                 <thead>
                   <tr style={{ background: "#f8fafc" }}>
@@ -5177,6 +5182,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
                   ))}
                 </tbody>
               </table>
+              </div>
             )}
             <button onClick={() => setReferrals(l => [...l, { specialty: "", reason: "", urgency: "Routine", status: "Requested" }])}
               style={{ padding: "5px 12px", border: `1.5px dashed ${C.accent}60`, borderRadius: 6, background: C.accentL, cursor: "pointer", fontSize: 11.5, fontWeight: 600, color: C.accent }}>
@@ -5219,7 +5225,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
               Flag which consents must be obtained before procedures. Each flagged consent must be captured
               with biometric + staff e-sign via the Consent Forms page (R7ez).
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8, fontSize: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 8, fontSize: 12 }}>
               {[
                 ["surgical", "Surgical / Operation"],
                 ["anesthesia", "Anaesthesia"],
@@ -5251,7 +5257,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
             </label>
             {obGyn.isApplicable && (
               <>
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 10 }}>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 10 }}>
                   <Field label="LMP (Last Menstrual Period)"><input type="date" value={obGyn.lmp} onChange={e => setObGyn(p => ({ ...p, lmp: e.target.value }))} className="his-field" /></Field>
                   <Field label="Cycle days (e.g. 28)"><input value={obGyn.cycleDays} onChange={e => setObGyn(p => ({ ...p, cycleDays: e.target.value }))} className="his-field" placeholder="28" /></Field>
                   <Field label="G P A L">
@@ -5297,7 +5303,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
               <input type="checkbox" checked={immunisation.upToDateForAge} onChange={e => setImmunisation(p => ({ ...p, upToDateForAge: e.target.checked }))} />
               Up-to-date for age per national schedule
             </label>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(2,1fr)", gap: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 10 }}>
               {[
                 ["tetanus", "Tetanus / Td"], ["hepB", "Hepatitis B"],
                 ["covid", "COVID-19"],       ["influenza", "Influenza"],

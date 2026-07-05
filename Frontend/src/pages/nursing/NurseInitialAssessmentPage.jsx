@@ -74,14 +74,17 @@ function Section({ title, icon, color = C.primary, badge, nabh, children, defaul
   );
 }
 
+// R7hu — responsive: `auto-fit + minmax` reflows these grids to fewer columns
+// on tablets/phones (bedside use) with no media queries. Every section built
+// from G2/G3/G4 becomes responsive at once.
 function G2({ children, gap = 14 }) {
-  return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap }}>{children}</div>;
+  return <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap }}>{children}</div>;
 }
 function G3({ children }) {
-  return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>{children}</div>;
+  return <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14 }}>{children}</div>;
 }
 function G4({ children }) {
-  return <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14 }}>{children}</div>;
+  return <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 14 }}>{children}</div>;
 }
 
 function F({ label, required, children, hint }) {
@@ -771,7 +774,7 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
 
       {/* ── 2. Vital Signs ── */}
       <Section title="Vital Signs at Admission" icon="pi-heart" color={C.red} nabh>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginBottom: 16 }}>
           <VitalCard label="BP Systolic" unit="mmHg" placeholder="120" icon="pi-angle-up"
             value={vitals.bpSys} onChange={upd(setVitals)("bpSys")} color={C.red} />
           <VitalCard label="BP Diastolic" unit="mmHg" placeholder="80" icon="pi-angle-down"
@@ -794,7 +797,7 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
             color={C.purple} />
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 2fr", gap: 12, marginBottom: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 16 }}>
           <div style={{
             background: C.primaryL, border: `1.5px solid ${C.primary}25`, borderRadius: 12,
             padding: "12px 14px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
@@ -875,6 +878,11 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
             <input className="his-field" value={nutrition.allergies}
               onChange={upd(setNutrition)("allergies")}
               placeholder="None / list specific items" />
+          </F>
+          <F label="Nutrition Notes">
+            <input className="his-field" value={nutrition.nutritionNotes}
+              onChange={upd(setNutrition)("nutritionNotes")}
+              placeholder="Appetite, supplements, dietitian referral…" />
           </F>
         </G3>
       </Section>
@@ -958,6 +966,12 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
             <input className="his-field" value={systems.respiratoryNotes} onChange={upd(setSystems)("respiratoryNotes")}
               placeholder="Cough, sputum, dyspnea…" />
           </F>
+          {systems.oxygenSupport !== "No" && (
+            <F label="Oxygen Flow (L/min)">
+              <input className="his-field" type="number" min="0" value={systems.oxygenLPM}
+                onChange={upd(setSystems)("oxygenLPM")} placeholder="e.g. 4" />
+            </F>
+          )}
         </G3>
       </Section>
 
@@ -978,9 +992,45 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
             <input className="his-field" type="date" value={systems.lastBowelMovement}
               onChange={upd(setSystems)("lastBowelMovement")} />
           </F>
+          <F label="Nausea">
+            <select className="his-select" value={systems.nausea} onChange={upd(setSystems)("nausea")}>
+              {["No","Yes"].map(v => <option key={v}>{v}</option>)}
+            </select>
+          </F>
+          <F label="Vomiting">
+            <select className="his-select" value={systems.vomiting} onChange={upd(setSystems)("vomiting")}>
+              {["No","Yes"].map(v => <option key={v}>{v}</option>)}
+            </select>
+          </F>
           <F label="GI Notes">
             <input className="his-field" value={systems.giNotes} onChange={upd(setSystems)("giNotes")}
-              placeholder="Nausea, vomiting, appetite…" />
+              placeholder="Appetite, reflux, melena…" />
+          </F>
+        </G4>
+      </Section>
+
+      {/* ── 7b. Genitourinary Assessment (NABH head-to-toe) ── */}
+      <Section title="Genitourinary Assessment" icon="pi-filter" color={C.primary} nabh>
+        <G4>
+          <F label="Urinary Pattern">
+            <select className="his-select" value={systems.urinaryPattern} onChange={upd(setSystems)("urinaryPattern")}>
+              {["Normal","Frequency","Urgency","Retention","Incontinence","Oliguria","Anuria","Dysuria"].map(v => <option key={v}>{v}</option>)}
+            </select>
+          </F>
+          <F label="Urinary Catheter">
+            <select className="his-select" value={systems.catheter} onChange={upd(setSystems)("catheter")}>
+              {["No","Yes"].map(v => <option key={v}>{v}</option>)}
+            </select>
+          </F>
+          {systems.catheter === "Yes" && (
+            <F label="Catheter Type / Size">
+              <input className="his-field" value={systems.catheterSite} onChange={upd(setSystems)("catheterSite")}
+                placeholder="e.g. Foley 16Fr" />
+            </F>
+          )}
+          <F label="GU Notes">
+            <input className="his-field" value={systems.guNotes} onChange={upd(setSystems)("guNotes")}
+              placeholder="Output volume, colour, dysuria…" />
           </F>
         </G4>
       </Section>
@@ -1041,6 +1091,14 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
                     placeholder="Size, color, drainage, stage…" />
                 </F>
               </G2>
+              {systems.edema !== "No" && (
+                <div style={{ marginTop: 12 }}>
+                  <F label="Edema Location">
+                    <input className="his-field" value={systems.edemaLocation} onChange={upd(setSystems)("edemaLocation")}
+                      placeholder="e.g. Bilateral ankles, sacrum…" />
+                  </F>
+                </div>
+              )}
             </div>
           )}
         </SubSystem>
@@ -1100,7 +1158,6 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
                 { label: "Foley Catheter", key: "catheter" },
                 { label: "NG Tube",        key: "feedingMethod_ngt" },
                 { label: "O₂ Support",     key: "oxygenSupport_active" },
-                { label: "Drain",          key: "drain" },
               ].map(({ label, key }) => {
                 const active =
                   key === "catheter"           ? systems.catheter === "Yes"
@@ -1170,6 +1227,16 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
               {["Family Present","Friend Present","Caregiver Present","Alone","No Support"].map(v => <option key={v}>{v}</option>)}
             </select>
           </F>
+          <F label="Abuse / Neglect Risk (NABH)">
+            <select className="his-select" value={psycho.physicalAbuseRisk} onChange={upd(setPsycho)("physicalAbuseRisk")}>
+              {["No","Suspected","Confirmed — escalated"].map(v => <option key={v}>{v}</option>)}
+            </select>
+          </F>
+          <F label="Spiritual / Cultural Needs">
+            <select className="his-select" value={psycho.spiritualNeeds} onChange={upd(setPsycho)("spiritualNeeds")}>
+              {["No","Yes — noted"].map(v => <option key={v}>{v}</option>)}
+            </select>
+          </F>
         </G3>
       </Section>
 
@@ -1188,7 +1255,7 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
             </div>
             <ScoreBadge score={bradenScore} label={bradenRisk.label} color={bradenRisk.color} />
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
             {[
               { key: "sensoryPerception", label: "Sensory Perception", opts: [["1","Completely Limited"],["2","Very Limited"],["3","Slightly Limited"],["4","No Impairment"]] },
               { key: "moisture",          label: "Moisture",           opts: [["1","Constantly Moist"],["2","Often Moist"],["3","Occasionally"],["4","Rarely Moist"]] },
@@ -1220,7 +1287,7 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
             </div>
             <ScoreBadge score={morseScore} label={morseRisk.label} color={morseRisk.color} />
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
             {[
               { key: "fallHistory",        label: "History of Falling",    opts: [["0","No"],["25","Yes"]] },
               { key: "secondaryDiagnosis", label: "Secondary Diagnosis",   opts: [["0","No"],["15","Yes"]] },
