@@ -192,7 +192,7 @@ function ScoreBadge({ score, label, color = C.blue }) {
       background: color + "12", border: `2px solid ${color}40`, borderRadius: 12,
       minWidth: 90,
     }}>
-      <div style={{ fontSize: 30, fontWeight: 800, color, lineHeight: 1 }}>{score}</div>
+      <div style={{ fontSize: 30, fontWeight: 800, color, lineHeight: 1 }}>{score == null ? "—" : score}</div>
       <div style={{ fontSize: 10, color: C.muted, fontWeight: 600, marginTop: 4 }}>{label}</div>
     </div>
   );
@@ -307,18 +307,23 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
   });
 
   // ── Risk Assessments ─────────────────────────────────────────
+  // R7hu — defaults were the max-safe scores (Braden all-4 → 23 "No Risk",
+  // Morse all-0 → 0 "Low Risk"), so an untouched form persisted a fabricated
+  // "no pressure-injury / no fall risk" — the opposite of a safe default for a
+  // screening tool. Start unselected; the band stays "Not assessed" until the
+  // nurse scores every item.
   const [braden, setBraden] = useState({
-    sensoryPerception: "4", moisture: "4", activity: "4",
-    mobility: "4", nutrition: "4", frictionShear: "3",
+    sensoryPerception: "", moisture: "", activity: "",
+    mobility: "", nutrition: "", frictionShear: "",
   });
 
   const [morse, setMorse] = useState({
-    fallHistory: "0",
-    secondaryDiagnosis: "0",
-    ambulatoryAid: "0",
-    ivAccess: "0",
-    gaitBalance: "0",
-    mentalStatus: "0",
+    fallHistory: "",
+    secondaryDiagnosis: "",
+    ambulatoryAid: "",
+    ivAccess: "",
+    gaitBalance: "",
+    mentalStatus: "",
   });
 
   // ── Discharge Planning ────────────────────────────────────────
@@ -346,37 +351,92 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
 
   // ── Auto-fill when selectedPatient changes ────────────────────
   useEffect(() => {
-    if (selectedPatient) {
-      setUhid(selectedPatient.UHID || "");
-      setIpdNo(selectedPatient.admissionNumber || selectedPatient.bedNumber || "");
-      setPatInfo(selectedPatient);
-      // Restore auto-save draft if available
-      const draft = loadDraft();
-      if (draft?.data) {
-        const d = draft.data;
-        if (d.vitals)    setVitals(d.vitals);
-        if (d.systems)   setSystems(d.systems);
-        if (d.psycho)    setPsycho(d.psycho);
-        if (d.nutrition) setNutrition(d.nutrition);
-        if (d.braden)    setBraden(d.braden);
-        if (d.morse)     setMorse(d.morse);
-        if (d.discharge) setDischarge(d.discharge);
-        if (d.signoff)   setSignoff(d.signoff);
-        toast.info("Draft restored", { autoClose: 2000 });
+    if (!selectedPatient) return;
+    setUhid(selectedPatient.UHID || "");
+    setIpdNo(selectedPatient.admissionNumber || selectedPatient.bedNumber || "");
+    setPatInfo(selectedPatient);
+    setSaved(false);   // R7hu — clear the previous patient's "saved" banner.
+
+    let cancelled = false;
+    (async () => {
+      // R7hu — CRITICAL: the form previously had NO load path, so opening a
+      // patient who already had a saved nurse IA showed every field at its
+      // default and re-saving OVERWROTE the real record with defaults. Fetch
+      // the saved assessment (source of truth) and hydrate; fall back to the
+      // local draft only when the server has nothing (so a stale device-local
+      // draft can never mask the real saved record).
+      let hydratedFromServer = false;
+      try {
+        const token = sessionStorage.getItem("his_token");
+        const res = await axios.get(
+          `${API_ENDPOINTS.ADMISSIONS}/${selectedPatient._id}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        const adm = res.data?.data || res.data || {};
+        const a = adm.nurseInitialAssessment;
+        if (!cancelled && a && Object.keys(a).length) {
+          if (a.vitals)             setVitals(v => ({ ...v, ...a.vitals }));
+          if (a.systemAssessment)   setSystems(s => ({ ...s, ...a.systemAssessment }));
+          if (a.psychosocial)       setPsycho(p => ({ ...p, ...a.psychosocial }));
+          if (a.nutritionHydration) setNutrition(n => ({ ...n, ...a.nutritionHydration }));
+          if (a.riskAssessments?.bradenScale) {
+            const { totalScore, riskLevel, ...bs } = a.riskAssessments.bradenScale;
+            setBraden(b => ({ ...b, ...bs }));
+          }
+          if (a.riskAssessments?.morseFallScale) {
+            const { totalScore, riskLevel, ...ms } = a.riskAssessments.morseFallScale;
+            setMorse(m => ({ ...m, ...ms }));
+          }
+          if (a.dischargePlanning)  setDischarge(d => ({ ...d, ...a.dischargePlanning }));
+          setSignoff(s => ({
+            ...s,
+            nurseName:   a.assessedBy || a.nurseName || s.nurseName,
+            nurseId:     a.nurseId || s.nurseId,
+            designation: a.designation || s.designation,
+            notes:       a.notes ?? s.notes,
+          }));
+          hydratedFromServer = true;
+          toast.info("Loaded saved assessment", { autoClose: 2000 });
+        }
+      } catch { /* no saved assessment / fetch failed — fall through to draft */ }
+
+      if (!cancelled && !hydratedFromServer) {
+        const draft = loadDraft();
+        if (draft?.data) {
+          const d = draft.data;
+          if (d.vitals)    setVitals(d.vitals);
+          if (d.systems)   setSystems(d.systems);
+          if (d.psycho)    setPsycho(d.psycho);
+          if (d.nutrition) setNutrition(d.nutrition);
+          if (d.braden)    setBraden(d.braden);
+          if (d.morse)     setMorse(d.morse);
+          if (d.discharge) setDischarge(d.discharge);
+          if (d.signoff)   setSignoff(d.signoff);
+          toast.info("Draft restored", { autoClose: 2000 });
+        }
       }
-    }
+    })();
+    return () => { cancelled = true; };
   }, [selectedPatient]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Derived scores ────────────────────────────────────────────
-  const bradenScore = Object.values(braden).reduce((s, v) => s + parseInt(v || 0), 0);
-  const bradenRisk  = bradenScore <= 9  ? { label: "Very High Risk", color: C.red }
+  // R7hu — only band a score once EVERY item is scored; an incomplete scale is
+  // "Not assessed", never a falsely-reassuring 0 / low / no-risk.
+  const bradenComplete = Object.values(braden).every(v => v !== "" && v != null);
+  const bradenScore = bradenComplete
+    ? Object.values(braden).reduce((s, v) => s + parseInt(v || 0), 0) : null;
+  const bradenRisk  = bradenScore == null ? { label: "Not assessed", color: C.muted }
+                    : bradenScore <= 9  ? { label: "Very High Risk", color: C.red }
                     : bradenScore <= 12 ? { label: "High Risk",       color: C.red }
                     : bradenScore <= 14 ? { label: "Moderate Risk",   color: C.amber }
                     : bradenScore <= 18 ? { label: "Mild Risk",       color: C.amber }
                     : { label: "No Risk", color: C.green };
 
-  const morseScore = Object.values(morse).reduce((s, v) => s + parseInt(v || 0), 0);
-  const morseRisk  = morseScore >= 45 ? { label: "High Fall Risk",   color: C.red }
+  const morseComplete = Object.values(morse).every(v => v !== "" && v != null);
+  const morseScore = morseComplete
+    ? Object.values(morse).reduce((s, v) => s + parseInt(v || 0), 0) : null;
+  const morseRisk  = morseScore == null ? { label: "Not assessed", color: C.muted }
+                   : morseScore >= 45 ? { label: "High Fall Risk",   color: C.red }
                    : morseScore >= 25 ? { label: "Medium Fall Risk", color: C.amber }
                    : { label: "Low Fall Risk", color: C.green };
 
@@ -426,6 +486,7 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
         UHID: patInfo.UHID || patInfo.patientId?.UHID || uhid,
         assessedAt,
         assessedBy: signoff.nurseName,
+        nurseName: signoff.nurseName,   // R7hu — the backend NABH sign-off audit reads `signoff.name || nurseName`; the old payload sent only `assessedBy`, so the audit trail + initialAssessment.nurseName were recorded BLANK on every save.
         nurseId: signoff.nurseId,
         designation: signoff.designation,
         vitals: { ...vitals, bmi: bmi || vitals.bmi },
