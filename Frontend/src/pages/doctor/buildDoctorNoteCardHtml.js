@@ -97,9 +97,14 @@ const COMPACT_GRID_CSS = `<style>
   .dfx-banner{margin:6px 0 12px;padding:9px 14px;border-radius:7px;font-size:12px;font-weight:700}
 </style>`;
 
+// R7hu — omit a field whose value is only a placeholder dash (— / – / - / --)
+// or N/A / null / undefined; the standing rule is that "—" never prints where
+// a value should. Real clinical negatives ("None", "Nil") are kept.
+const _isPlaceholderDash = (s) =>
+  /^[\s—–-]+$/.test(String(s)) || /^(n\/?a|null|undefined)$/i.test(String(s).trim());
 const _kv = (label, value, isFull = false) => {
   const v = fmtVal(value);
-  if (!v) return "";
+  if (!v || _isPlaceholderDash(v)) return "";
   return `<div${isFull ? ' class="full"' : ""}><span class="lbl">${escapeHtml(label)}</span><span class="val">${escapeHtml(v)}</span></div>`;
 };
 const _section = (title, color, bodyHtml) =>

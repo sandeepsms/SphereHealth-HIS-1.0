@@ -88,9 +88,17 @@ const COMPACT_GRID_CSS = `<style>
   .nfx-narr{margin:6px 0 11px;padding:9px 13px;background:#f8fafc;border-left:3px solid #cbd5e1;border-radius:0 6px 6px 0;font-size:11.5px;white-space:pre-wrap;line-height:1.45}
 </style>`;
 
+// R7hu — a value that is only a placeholder dash (— / – / - / -- ) or N/A /
+// null / undefined must NOT print as a field: the standing rule is that "—"
+// never appears where a value should. Live forms sometimes save "—" for an
+// untouched field (e.g. a procedure note's Urine Colour / Initial Drainage),
+// so the row rendered "Urine Colour: —". Treat those as empty and omit the
+// row. Real clinical negatives ("None", "Nil") are kept — they're meaningful.
+const _isPlaceholderDash = (s) =>
+  /^[\s—–-]+$/.test(String(s)) || /^(n\/?a|null|undefined)$/i.test(String(s).trim());
 const _kv = (label, value, isFull = false) => {
   const v = fmtVal(value);
-  if (!v) return "";
+  if (!v || _isPlaceholderDash(v)) return "";
   return `<div${isFull ? ' class="full"' : ""}><span class="lbl">${escapeHtml(label)}</span><span class="val">${escapeHtml(v)}</span></div>`;
 };
 const _section = (title, color, bodyHtml) =>
