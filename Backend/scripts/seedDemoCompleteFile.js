@@ -114,8 +114,20 @@ async function main() {
           hydrationStatus: "Dehydrated", lastMealTime: "Morning", swallowingDifficulty: "No", feedingMethod: "Oral",
         },
         riskAssessments: {
-          bradenScale: { totalScore: 14, riskLevel: "Moderate Risk" },
-          morseFallScale: { totalScore: 55, riskLevel: "High Fall Risk" },
+          // Sub-scores included so the Nurse IA form reconstructs the exact
+          // Braden/Morse totals on reload (the form derives the total from the
+          // per-item scores, not the stored total). Braden 3+2+2+2+3+2 = 14;
+          // Morse 0+15+0+20+20+0 = 55.
+          bradenScale: {
+            sensoryPerception: "3", moisture: "2", activity: "2",
+            mobility: "2", nutrition: "3", frictionShear: "2",
+            totalScore: 14, riskLevel: "Moderate Risk",
+          },
+          morseFallScale: {
+            fallHistory: "0", secondaryDiagnosis: "15", ambulatoryAid: "0",
+            ivAccess: "20", gaitBalance: "20", mentalStatus: "0",
+            totalScore: 55, riskLevel: "High Fall Risk",
+          },
         },
         dischargePlanning: {
           livesAlone: "No", caregiver: "Son (Suresh Kumar)", homeSupportAvailable: "Yes",

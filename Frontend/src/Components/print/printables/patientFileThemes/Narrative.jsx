@@ -966,24 +966,26 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
   const isolationFlags = (f.alerts?.isolationFlags || []).filter(Boolean);
 
   /* ── Comorbidities flag map (active-only) ───────────────────── */
+  // R7hu — keys MUST match what the IPD IA form saves (`comorbid` checklist:
+  // diabetes/hypertension/cad/ckd/copd/asthma/liverDx/cancer/stroke/mentalHealth/
+  // hypothyroid/hiv/hepB/hepC). The old map used cld/hepb/hepc/thyroid/psych +
+  // ihd/tb/epilepsy — so liver disease, hepatitis B/C, hypothyroidism and mental
+  // health were silently DROPPED from the Complete File comorbidities line.
   const comorbiditiesLabels = {
     diabetes: "Diabetes mellitus",
     hypertension: "Hypertension",
     cad: "Coronary artery disease",
-    ihd: "Ischaemic heart disease",
+    ckd: "Chronic kidney disease",
     copd: "COPD",
     asthma: "Asthma",
-    ckd: "Chronic kidney disease",
-    cld: "Chronic liver disease",
-    stroke: "Prior CVA / stroke",
+    liverDx: "Chronic liver disease",
     cancer: "Active malignancy",
-    tb: "Tuberculosis",
+    stroke: "Prior CVA / stroke",
+    mentalHealth: "Mental health disorder",
+    hypothyroid: "Hypothyroidism",
     hiv: "HIV",
-    hepb: "Hepatitis B",
-    hepc: "Hepatitis C",
-    thyroid: "Thyroid disorder",
-    epilepsy: "Epilepsy",
-    psych: "Psychiatric illness",
+    hepB: "Hepatitis B",
+    hepC: "Hepatitis C",
   };
   const comorbidities = f.ia?.doctor?.comorbidities
                      || f.ia?.nursing?.comorbidities
@@ -1028,24 +1030,40 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
             || null;
 
   /* ── Code Status ────────────────────────────────────────────── */
-  const codeStatus = f.ia?.doctor?.codeStatus
+  // R7hu — the IPD form saves codeStatus as an OBJECT {value,discussedWith,
+  // limitations}; rendering it raw as a React child crashed the print. Extract
+  // the scalar value (demo/legacy records store it as a plain string).
+  const _codeStatusRaw = f.ia?.doctor?.codeStatus
                   || f.ia?.nursing?.codeStatus
                   || receipt.codeStatus
                   || "";
+  const codeStatus = (typeof _codeStatusRaw === "object"
+                        ? (_codeStatusRaw.value || "")
+                        : _codeStatusRaw).toString().replace(/_/g, " ");
 
   /* ── Risk acknowledgement (flag map) ────────────────────────── */
   const riskAckLabels = {
     fallRiskExplained: "Fall risk explained",
     pressureUlcerRiskExplained: "Pressure-ulcer risk explained",
-    bloodTransfusionRiskExplained: "Transfusion risk explained",
-    surgeryRiskExplained: "Surgical risk explained",
-    procedureRiskExplained: "Procedure risk explained",
-    dnaCprDiscussed: "Code-status discussed",
+    dvtRiskExplained: "VTE / DVT risk explained",
+    painRiskExplained: "Pain-management explained",
   };
-  const riskAck = f.ia?.doctor?.riskAcknowledgement
+  const _riskAckRaw = f.ia?.doctor?.riskAcknowledgement
               || f.ia?.nursing?.riskAcknowledgement
               || receipt.riskAcknowledgement
               || null;
+  // R7hu — the IPD form saves docRiskAck as nested {fall:{acknowledged,plan},
+  // dvt:{…}, ulcer:{…}, pain:{…}} keyed fall/dvt/ulcer/pain — none of which match
+  // riskAckLabels, so FlagLine (which counts every labelMap key toward `total`)
+  // printed the FALSE negative "explanation not documented" even when the doctor
+  // DID acknowledge. Map to the flat boolean shape FlagLine expects (demo/legacy
+  // already-flat keys still pass through via the ?? fallback).
+  const riskAck = _riskAckRaw ? {
+    fallRiskExplained:          !!(_riskAckRaw.fall?.acknowledged  ?? _riskAckRaw.fallRiskExplained),
+    pressureUlcerRiskExplained: !!(_riskAckRaw.ulcer?.acknowledged ?? _riskAckRaw.pressureUlcerRiskExplained),
+    dvtRiskExplained:           !!(_riskAckRaw.dvt?.acknowledged   ?? _riskAckRaw.dvtRiskExplained),
+    painRiskExplained:          !!(_riskAckRaw.pain?.acknowledged  ?? _riskAckRaw.painRiskExplained),
+  } : null;
 
   /* ── Home meds ─────────────────────────────────────────────── */
   const homeMeds = Array.isArray(f.history?.homeMeds) ? f.history.homeMeds
@@ -1114,13 +1132,30 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
   const rosLine = (() => {
     const ros = f.exam?.ros || {};
     if (!ros || typeof ros !== "object") return "";
+    // R7hu — the IPD IA form saves ROS under NABH keys (constitutional/cardiac/
+    // respiratory/gi/gu/musculoskeletal/neuro/skin/endocrine/psych); older/demo
+    // records use cvs/rs/git/gut/cns. Accept both, de-dupe by label, and skip the
+    // "NAD" default so only abnormal systems surface (matches the card renderer).
     const order = [
-      ["cvs", "CVS"], ["rs", "RS"], ["git", "GIT"], ["gut", "GUT"],
-      ["cns", "CNS"], ["msk", "MSK"], ["skin", "Skin"], ["heent", "HEENT"],
-      ["endo", "Endocrine"], ["psych", "Psych"],
+      ["constitutional", "Constitutional"],
+      ["cardiac", "CVS"], ["cvs", "CVS"],
+      ["respiratory", "RS"], ["rs", "RS"],
+      ["gi", "GIT"], ["git", "GIT"],
+      ["gu", "GUT"], ["gut", "GUT"],
+      ["neuro", "CNS"], ["cns", "CNS"],
+      ["musculoskeletal", "MSK"], ["msk", "MSK"],
+      ["skin", "Skin"], ["heent", "HEENT"],
+      ["endocrine", "Endocrine"], ["endo", "Endocrine"], ["psych", "Psych"],
     ];
+    const seenRos = new Set();
     const bits = order
-      .map(([k, label]) => (ros[k] ? `${label}: ${String(ros[k]).trim()}` : ""))
+      .map(([k, label]) => {
+        const v = ros[k];
+        if (!v || seenRos.has(label)) return "";
+        if (String(v).trim().toUpperCase() === "NAD") return "";
+        seenRos.add(label);
+        return `${label}: ${String(v).trim()}`;
+      })
       .filter(Boolean);
     return bits.join("; ");
   })();
@@ -1488,8 +1523,22 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
               {d.treatmentPlan ? proseLine("Treatment plan", d.treatmentPlan) : null}
               {d.dietAdvice ? proseLine("Diet advice", d.dietAdvice) : null}
               {d.activityAdvice ? proseLine("Activity / mobilisation advice", d.activityAdvice) : null}
-              {(d.prognosis || d.nabh?.prognosis) ? <Para><strong>Prognosis:</strong> {stripDot(d.prognosis || d.nabh?.prognosis)}.</Para> : null}
-              {(d.functionalEcog || d.nabh?.functionalEcog) ? <Para><strong>Functional status (ECOG):</strong> {d.functionalEcog || d.nabh?.functionalEcog}.</Para> : null}
+              {(() => {
+                // R7hu — the IPD form saves prognosis as {discussedWith,languageUsed,
+                // summary,questionsAddressed} and functionalEcog as {score,disabilities,
+                // aidsRequired}; rendering either object raw printed "[object Object]"
+                // or crashed React. Extract scalars (demo/legacy store plain strings).
+                const progRaw = d.prognosis || d.nabh?.prognosis;
+                const prog = progRaw && typeof progRaw === "object" ? progRaw.summary : progRaw;
+                return prog ? <Para><strong>Prognosis:</strong> {stripDot(prog)}.</Para> : null;
+              })()}
+              {(() => {
+                const ecogRaw = d.functionalEcog || d.nabh?.functionalEcog;
+                const ecog = ecogRaw && typeof ecogRaw === "object"
+                  ? [ecogRaw.score, ecogRaw.disabilities].filter(Boolean).join(" — ")
+                  : ecogRaw;
+                return ecog ? <Para><strong>Functional status (ECOG):</strong> {ecog}.</Para> : null;
+              })()}
               {Object.keys(d).length > 0 ? (
                 /* R7gu — Show signer's name + Emp ID + Reg + digital
                    signature image (when captured) on the IA summary

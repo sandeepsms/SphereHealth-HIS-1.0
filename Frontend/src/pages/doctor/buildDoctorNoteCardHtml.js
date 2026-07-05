@@ -85,6 +85,14 @@ const COMPACT_GRID_CSS = `<style>
   .dfx-tbl{width:100%;border-collapse:collapse;font-size:11px;margin:5px 0 10px;page-break-inside:avoid;break-inside:avoid}
   .dfx-tbl th{padding:5px 8px;border:1px solid #e7edf3;background:#f6f8fb;font-size:10px;font-weight:800;text-align:left;color:#475569;text-transform:uppercase;letter-spacing:.3px}
   .dfx-tbl td{padding:5px 8px;border:1px solid #eef2f6;color:#0f172a}
+  /* R7hu — the Rx / Infusions / Lab-order tables use class .ndx-tbl, which was
+     never defined here → they rendered as unstyled browser-default tables that
+     overflowed the ~703px A4 print width and split mid-row across pages. Define
+     it: fixed layout keeps the 6 columns in-bounds, word-break wraps long
+     instructions, page-break-inside:avoid keeps each drug row whole. */
+  .ndx-tbl{width:100%;border-collapse:collapse;table-layout:fixed;font-size:10.5px;margin:5px 0 10px;page-break-inside:avoid;break-inside:avoid}
+  .ndx-tbl th{padding:4px 6px;border:1px solid #e7edf3;background:#f6f8fb;font-size:9.5px;font-weight:800;text-align:left;color:#475569;text-transform:uppercase;letter-spacing:.3px;word-break:break-word}
+  .ndx-tbl td{padding:4px 6px;border:1px solid #eef2f6;color:#0f172a;font-size:10.5px;word-break:break-word;overflow-wrap:anywhere;vertical-align:top}
   .dfx-narr{margin:6px 0 11px;padding:9px 13px;background:#f8fafc;border-left:3px solid #cbd5e1;border-radius:0 6px 6px 0;font-size:11.5px;white-space:pre-wrap;line-height:1.45}
   .dfx-banner{margin:6px 0 12px;padding:9px 14px;border-radius:7px;font-size:12px;font-weight:700}
 </style>`;
@@ -347,8 +355,56 @@ const buildBuilder = (note, opts = {}) => {
       // the patient's PMH / allergies / home meds / anthropometry that
       // the nurse intake captured — those fields are clinically shared
       // and the empty doctor card was misleading.
-      const docPayload = nd.doctor || nd;
-      const nabh = docPayload.nabh || nd.nabh || {};
+      const _dp = nd.doctor || nd;
+      // R7hu — the demo / legacy flat shape writes the IA fields straight on
+      // the doctor payload, with slightly different names than the current IPD
+      // form (which nests most under `.nabh`). Normalise so THIS card renders
+      // both shapes — real `.nabh` data wins; the flat aliases fill the gaps —
+      // exactly like the Complete File print already does.
+      const docPayload = {
+        ..._dp,
+        chiefComplaint: _dp.chiefComplaint ?? _dp.chiefComplaints,
+        hopi:   _dp.hopi ?? _dp.historyOfPresentingIllness ?? _dp.hpi,
+        pmh:    _dp.pmh ?? _dp.pastMedicalHistory,
+        famHx:  _dp.famHx ?? _dp.familyHistory,
+        socHx:  _dp.socHx ?? _dp.socialHistory,
+        genExam:_dp.genExam ?? _dp.generalExamination,
+        provDx: _dp.provDx ?? _dp.provisionalDiagnosis,
+        finalDx:_dp.finalDx ?? _dp.finalDiagnosis,
+      };
+      // R7hu — the demo / legacy flat ROS uses cvs/rs/git/gut/cns keys; the
+      // shared renderer keys on cardiac/respiratory/gi/gu/neuro, so an un-mapped
+      // ROS surfaced only the "skin" row. Remap the aliases so every reviewed
+      // system shows. The flat shape also stores functionalEcog as one string
+      // while the renderer wants {score,disabilities,aidsRequired} — split the
+      // leading grade off. (The Complete File Narrative reads these two from a
+      // different path — f.exam.ros + the raw string — so it is untouched.)
+      const _rosAlias = { cvs: "cardiac", rs: "respiratory", git: "gi", gut: "gu", cns: "neuro" };
+      const _remapRos = (r) => {
+        if (!r || typeof r !== "object" || Array.isArray(r)) return r;
+        const out = {};
+        for (const [k, v] of Object.entries(r)) out[_rosAlias[k] || k] = v;
+        return out;
+      };
+      const _ecogObj = (e) => {
+        if (!e || typeof e === "object") return e;
+        const s = String(e).trim(); const g = s.match(/^\d/);
+        return g ? { score: g[0], disabilities: s.replace(/^\d[\s.—:()-]*/, "").replace(/\)$/, "").trim() } : { score: s };
+      };
+      const _flatNabh = {
+        chiefComplaint:  docPayload.chiefComplaint,
+        workingDx:       _dp.workingDiagnosis,
+        differentialDx:  _dp.differentialDiagnosis,
+        comorbidities:   _dp.comorbidities,
+        reviewOfSystems: _remapRos(_dp.reviewOfSystems),
+        functionalEcog:  _ecogObj(_dp.functionalEcog),
+        goalOfCare:      _dp.goalOfCare,
+        elosDays:        _dp.elosDays,
+        codeStatus: typeof _dp.codeStatus === "string" ? { value: _dp.codeStatus } : _dp.codeStatus,
+        prognosis:  typeof _dp.prognosis === "string" ? { summary: _dp.prognosis } : _dp.prognosis,
+        clinicalExamination: _dp.systemicExamination ? { systemicExamination: _dp.systemicExamination } : undefined,
+      };
+      const nabh = { ..._flatNabh, ...(_dp.nabh || nd.nabh || {}) };
       const nursing = nd.nursing || {};
       const nNabh   = nd.nursingNabh || {};
       // Map nurse home medications onto the doctor's medicationReconciliation

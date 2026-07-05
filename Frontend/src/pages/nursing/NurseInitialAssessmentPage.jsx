@@ -74,14 +74,17 @@ function Section({ title, icon, color = C.primary, badge, nabh, children, defaul
   );
 }
 
+// R7hu — responsive: `auto-fit + minmax` reflows these grids to fewer columns
+// on tablets/phones (bedside use) with no media queries. Every section built
+// from G2/G3/G4 becomes responsive at once.
 function G2({ children, gap = 14 }) {
-  return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap }}>{children}</div>;
+  return <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap }}>{children}</div>;
 }
 function G3({ children }) {
-  return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14 }}>{children}</div>;
+  return <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14 }}>{children}</div>;
 }
 function G4({ children }) {
-  return <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14 }}>{children}</div>;
+  return <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 14 }}>{children}</div>;
 }
 
 function F({ label, required, children, hint }) {
@@ -192,7 +195,7 @@ function ScoreBadge({ score, label, color = C.blue }) {
       background: color + "12", border: `2px solid ${color}40`, borderRadius: 12,
       minWidth: 90,
     }}>
-      <div style={{ fontSize: 30, fontWeight: 800, color, lineHeight: 1 }}>{score}</div>
+      <div style={{ fontSize: 30, fontWeight: 800, color, lineHeight: 1 }}>{score == null ? "—" : score}</div>
       <div style={{ fontSize: 10, color: C.muted, fontWeight: 600, marginTop: 4 }}>{label}</div>
     </div>
   );
@@ -307,18 +310,23 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
   });
 
   // ── Risk Assessments ─────────────────────────────────────────
+  // R7hu — defaults were the max-safe scores (Braden all-4 → 23 "No Risk",
+  // Morse all-0 → 0 "Low Risk"), so an untouched form persisted a fabricated
+  // "no pressure-injury / no fall risk" — the opposite of a safe default for a
+  // screening tool. Start unselected; the band stays "Not assessed" until the
+  // nurse scores every item.
   const [braden, setBraden] = useState({
-    sensoryPerception: "4", moisture: "4", activity: "4",
-    mobility: "4", nutrition: "4", frictionShear: "3",
+    sensoryPerception: "", moisture: "", activity: "",
+    mobility: "", nutrition: "", frictionShear: "",
   });
 
   const [morse, setMorse] = useState({
-    fallHistory: "0",
-    secondaryDiagnosis: "0",
-    ambulatoryAid: "0",
-    ivAccess: "0",
-    gaitBalance: "0",
-    mentalStatus: "0",
+    fallHistory: "",
+    secondaryDiagnosis: "",
+    ambulatoryAid: "",
+    ivAccess: "",
+    gaitBalance: "",
+    mentalStatus: "",
   });
 
   // ── Discharge Planning ────────────────────────────────────────
@@ -346,37 +354,92 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
 
   // ── Auto-fill when selectedPatient changes ────────────────────
   useEffect(() => {
-    if (selectedPatient) {
-      setUhid(selectedPatient.UHID || "");
-      setIpdNo(selectedPatient.admissionNumber || selectedPatient.bedNumber || "");
-      setPatInfo(selectedPatient);
-      // Restore auto-save draft if available
-      const draft = loadDraft();
-      if (draft?.data) {
-        const d = draft.data;
-        if (d.vitals)    setVitals(d.vitals);
-        if (d.systems)   setSystems(d.systems);
-        if (d.psycho)    setPsycho(d.psycho);
-        if (d.nutrition) setNutrition(d.nutrition);
-        if (d.braden)    setBraden(d.braden);
-        if (d.morse)     setMorse(d.morse);
-        if (d.discharge) setDischarge(d.discharge);
-        if (d.signoff)   setSignoff(d.signoff);
-        toast.info("Draft restored", { autoClose: 2000 });
+    if (!selectedPatient) return;
+    setUhid(selectedPatient.UHID || "");
+    setIpdNo(selectedPatient.admissionNumber || selectedPatient.bedNumber || "");
+    setPatInfo(selectedPatient);
+    setSaved(false);   // R7hu — clear the previous patient's "saved" banner.
+
+    let cancelled = false;
+    (async () => {
+      // R7hu — CRITICAL: the form previously had NO load path, so opening a
+      // patient who already had a saved nurse IA showed every field at its
+      // default and re-saving OVERWROTE the real record with defaults. Fetch
+      // the saved assessment (source of truth) and hydrate; fall back to the
+      // local draft only when the server has nothing (so a stale device-local
+      // draft can never mask the real saved record).
+      let hydratedFromServer = false;
+      try {
+        const token = sessionStorage.getItem("his_token");
+        const res = await axios.get(
+          `${API_ENDPOINTS.ADMISSIONS}/${selectedPatient._id}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        const adm = res.data?.data || res.data || {};
+        const a = adm.nurseInitialAssessment;
+        if (!cancelled && a && Object.keys(a).length) {
+          if (a.vitals)             setVitals(v => ({ ...v, ...a.vitals }));
+          if (a.systemAssessment)   setSystems(s => ({ ...s, ...a.systemAssessment }));
+          if (a.psychosocial)       setPsycho(p => ({ ...p, ...a.psychosocial }));
+          if (a.nutritionHydration) setNutrition(n => ({ ...n, ...a.nutritionHydration }));
+          if (a.riskAssessments?.bradenScale) {
+            const { totalScore, riskLevel, ...bs } = a.riskAssessments.bradenScale;
+            setBraden(b => ({ ...b, ...bs }));
+          }
+          if (a.riskAssessments?.morseFallScale) {
+            const { totalScore, riskLevel, ...ms } = a.riskAssessments.morseFallScale;
+            setMorse(m => ({ ...m, ...ms }));
+          }
+          if (a.dischargePlanning)  setDischarge(d => ({ ...d, ...a.dischargePlanning }));
+          setSignoff(s => ({
+            ...s,
+            nurseName:   a.assessedBy || a.nurseName || s.nurseName,
+            nurseId:     a.nurseId || s.nurseId,
+            designation: a.designation || s.designation,
+            notes:       a.notes ?? s.notes,
+          }));
+          hydratedFromServer = true;
+          toast.info("Loaded saved assessment", { autoClose: 2000 });
+        }
+      } catch { /* no saved assessment / fetch failed — fall through to draft */ }
+
+      if (!cancelled && !hydratedFromServer) {
+        const draft = loadDraft();
+        if (draft?.data) {
+          const d = draft.data;
+          if (d.vitals)    setVitals(d.vitals);
+          if (d.systems)   setSystems(d.systems);
+          if (d.psycho)    setPsycho(d.psycho);
+          if (d.nutrition) setNutrition(d.nutrition);
+          if (d.braden)    setBraden(d.braden);
+          if (d.morse)     setMorse(d.morse);
+          if (d.discharge) setDischarge(d.discharge);
+          if (d.signoff)   setSignoff(d.signoff);
+          toast.info("Draft restored", { autoClose: 2000 });
+        }
       }
-    }
+    })();
+    return () => { cancelled = true; };
   }, [selectedPatient]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Derived scores ────────────────────────────────────────────
-  const bradenScore = Object.values(braden).reduce((s, v) => s + parseInt(v || 0), 0);
-  const bradenRisk  = bradenScore <= 9  ? { label: "Very High Risk", color: C.red }
+  // R7hu — only band a score once EVERY item is scored; an incomplete scale is
+  // "Not assessed", never a falsely-reassuring 0 / low / no-risk.
+  const bradenComplete = Object.values(braden).every(v => v !== "" && v != null);
+  const bradenScore = bradenComplete
+    ? Object.values(braden).reduce((s, v) => s + parseInt(v || 0), 0) : null;
+  const bradenRisk  = bradenScore == null ? { label: "Not assessed", color: C.muted }
+                    : bradenScore <= 9  ? { label: "Very High Risk", color: C.red }
                     : bradenScore <= 12 ? { label: "High Risk",       color: C.red }
                     : bradenScore <= 14 ? { label: "Moderate Risk",   color: C.amber }
                     : bradenScore <= 18 ? { label: "Mild Risk",       color: C.amber }
                     : { label: "No Risk", color: C.green };
 
-  const morseScore = Object.values(morse).reduce((s, v) => s + parseInt(v || 0), 0);
-  const morseRisk  = morseScore >= 45 ? { label: "High Fall Risk",   color: C.red }
+  const morseComplete = Object.values(morse).every(v => v !== "" && v != null);
+  const morseScore = morseComplete
+    ? Object.values(morse).reduce((s, v) => s + parseInt(v || 0), 0) : null;
+  const morseRisk  = morseScore == null ? { label: "Not assessed", color: C.muted }
+                   : morseScore >= 45 ? { label: "High Fall Risk",   color: C.red }
                    : morseScore >= 25 ? { label: "Medium Fall Risk", color: C.amber }
                    : { label: "Low Fall Risk", color: C.green };
 
@@ -419,6 +482,19 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
   const handleSave = async () => {
     if (!patInfo) { toast.warn("Please load a patient first"); return; }
     if (!patInfo._id) { toast.warn("Admission ID missing — reload patient"); return; }
+    // R7hu — the saved record is the committed initial assessment (a full $set
+    // on the server), so enforce the NABH-mandatory fields: nurse identity,
+    // allergy documentation (IPSG.6) and completed Braden + Morse screens.
+    // Previously the only check was that a patient was loaded, so a blank/
+    // default assessment could be committed. Local auto-save still drafts freely.
+    {
+      const missing = [];
+      if (!signoff.nurseName?.trim()) missing.push("Nurse name");
+      if (!nutrition.allergies?.trim()) missing.push("Allergies (type 'NKDA' if none)");
+      if (bradenScore == null) missing.push("Braden score — score all 6 items");
+      if (morseScore == null)  missing.push("Morse fall score — score all 6 items");
+      if (missing.length) { toast.warn("Complete before saving: " + missing.join("; ")); return; }
+    }
     setSaving(true);
     try {
       const token = (sessionStorage.getItem("his_token"));
@@ -426,6 +502,7 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
         UHID: patInfo.UHID || patInfo.patientId?.UHID || uhid,
         assessedAt,
         assessedBy: signoff.nurseName,
+        nurseName: signoff.nurseName,   // R7hu — the backend NABH sign-off audit reads `signoff.name || nurseName`; the old payload sent only `assessedBy`, so the audit trail + initialAssessment.nurseName were recorded BLANK on every save.
         nurseId: signoff.nurseId,
         designation: signoff.designation,
         vitals: { ...vitals, bmi: bmi || vitals.bmi },
@@ -697,7 +774,7 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
 
       {/* ── 2. Vital Signs ── */}
       <Section title="Vital Signs at Admission" icon="pi-heart" color={C.red} nabh>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 12, marginBottom: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 12, marginBottom: 16 }}>
           <VitalCard label="BP Systolic" unit="mmHg" placeholder="120" icon="pi-angle-up"
             value={vitals.bpSys} onChange={upd(setVitals)("bpSys")} color={C.red} />
           <VitalCard label="BP Diastolic" unit="mmHg" placeholder="80" icon="pi-angle-down"
@@ -720,7 +797,7 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
             color={C.purple} />
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 2fr", gap: 12, marginBottom: 16 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12, marginBottom: 16 }}>
           <div style={{
             background: C.primaryL, border: `1.5px solid ${C.primary}25`, borderRadius: 12,
             padding: "12px 14px", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
@@ -801,6 +878,11 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
             <input className="his-field" value={nutrition.allergies}
               onChange={upd(setNutrition)("allergies")}
               placeholder="None / list specific items" />
+          </F>
+          <F label="Nutrition Notes">
+            <input className="his-field" value={nutrition.nutritionNotes}
+              onChange={upd(setNutrition)("nutritionNotes")}
+              placeholder="Appetite, supplements, dietitian referral…" />
           </F>
         </G3>
       </Section>
@@ -884,6 +966,12 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
             <input className="his-field" value={systems.respiratoryNotes} onChange={upd(setSystems)("respiratoryNotes")}
               placeholder="Cough, sputum, dyspnea…" />
           </F>
+          {systems.oxygenSupport !== "No" && (
+            <F label="Oxygen Flow (L/min)">
+              <input className="his-field" type="number" min="0" value={systems.oxygenLPM}
+                onChange={upd(setSystems)("oxygenLPM")} placeholder="e.g. 4" />
+            </F>
+          )}
         </G3>
       </Section>
 
@@ -904,9 +992,45 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
             <input className="his-field" type="date" value={systems.lastBowelMovement}
               onChange={upd(setSystems)("lastBowelMovement")} />
           </F>
+          <F label="Nausea">
+            <select className="his-select" value={systems.nausea} onChange={upd(setSystems)("nausea")}>
+              {["No","Yes"].map(v => <option key={v}>{v}</option>)}
+            </select>
+          </F>
+          <F label="Vomiting">
+            <select className="his-select" value={systems.vomiting} onChange={upd(setSystems)("vomiting")}>
+              {["No","Yes"].map(v => <option key={v}>{v}</option>)}
+            </select>
+          </F>
           <F label="GI Notes">
             <input className="his-field" value={systems.giNotes} onChange={upd(setSystems)("giNotes")}
-              placeholder="Nausea, vomiting, appetite…" />
+              placeholder="Appetite, reflux, melena…" />
+          </F>
+        </G4>
+      </Section>
+
+      {/* ── 7b. Genitourinary Assessment (NABH head-to-toe) ── */}
+      <Section title="Genitourinary Assessment" icon="pi-filter" color={C.primary} nabh>
+        <G4>
+          <F label="Urinary Pattern">
+            <select className="his-select" value={systems.urinaryPattern} onChange={upd(setSystems)("urinaryPattern")}>
+              {["Normal","Frequency","Urgency","Retention","Incontinence","Oliguria","Anuria","Dysuria"].map(v => <option key={v}>{v}</option>)}
+            </select>
+          </F>
+          <F label="Urinary Catheter">
+            <select className="his-select" value={systems.catheter} onChange={upd(setSystems)("catheter")}>
+              {["No","Yes"].map(v => <option key={v}>{v}</option>)}
+            </select>
+          </F>
+          {systems.catheter === "Yes" && (
+            <F label="Catheter Type / Size">
+              <input className="his-field" value={systems.catheterSite} onChange={upd(setSystems)("catheterSite")}
+                placeholder="e.g. Foley 16Fr" />
+            </F>
+          )}
+          <F label="GU Notes">
+            <input className="his-field" value={systems.guNotes} onChange={upd(setSystems)("guNotes")}
+              placeholder="Output volume, colour, dysuria…" />
           </F>
         </G4>
       </Section>
@@ -967,6 +1091,14 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
                     placeholder="Size, color, drainage, stage…" />
                 </F>
               </G2>
+              {systems.edema !== "No" && (
+                <div style={{ marginTop: 12 }}>
+                  <F label="Edema Location">
+                    <input className="his-field" value={systems.edemaLocation} onChange={upd(setSystems)("edemaLocation")}
+                      placeholder="e.g. Bilateral ankles, sacrum…" />
+                  </F>
+                </div>
+              )}
             </div>
           )}
         </SubSystem>
@@ -1026,7 +1158,6 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
                 { label: "Foley Catheter", key: "catheter" },
                 { label: "NG Tube",        key: "feedingMethod_ngt" },
                 { label: "O₂ Support",     key: "oxygenSupport_active" },
-                { label: "Drain",          key: "drain" },
               ].map(({ label, key }) => {
                 const active =
                   key === "catheter"           ? systems.catheter === "Yes"
@@ -1096,6 +1227,16 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
               {["Family Present","Friend Present","Caregiver Present","Alone","No Support"].map(v => <option key={v}>{v}</option>)}
             </select>
           </F>
+          <F label="Abuse / Neglect Risk (NABH)">
+            <select className="his-select" value={psycho.physicalAbuseRisk} onChange={upd(setPsycho)("physicalAbuseRisk")}>
+              {["No","Suspected","Confirmed — escalated"].map(v => <option key={v}>{v}</option>)}
+            </select>
+          </F>
+          <F label="Spiritual / Cultural Needs">
+            <select className="his-select" value={psycho.spiritualNeeds} onChange={upd(setPsycho)("spiritualNeeds")}>
+              {["No","Yes — noted"].map(v => <option key={v}>{v}</option>)}
+            </select>
+          </F>
         </G3>
       </Section>
 
@@ -1114,7 +1255,7 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
             </div>
             <ScoreBadge score={bradenScore} label={bradenRisk.label} color={bradenRisk.color} />
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
             {[
               { key: "sensoryPerception", label: "Sensory Perception", opts: [["1","Completely Limited"],["2","Very Limited"],["3","Slightly Limited"],["4","No Impairment"]] },
               { key: "moisture",          label: "Moisture",           opts: [["1","Constantly Moist"],["2","Often Moist"],["3","Occasionally"],["4","Rarely Moist"]] },
@@ -1146,7 +1287,7 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
             </div>
             <ScoreBadge score={morseScore} label={morseRisk.label} color={morseRisk.color} />
           </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 12 }}>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 12 }}>
             {[
               { key: "fallHistory",        label: "History of Falling",    opts: [["0","No"],["25","Yes"]] },
               { key: "secondaryDiagnosis", label: "Secondary Diagnosis",   opts: [["0","No"],["15","Yes"]] },
