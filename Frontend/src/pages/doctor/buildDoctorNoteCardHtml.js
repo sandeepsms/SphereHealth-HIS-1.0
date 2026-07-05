@@ -144,58 +144,80 @@ const buildBuilder = (note, opts = {}) => {
     },
 
     icu: () => {
-      const bc = nd.bundleCompliance || {};
-      const bcRows = [
-        ["VAP — HOB Elevated ≥30°", bc.vapHobElevated],
-        ["VAP — Oral Care q4h", bc.vapOralCare],
-        ["DVT Prophylaxis", bc.dvtProphylaxis],
-        ["Stress-ulcer Prophylaxis", bc.stressUlcerProphylaxis],
-        ["Glycaemic Control", bc.glucoseControl],
-      ];
-      const bcTable = `<table class="dfx-tbl"><tr><th>NABH COP.5 Bundle Element</th><th>Status</th></tr>${bcRows.map(r => {
-        const raw = r[1];
-        let cell;
-        if (raw === undefined || raw === null || raw === "" || raw === false) {
-          cell = `<strong style="color:#dc2626">✗ NOT DONE</strong>`;
-        } else {
-          cell = `<strong>${escapeHtml(String(raw))}</strong>`;
-        }
-        return `<tr><td>${escapeHtml(r[0])}</td><td>${cell}</td></tr>`;
-      }).join("")}</table>`;
-      const snap = _section("ICU Snapshot", "#dc2626", _grid([
-        _kv("Ventilator Status", nd.ventilatorStatus),
-        _kv("Vasopressors", nd.vasopressors),
-        _kv("Sedation Status", nd.sedationStatus),
-        _kv("Invasive Lines", nd.invasiveLines, true),
+      // R7hu — the ICU form (DoctorNotesPage) saves flat ventilator + system
+      // fields; the old builder read a bundleCompliance / ventilatorStatus shape
+      // the form never writes, so every captured ICU value was dropped and the
+      // bundle table showed "NOT DONE" for every row. Read the actual saved keys
+      // (empty sections auto-hide); keep the legacy bundle table ONLY when the
+      // note genuinely carries a bundleCompliance object.
+      const vent = _section("Ventilator Settings", "#dc2626", _grid([
+        _kv("Mode", nd.ventMode || nd.ventilatorStatus),
+        _kv("FiO₂", nd.fio2), _kv("PEEP", nd.peep), _kv("Tidal Volume", nd.tv),
+        _kv("Vent RR", nd.ventRR), _kv("PIP", nd.pip), _kv("MAP", nd.map), _kv("CVP", nd.cvp),
       ]));
-      const goals = _section("Goals of Care & Family Meeting", "#475569", _grid([
-        _kv("Goals of Care", nd.goalsOfCare, true),
+      const support = _section("Sedation & Haemodynamics", "#b91c1c", _grid([
+        _kv("RASS Score", nd.rassScore), _kv("BPS Score", nd.bpsScore),
+        _kv("Sedation", nd.sedation || nd.sedationStatus),
+        _kv("Vasopressors", typeof nd.vasopressors === "boolean" ? (nd.vasopressors ? "Yes" : "No") : nd.vasopressors),
+        _kv("Vasopressor Detail", nd.vasopressorDetail || nd.invasiveLines, true),
+      ]));
+      const systems = _section("System Review", "#475569", _grid([
+        _kv("Neuro", nd.neuro, true), _kv("CVS", nd.cvs, true), _kv("Respiratory", nd.resp, true),
+        _kv("Renal", nd.renal, true), _kv("GI", nd.gi, true), _kv("Haematology", nd.haem, true),
+        _kv("Infective", nd.infective, true),
+      ]));
+      const goals = _section("Daily Goals & Care", "#0891b2", _grid([
+        _kv("Daily Goals", nd.dailyGoals || nd.goalsOfCare, true),
         _kv("Family Meeting", nd.familyMeeting, true),
       ]));
+      const bc = nd.bundleCompliance;
+      const bundle = (bc && Object.keys(bc).length) ? (() => {
+        const bcRows = [
+          ["VAP — HOB Elevated ≥30°", bc.vapHobElevated], ["VAP — Oral Care q4h", bc.vapOralCare],
+          ["DVT Prophylaxis", bc.dvtProphylaxis], ["Stress-ulcer Prophylaxis", bc.stressUlcerProphylaxis],
+          ["Glycaemic Control", bc.glucoseControl],
+        ];
+        const bcTable = `<table class="dfx-tbl"><tr><th>NABH COP.5 Bundle Element</th><th>Status</th></tr>${bcRows.map(r => {
+          const raw = r[1];
+          const cell = (raw === undefined || raw === null || raw === "" || raw === false)
+            ? `<strong style="color:#dc2626">✗ NOT DONE</strong>` : `<strong>${escapeHtml(String(raw))}</strong>`;
+          return `<tr><td>${escapeHtml(r[0])}</td><td>${cell}</td></tr>`;
+        }).join("")}</table>`;
+        return _section("Bundle Compliance (NABH COP.5)", "#dc2626", bcTable);
+      })() : "";
       const narr = note.soap?.assessment ? _section("Clinical Progress", "#475569", _narr(note.soap.assessment)) : "";
-      return snap + _section("Bundle Compliance (NABH COP.5)", "#dc2626", bcTable) + goals + narr;
+      return vent + support + systems + goals + bundle + narr;
     },
 
     procedure: () => {
+      // R7hu — read the keys the procedure form actually saves (anaesthesia,
+      // position, technique, findings, bloodLoss, specimenType, postInstructions)
+      // alongside the legacy aliases. Bools → readable text.
       const proc = _section(`Procedure — ${nd.procedureName || "—"}`, "#ea580c", _grid([
         _kv("Indication", nd.indication, true),
-        _kv("Anatomical Site", nd.anatomicalSite),
-        _kv("Operator", nd.operator || nd.surgeon),
+        _kv("Anatomical Site / Position", nd.anatomicalSite || nd.position),
+        _kv("Operator / Surgeon", nd.operator || nd.surgeon),
         _kv("Assistants", nd.assistants || nd.assistant),
-        _kv("Consent", nd.consentType || nd.consentObtained),
+        _kv("Anaesthesia", nd.anaesthesia),
+        _kv("Time", nd.time),
+        _kv("Consent", nd.consentType || (typeof nd.consentObtained === "boolean" ? (nd.consentObtained ? "Obtained" : "Not obtained") : nd.consentObtained)),
         _kv("Asepsis", nd.asepsisMaintained),
         _kv("WHO Timeout", nd.timeoutPerformed),
       ]));
+      const tech = _section("Technique & Findings", "#475569", _grid([
+        _kv("Technique", nd.technique, true),
+        _kv("Findings", nd.findings || note.soap?.objective, true),
+      ]));
       const out = _section("Outcome", "#475569", _grid([
         _kv("Complications", nd.complications, true),
+        _kv("Blood Loss", nd.bloodLoss),
         _kv("Initial Drainage", nd.initialDrainage),
-        _kv("Specimens", nd.specimens || nd.specimenSent),
+        _kv("Specimens", typeof nd.specimenSent === "boolean" ? (nd.specimenSent ? (nd.specimenType || "Sent") : "") : (nd.specimens || nd.specimenType)),
         _kv("Post-procedure Vitals", nd.postProcedureVitals, true),
+        _kv("Post-procedure Instructions", nd.postInstructions, true),
       ]));
-      const tech = (note.soap?.objective || note.soap?.assessment)
-        ? _section("Technique & Findings", "#475569", _narr([note.soap.objective, note.soap.assessment].filter(Boolean).join("\n\n")))
-        : "";
-      return proc + tech + out;
+      const narr = note.soap?.assessment ? _section("Notes", "#475569", _narr(note.soap.assessment)) : "";
+      return proc + tech + out + narr;
     },
 
     consultation: () => {
@@ -248,20 +270,27 @@ const buildBuilder = (note, opts = {}) => {
         ? _section("Cause of Death (MCCD)", "#dc2626",
             `<table class="dfx-tbl"><tr><th style="width:35%">WHO MCCD Layer</th><th>Cause</th></tr>${mccdRows.map(r => `<tr><td>${escapeHtml(r[0])}</td><td><strong>${escapeHtml(String(r[1]))}</strong></td></tr>`).join("")}</table>`)
         : "";
+      // R7hu — the death form saves familyInformed / mlc / dnrInPlace / pmAdvised
+      // / postMortemDone as BOOLEANS and adds sequenceOfEvents + certificate date;
+      // the old builder printed the boolean straight into "Family Member" and
+      // dropped the sequence. Format bools as Yes/No and surface the sequence.
+      const yn = (v) => typeof v === "boolean" ? (v ? "Yes" : "No") : v;
+      const seq = nd.sequenceOfEvents ? _section("Sequence of Events", "#475569", _narr(nd.sequenceOfEvents)) : "";
       const family = _section("Family Informed", "#475569", _grid([
-        _kv("Family Member", nd.familyInformed),
+        _kv("Family Informed", yn(nd.familyInformed)),
         _kv("Informed By", nd.familyInformedBy),
         _kv("Informed At", nd.familyInformedTime),
       ]));
       const admin = _section("Administrative", "#475569", _grid([
-        _kv("MLC", nd.mlcRequired || nd.mlc),
-        _kv("DNR", nd.dnrInPlace),
-        _kv("PM Advised", nd.pmAdvised),
-        _kv("PM Done", nd.postMortemDone),
+        _kv("MLC", yn(nd.mlcRequired ?? nd.mlc)),
+        _kv("DNR", yn(nd.dnrInPlace)),
+        _kv("PM Advised", yn(nd.pmAdvised)),
+        _kv("PM Done", yn(nd.postMortemDone)),
         _kv("Certificate No", nd.deathCertificateNumber),
+        _kv("Certificate Issued At", nd.deathCertificateIssuedAt),
         _kv("Body Disposition", nd.bodyDisposition, true),
       ]));
-      return banner + headline + mccd + family + admin;
+      return banner + headline + mccd + seq + family + admin;
     },
 
     amendment: () => {
@@ -299,46 +328,102 @@ const buildBuilder = (note, opts = {}) => {
 
     preop: () => {
       const banner = `<div class="dfx-banner" style="background:#ecfeff;color:#155e75;border:2px solid #06b6d4;text-align:center">WHO SURGICAL SAFETY CHECKLIST · Pre-operative · NABH COP.13</div>`;
+      // R7hu — the pre-op form saves FLAT fields (preopDiagnosis, plannedAnaesthesia,
+      // bloodGroup, crossMatch, fastingHours, airwayPlan, comorbidities, currentMeds,
+      // allergies, surgeon, anaesthetist, preopOrders, preOpBp/Pulse/Temp/Spo2, and
+      // per-investigation reviewed flags cbc/pt/ecg/cxr/echo/lfts/rft). The old
+      // builder read only a nested `preopChecklist` object the form never writes,
+      // so the WHO table showed "NOT RECORDED" for everything. Read the real keys;
+      // keep the legacy checklist table only when a preopChecklist object exists.
+      const yn = (v) => typeof v === "boolean" ? (v ? "✓ Yes" : "✗ No") : v;
       const proc = _section("Planned Procedure", "#0891b2", _grid([
         _kv("Planned Procedure", nd.plannedProcedure || nd.procedure, true),
+        _kv("Indication", nd.indication, true),
+        _kv("Pre-op Diagnosis", nd.preopDiagnosis, true),
         _kv("ASA Class", nd.asaClass || nd.asaGrade),
+        _kv("Planned Anaesthesia", nd.plannedAnaesthesia),
+        _kv("Surgeon", nd.surgeon), _kv("Anaesthetist", nd.anaesthetist),
       ]));
-      const nbm = nd.nbmStatus
-        ? `<div style="margin:8px 0;padding:8px 14px;background:#fef9c3;border:2px solid #ca8a04;border-radius:6px;font-size:13px;text-align:center;font-weight:700;color:#854d0e">NBM STATUS: ${escapeHtml(nd.nbmStatus)}</div>`
+      const prep = _section("Preparation", "#0891b2", _grid([
+        _kv("Fasting", nd.fastingHours ? `${nd.fastingHours} h` : nd.nbmStatus),
+        _kv("Blood Group", nd.bloodGroup),
+        _kv("Cross-match", yn(nd.crossMatch)),
+        _kv("Airway Plan", nd.airwayPlan, true),
+        _kv("Comorbidities", nd.comorbidities, true),
+        _kv("Current Meds", nd.currentMeds, true),
+        _kv("Allergies", nd.allergies, true),
+        _kv("Consent Obtained", yn(nd.consentObtained)),
+        _kv("Pre-op Orders", nd.preopOrders, true),
+      ]));
+      const vitals = _section("Pre-op Vitals", "#dc2626", _grid([
+        _kv("BP", nd.preOpBp), _kv("Pulse", nd.preOpPulse),
+        _kv("Temp", nd.preOpTemp), _kv("SpO₂", nd.preOpSpo2),
+      ]));
+      const invRows = [
+        ["CBC", nd.cbcReviewed], ["PT / INR", nd.ptReviewed], ["ECG", nd.ecgReviewed],
+        ["Chest X-ray", nd.cxrReviewed], ["Echo", nd.echoReviewed],
+        ["LFTs", nd.lftsReviewed], ["RFT", nd.rftReviewed],
+      ].filter(r => r[1] !== undefined && r[1] !== null && r[1] !== "");
+      const invTable = invRows.length
+        ? _section("Investigations Reviewed", "#0891b2",
+            `<table class="dfx-tbl"><tr><th style="width:65%">Investigation</th><th>Reviewed</th></tr>${invRows.map(r => {
+              const ok = r[1] === true || /yes|done|reviewed/i.test(String(r[1]));
+              const txt = r[1] === true ? "✓ Reviewed" : r[1] === false ? "✗ Not reviewed" : escapeHtml(String(r[1]));
+              return `<tr><td>${escapeHtml(r[0])}</td><td><strong style="color:${ok ? "#16a34a" : "#dc2626"}">${txt}</strong></td></tr>`;
+            }).join("")}</table>`)
         : "";
-      const ck = nd.preopChecklist || {};
-      const ckRows = [
-        ["Patient identity confirmed", ck.identityConfirmed],
-        ["Consent signed", ck.consentSigned],
-        ["Surgical site marked", ck.siteMarked],
-        ["Allergies reviewed", ck.allergiesReviewed],
-        ["Blood available", ck.bloodAvailable],
-        ["Imaging available", ck.imagingAvailable],
-        ["Anaesthetist review", ck.anaesthetistReview],
-      ];
-      const ckTable = `<table class="dfx-tbl"><tr><th style="width:65%">WHO Safety Sign-In Item</th><th>Status</th></tr>${ckRows.map(r => {
-        const raw = r[1];
-        let cell;
-        if (raw === undefined || raw === null || raw === "") cell = `<strong style="color:#dc2626">— NOT RECORDED —</strong>`;
-        else if (raw === false) cell = `<strong style="color:#dc2626">✗ NOT CHECKED</strong>`;
-        else cell = `<strong style="color:#16a34a">✓</strong> ${escapeHtml(String(raw))}`;
-        return `<tr><td>${escapeHtml(r[0])}</td><td>${cell}</td></tr>`;
-      }).join("")}</table>`;
-      return banner + proc + nbm + _section("WHO Safety Checklist", "#0891b2", ckTable);
+      const ck = nd.preopChecklist;
+      const ckTable = (ck && Object.keys(ck).length) ? (() => {
+        const ckRows = [
+          ["Patient identity confirmed", ck.identityConfirmed], ["Consent signed", ck.consentSigned],
+          ["Surgical site marked", ck.siteMarked], ["Allergies reviewed", ck.allergiesReviewed],
+          ["Blood available", ck.bloodAvailable], ["Imaging available", ck.imagingAvailable],
+          ["Anaesthetist review", ck.anaesthetistReview],
+        ];
+        return _section("WHO Safety Checklist", "#0891b2",
+          `<table class="dfx-tbl"><tr><th style="width:65%">WHO Safety Sign-In Item</th><th>Status</th></tr>${ckRows.map(r => {
+            const raw = r[1];
+            let cell;
+            if (raw === undefined || raw === null || raw === "") cell = `<strong style="color:#dc2626">— NOT RECORDED —</strong>`;
+            else if (raw === false) cell = `<strong style="color:#dc2626">✗ NOT CHECKED</strong>`;
+            else cell = `<strong style="color:#16a34a">✓</strong> ${escapeHtml(String(raw))}`;
+            return `<tr><td>${escapeHtml(r[0])}</td><td>${cell}</td></tr>`;
+          }).join("")}</table>`);
+      })() : "";
+      return banner + proc + prep + vitals + invTable + ckTable;
     },
 
     postop: () => {
+      // R7hu — the post-op form saves procedurePerformed / operativeFindings /
+      // postopDiagnosis / surgeon / anaesthetist / times / bloodLoss /
+      // transfusion / fluidsGiven / urineOutput / specimen* / conditionLeavingOT
+      // / recoveryInstructions / postopOrders. The old builder read only
+      // postopVitals/consciousness/painScore/wardTransferTime — so almost the
+      // whole post-op note was dropped. Read the actual keys (legacy aliases kept).
       const proc = _section(`Post-op — ${nd.procedurePerformed || "—"}`, "#16a34a", _grid([
         _kv("Procedure Performed", nd.procedurePerformed, true),
+        _kv("Post-op Diagnosis", nd.postopDiagnosis, true),
+        _kv("Operative Findings", nd.operativeFindings, true),
+        _kv("Surgeon", nd.surgeon), _kv("Anaesthetist", nd.anaesthetist),
+        _kv("Anaesthesia", nd.anaesthesia),
+        _kv("Start Time", nd.startTime), _kv("End Time", nd.endTime),
       ]));
-      const recovery = _section("Recovery", "#16a34a", _grid([
+      const intra = _section("Intra-operative", "#475569", _grid([
+        _kv("Blood Loss", nd.bloodLoss), _kv("Transfusion", nd.transfusion),
+        _kv("Fluids Given", nd.fluidsGiven), _kv("Urine Output", nd.urineOutput),
+        _kv("Specimens", typeof nd.specimenSent === "boolean" ? (nd.specimenSent ? (nd.specimenType || "Sent") : "") : nd.specimenType),
+      ]));
+      const recovery = _section("Recovery & Post-op Orders", "#16a34a", _grid([
+        _kv("Condition Leaving OT", nd.conditionLeavingOT || nd.consciousness, true),
         _kv("Post-op Vitals", nd.postopVitals, true),
-        _kv("Consciousness", nd.consciousness),
         _kv("Pain Score", nd.painScore),
         _kv("Complications", nd.complications, true),
+        _kv("Recovery Instructions", nd.recoveryInstructions, true),
+        _kv("Post-op Orders", nd.postopOrders, true),
         _kv("Ward Transfer Time", nd.wardTransferTime, true),
       ]));
-      return proc + recovery;
+      const narr = note.soap?.plan ? _section("Orders / Plan", "#16a34a", _narr(note.soap.plan)) : "";
+      return proc + intra + recovery + narr;
     },
 
     initial: () => {
