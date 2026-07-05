@@ -1654,6 +1654,11 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
     icdDescription: icd10Description || "",
     patientStatus: patientStatus || "",
     diagnosis: finalDx || workingDx || provDx || "",
+    // R7hu — persist the captured e-signature at note top-level (the Doctor
+    // Notes card reads note.signature) so NABH AAC.7 e-sign is no longer
+    // discarded; only on a signed save. A matching copy lives in
+    // noteDetails.doctor for the Complete File print (f.ia.doctor.signature).
+    signature: status === "signed" ? (signature || undefined) : undefined,
     // R7fb/R7fc — DoctorNotes schema is strict; the only catch-all field is
     // `noteDetails` (Mixed). Pack the entire role-specific form data here so
     // the new NABH P0 fields persist instead of being silently dropped.
@@ -1686,6 +1691,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
         // FamHx / SocHx now write through pshStruct etc.; legacy
         // strings stay in the payload as a back-compat read.
         doctorName, regNo, hopi, psh, famHx, socHx, pshStruct, famHxStruct, socHxStruct, docAllergy,
+        signature: status === "signed" ? (signature || undefined) : undefined,   // R7hu — e-sign image for the Complete File print (f.ia.doctor.signature)
         genExam, cvs, rs, abdomen, cns,
         // R7hr-65 — icd10Description + patientStatus mirror what OPD writes,
         // so the same downstream consumers (discharge summary, patient file
@@ -2378,6 +2384,34 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
 
   const handleSave = async (sign = false, section = "nursing") => {
     if (!patient) { toast.warn("Load a patient first"); return; }
+    // R7hu — enforce NABH-mandatory fields before a SIGN (drafts still save
+    // freely). Previously handleSave validated only that a patient was loaded,
+    // so an IA could be signed with no chief complaint, no diagnosis and no
+    // allergy status — a non-compliant legal record. A high-severity cross-check
+    // alert (e.g. an allergy discrepancy) must be reconciled before sign.
+    if (sign) {
+      const missing = [];
+      if (section === "doctor" || section === "both") {
+        if (!docCC?.trim())      missing.push("Chief complaint");
+        if (!hopi?.trim())       missing.push("History of present illness");
+        if (!provDx?.trim() && !workingDx?.trim()) missing.push("Provisional or working diagnosis");
+        if (!doctorName?.trim()) missing.push("Doctor name");
+        if (!(allergyList?.length) && !noKnownAllergies) missing.push("Allergy status (list allergens or tick 'No known allergies')");
+      }
+      if (section === "nursing" || section === "both") {
+        if (!nurseName?.trim()) missing.push("Nurse name");
+        if (!(nurseAllergyList?.length) && !nurseNoKnownAllergies) missing.push("Allergy status");
+      }
+      if (missing.length) {
+        toast.error("Cannot sign — complete: " + missing.join("; "));
+        return;
+      }
+      const highAlerts = (crossCheckAlerts || []).filter(a => /high|critical/i.test(a.severity || ""));
+      if (highAlerts.length) {
+        toast.error(`Reconcile ${highAlerts.length} high-severity cross-check alert(s) before signing.`);
+        return;
+      }
+    }
     setSaving(true);
     try {
       const payload = buildPayload(section, sign ? "signed" : "draft");

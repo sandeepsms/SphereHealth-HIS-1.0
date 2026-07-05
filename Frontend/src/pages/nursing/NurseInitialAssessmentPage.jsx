@@ -479,6 +479,19 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
   const handleSave = async () => {
     if (!patInfo) { toast.warn("Please load a patient first"); return; }
     if (!patInfo._id) { toast.warn("Admission ID missing — reload patient"); return; }
+    // R7hu — the saved record is the committed initial assessment (a full $set
+    // on the server), so enforce the NABH-mandatory fields: nurse identity,
+    // allergy documentation (IPSG.6) and completed Braden + Morse screens.
+    // Previously the only check was that a patient was loaded, so a blank/
+    // default assessment could be committed. Local auto-save still drafts freely.
+    {
+      const missing = [];
+      if (!signoff.nurseName?.trim()) missing.push("Nurse name");
+      if (!nutrition.allergies?.trim()) missing.push("Allergies (type 'NKDA' if none)");
+      if (bradenScore == null) missing.push("Braden score — score all 6 items");
+      if (morseScore == null)  missing.push("Morse fall score — score all 6 items");
+      if (missing.length) { toast.warn("Complete before saving: " + missing.join("; ")); return; }
+    }
     setSaving(true);
     try {
       const token = (sessionStorage.getItem("his_token"));

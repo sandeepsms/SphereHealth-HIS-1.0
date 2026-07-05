@@ -966,24 +966,26 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
   const isolationFlags = (f.alerts?.isolationFlags || []).filter(Boolean);
 
   /* ── Comorbidities flag map (active-only) ───────────────────── */
+  // R7hu — keys MUST match what the IPD IA form saves (`comorbid` checklist:
+  // diabetes/hypertension/cad/ckd/copd/asthma/liverDx/cancer/stroke/mentalHealth/
+  // hypothyroid/hiv/hepB/hepC). The old map used cld/hepb/hepc/thyroid/psych +
+  // ihd/tb/epilepsy — so liver disease, hepatitis B/C, hypothyroidism and mental
+  // health were silently DROPPED from the Complete File comorbidities line.
   const comorbiditiesLabels = {
     diabetes: "Diabetes mellitus",
     hypertension: "Hypertension",
     cad: "Coronary artery disease",
-    ihd: "Ischaemic heart disease",
+    ckd: "Chronic kidney disease",
     copd: "COPD",
     asthma: "Asthma",
-    ckd: "Chronic kidney disease",
-    cld: "Chronic liver disease",
-    stroke: "Prior CVA / stroke",
+    liverDx: "Chronic liver disease",
     cancer: "Active malignancy",
-    tb: "Tuberculosis",
+    stroke: "Prior CVA / stroke",
+    mentalHealth: "Mental health disorder",
+    hypothyroid: "Hypothyroidism",
     hiv: "HIV",
-    hepb: "Hepatitis B",
-    hepc: "Hepatitis C",
-    thyroid: "Thyroid disorder",
-    epilepsy: "Epilepsy",
-    psych: "Psychiatric illness",
+    hepB: "Hepatitis B",
+    hepC: "Hepatitis C",
   };
   const comorbidities = f.ia?.doctor?.comorbidities
                      || f.ia?.nursing?.comorbidities
