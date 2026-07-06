@@ -30,6 +30,12 @@ import "./patient-panel-tabs.css";
 // templates, same headers, same vitals tables.
 import { buildDoctorNoteCardHtml } from "../../pages/doctor/buildDoctorNoteCardHtml";
 import { buildNurseNoteCardHtml }  from "../../pages/nursing/printNurseNote";
+// R7hs — The Initial Assessment tab renders the doctor + nurse IA through the
+// SAME comprehensive prose renderer that the Complete IPD File print and the
+// individual IA print use, so the panel IA is 1:1 with the print. The per-type
+// note-card builders (buildDoctorNoteCardHtml / buildNurseNoteCardHtml) are a
+// LESS-comprehensive renderer and stay in use only for the day-wise timelines.
+import { buildInitialAssessmentHtml } from "@/Components/print/printables/patientFileThemes/buildInitialAssessmentHtml";
 import { getVitalSheet } from "../../Services/vital/vitalService";
 
 /* ──────────────────────── Formatters ───────────────────────── */
@@ -83,6 +89,210 @@ function NoteCardEmbed({ note, role, hideNursingExtras = false }) {
   // through the authenticated axios pipe before injecting the markup
   // (a raw <img src="/uploads/…"> can't send the Authorization header).
   const html = useInlinedUploadsHtml(rawHtml);
+  return (
+    <div
+      className={`ppt-embed-card ppt-embed-card--${role}`}
+      // eslint-disable-next-line react/no-danger
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   R7hs — Initial-Assessment adapters + shared-renderer embed.
+
+   A saved IA note stores its role-specific data under nested NABH wrappers
+   (mirrors IPDInitialAssessmentPage's save payload L1679-1775 and its restore
+   L1421-1571):
+     • Doctor : note.noteDetails.doctor  +  note.noteDetails.doctor.nabh
+                (plus top-level mirrors chiefComplaint / provisionalDiagnosis …)
+     • Nurse  : note.noteDetails.nursing +  note.noteDetails.nursingNabh
+                (or, on the mirrored NursingNotes row, note.noteData.nursing +
+                 note.noteData.nursingNabh)
+
+   The shared prose renderer buildInitialAssessmentHtml expects the CANONICAL
+   nested shape (renderDoctor / renderNursing). adaptDoctor / adaptNursing map
+   the raw saved keys → canonical, using the SAME field aliases as Narrative's
+   `iaForFile` (L1184-1284) and IPDInitialAssessmentPage's `buildIaFromState`
+   (L1789-1893) so the panel output is identical to the two print surfaces.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+// Flatten the doctor note the way IPDInitialAssessmentPage restore reads it:
+// nabh wrapper first (so its canonical NABH keys are visible), then the plain
+// doctor block, then the note's top-level mirrors. Later spreads win on a key
+// collision — top-level mirrors (chiefComplaint etc.) override, matching
+// normalizeData.js L124-126's "flat legacy field wins" precedence.
+function adaptDoctor(note) {
+  if (!note || typeof note !== "object") return {};
+  const doc = note.noteDetails?.doctor || {};
+  const d = { ...(doc.nabh || {}), ...doc, ...note };
+
+  return {
+    doctorName: d.doctorName || d.signedByName || d.signedBy,
+    regNo: d.regNo || d.signedByReg || d.mciRegNo,
+    assessedAt: d.assessmentDate || d.signedAt || d.createdAt,
+    // chiefComplaint (nabh/top-level) → chiefComplaints; hopi is the CC fallback.
+    chiefComplaints: d.chiefComplaints || d.chiefComplaint || d.cc,
+    ccDuration: d.ccDuration,
+    hopi: d.hopi || d.historyOfPresentIllness || d.historyOfPresentingIllness,
+    // R7hr-70 — structured PSH/Fam/Soc summaries feed History; legacy strings fall back.
+    pastMedical: d.pastMedical || d.pmh || d.briefPmh || d.pastMedicalHistory,
+    pastSurgical: d.pastSurgical || d.psh,
+    familyHistory: d.familyHistory || d.famHx,
+    socialHistory: d.socialHistory || d.socHx,
+    comorbidities: d.comorbidities || null,
+    allergies: {
+      noKnown: d.allergies?.noKnown ?? d.noKnownAllergies,
+      list: d.allergies?.list || [],
+    },
+    medReconciliation: Array.isArray(d.medicationReconciliation)
+      ? d.medicationReconciliation
+      : (Array.isArray(d.medReconciliation) ? d.medReconciliation : []),
+    clinicalExamination: {
+      general: d.clinicalExamination?.general || d.generalExamination || d.genExam,
+      systemic: d.clinicalExamination?.systemic || d.systemicExamination,
+      cvs: d.clinicalExamination?.cvs || d.cvs,
+      rs: d.clinicalExamination?.rs || d.rs,
+      abdomen: d.clinicalExamination?.abdomen || d.abdomen,
+      cns: d.clinicalExamination?.cns || d.cns,
+      ros: d.clinicalExamination?.ros || d.reviewOfSystems || d.ros || {},
+    },
+    localExam: (typeof d.localExamination === "string" ? d.localExamination : "") || d.localExam,
+    provisionalDiagnosis: d.provisionalDiagnosis || d.provDx,
+    workingDiagnosis: d.workingDiagnosis || d.workingDx,
+    finalDiagnosis: d.finalDiagnosis || d.finalDx,
+    icd10: d.icd10 || d.icdCode,
+    icd10Description: d.icd10Description || d.icdDescription,
+    patientStatus: d.patientStatus,
+    differentialDiagnosis: d.differentialDiagnosis || d.differentialDx,
+    anthropometry: d.anthropometry || {},
+    investigations: Array.isArray(d.invests)
+      ? d.invests
+      : (Array.isArray(d.investigations) ? d.investigations : []),
+    investigationsText: typeof d.investigations === "string" ? d.investigations : (d.plannedInvestigations || ""),
+    treatmentPlan: d.treatmentPlan,
+    // Structured Rx (meds) preferred; legacy rxRows fall back.
+    prescription: (Array.isArray(d.meds) && d.meds.length)
+      ? d.meds.map((m) => ({
+          drug: m.drug || m.name, dose: m.dose, route: m.route, frequency: m.frequency,
+          duration: m.duration, instructions: m.instructions,
+          dilutionVolume: m.dilutionVolume, dilutionFluid: m.dilutionFluid,
+          infuseOverMinutes: m.infuseOverMinutes,
+        }))
+      : (Array.isArray(d.prescription) ? d.prescription
+         : (Array.isArray(d.rxRows) ? d.rxRows : [])),
+    infusions: Array.isArray(d.infusions) ? d.infusions : [],
+    codeStatus: (typeof d.codeStatus === "object" && d.codeStatus) ? d.codeStatus.value : d.codeStatus,
+    codeStatusDiscussedWith: (typeof d.codeStatus === "object" && d.codeStatus) ? d.codeStatus.discussedWith : d.codeStatusDiscussedWith,
+    codeStatusLimitations: (typeof d.codeStatus === "object" && d.codeStatus) ? d.codeStatus.limitations : d.codeStatusLimitations,
+    elosDays: d.elosDays,
+    goalOfCare: d.goalOfCare,
+    riskAcknowledgement: d.riskAcknowledgement || null,
+    referrals: Array.isArray(d.referrals) ? d.referrals : [],
+    prognosis: (typeof d.prognosis === "object" && d.prognosis) ? d.prognosis : (d.prognosis ? { summary: d.prognosis } : {}),
+    consentNeeded: d.consentNeeded || d.consentRequired || d.consentsRequired || {},
+    obGyn: d.obstetricGynae || d.obGyn || {},
+    immunisation: d.immunisationStatus || d.immunisation || {},
+    ecog: (typeof d.functionalEcog === "object" && d.functionalEcog) ? d.functionalEcog : (d.functionalEcog ? { score: d.functionalEcog } : (d.ecog || {})),
+    spiritual: d.spiritualNeeds || d.spiritual || {},
+    dietAdvice: d.dietAdvice,
+    activityAdvice: d.activityAdvice,
+    followupNotes: d.followupNotes || d.followUp,
+    signedBy: {
+      name: d.signedByName || d.signedBy || d.doctorName,
+      reg: d.signedByReg || d.mciRegNo || d.regNo,
+      empId: d.signedByEmpId || d.doctorEmpId,
+      at: d.signedAt || d.assessmentDate,
+    },
+  };
+}
+
+// Flatten the nurse note: nursingNabh first, then the plain nursing block, then
+// the noteData.* mirror (NursingNotes row), then the note top-level.
+function adaptNursing(note) {
+  if (!note || typeof note !== "object") return {};
+  const nabh = note.noteDetails?.nursingNabh || note.noteData?.nursingNabh || {};
+  const nur = note.noteDetails?.nursing || note.noteData?.nursing || {};
+  const n = { ...nabh, ...nur, ...note };
+
+  const score = (obj) =>
+    (obj && typeof obj === "object")
+      ? { total: obj.total ?? obj.score, meta: obj.meta, risk: obj.risk || obj.band }
+      : null;
+
+  return {
+    admission: {
+      date: n.admitDate, time: n.admitTime, ipdNo: n.ipdNo,
+      mode: n.modeOfAdmit || n.modeOfAdmission, ward: n.ward, bed: n.bedNo,
+      consciousness: n.consciousnessLevel,
+      mobility: typeof n.mobility === "string" ? n.mobility : "",
+    },
+    identification: n.identification || n.idBand || {},
+    vitals: n.vitals || {},
+    anthropometry: n.anthropometry || {},
+    allergies: {
+      noKnown: n.allergies?.noKnown ?? n.noKnownAllergies ?? n.nurseNoKnownAllergies,
+      list: n.allergies?.list || [],
+    },
+    briefHistory: n.briefPmh || n.briefHistory || n.nurseBriefPmh,
+    homeMeds: Array.isArray(n.homeMedications) ? n.homeMedications
+              : (Array.isArray(n.homeMeds) ? n.homeMeds : []),
+    pain: n.pain || {
+      present: n.painPresent, score: n.painScore,
+      location: n.painLocation, character: n.painCharacter,
+    },
+    morse: score(n.morse),
+    braden: score(n.braden),
+    // saved as `nutri`; renderer reads `nutrition`. Carry the quick-screen too.
+    nutrition: (() => {
+      const s = score(n.nutrition || n.nutri);
+      const quick = n.nutritionalScreeningQuick || n.nutrition?.quick || n.nutri?.quick;
+      if (!s && !quick) return null;
+      return { ...(s || {}), quick };
+    })(),
+    vte: score(n.vte),
+    dvt: score(n.dvt),
+    gcs: score(n.gcs),
+    psychosocial: (typeof n.psychosocial === "object" && n.psychosocial) ? n.psychosocial : {},
+    barthel: n.adlBarthel || n.barthel || n.adl || {},
+    bodyChart: n.bodyChart || {},
+    precautions: n.specialPrecautions || n.precautions || {},
+    education: (typeof (n.educationNeeds || n.education) === "object") ? (n.educationNeeds || n.education) : {},
+    dischargePlanning: (typeof n.dischargePlanning === "object" && n.dischargePlanning) ? n.dischargePlanning : {},
+    cognitive: (typeof (n.cognitiveCommunication || n.cognitive) === "object") ? (n.cognitiveCommunication || n.cognitive) : {},
+    cultural: n.culturalSpiritual || n.cultural || {},
+    elimination: (typeof (n.bowelBladder || n.elimination) === "object") ? (n.bowelBladder || n.elimination) : {},
+    sleep: (typeof (n.sleepPattern || n.sleep) === "object") ? (n.sleepPattern || n.sleep) : {},
+    valuables: n.valuablesBelongings || n.valuables || {},
+    caregiver: (typeof (n.familyCaregiver || n.caregiver) === "object") ? (n.familyCaregiver || n.caregiver) : {},
+    highRisk: n.highRiskFlags || n.highRisk || {},
+    mobility: (typeof (n.mobilityGait || n.mobility) === "object") ? (n.mobilityGait || n.mobility) : (n.mobility || {}),
+    preAnaesthesia: n.preAnaesthesia || {},
+    prom: n.promPremTriggers || n.prom || {},
+    plan: {
+      problems: n.nursingProblems || n.plan?.problems,
+      goals: n.nursingGoals || n.plan?.goals,
+      notes: n.nursingNotes || n.plan?.notes,
+    },
+    signedBy: {
+      name: n.nurseName || n.signedByName || n.signedBy,
+      reg: n.signedByReg || n.nurseRegNo,
+      empId: n.signedByEmpId || n.nurseEmployeeId,
+      at: n.signedAt || n.submittedAt,
+    },
+  };
+}
+
+/* Renders a single IA note (doctor OR nurse) through the shared prose renderer,
+   inlining any /uploads signature images through the authenticated pipe just
+   like NoteCardEmbed. */
+function IAEmbed({ note, role }) {
+  const ia = role === "nurse"
+    ? { role: "nurse", nursing: adaptNursing(note) }
+    : { role: "doctor", doctor: adaptDoctor(note) };
+  const rawHtml = buildInitialAssessmentHtml(ia, { prose: true });
+  const html = useInlinedUploadsHtml(rawHtml);
+  if (!html) return null;
   return (
     <div
       className={`ppt-embed-card ppt-embed-card--${role}`}
@@ -171,6 +381,11 @@ export function InitialAssessmentTab({ doctorNotes = [], nursingNotes = [], admi
     (a, b) => new Date(b.signedAt || b.createdAt || 0) - new Date(a.signedAt || a.createdAt || 0)
   );
   const _latestDocIA = _docIAsorted[0] || null;
+  // R7hs — latest signed nurse IA (newest by signedAt/noteDate/createdAt), fed
+  // to the shared renderer the same way the doctor card is.
+  const _latestNurseIA = [...nurseInitial].sort(
+    (a, b) => new Date(b.signedAt || b.noteDate || b.createdAt || 0) - new Date(a.signedAt || a.noteDate || a.createdAt || 0)
+  )[0] || null;
   const _isBlank = (v) => v == null || String(v).trim() === "" || String(v).trim() === "—";
   const _derivedChiefComplaint =
     _latestDocIA?.chiefComplaint ||
@@ -232,21 +447,13 @@ export function InitialAssessmentTab({ doctorNotes = [], nursingNotes = [], admi
             ⚠️ Doctor's initial assessment is mandatory before any further documentation. NABH COP.2.
           </div>
         ) : (
-          // Latest first — Initial Assessment is usually one record but
-          // amendments / re-sign attempts can produce extras; show newest
-          // at top so the most current sign is the first thing read.
-          /* R7hr-100 — Hide the doctor-card's embedded "NURSING INTAKE
-             — CROSS-DISCIPLINARY" block while no separate Nurse IA
-             record exists. Doctors used to see Barthel max scores +
-             dropdown defaults baked into the doctor note's nursingNabh
-             payload (legacy combined-form artifact) even when nursing
-             hadn't started — confusing and clinically misleading. The
-             flag is forwarded all the way through NoteCardEmbed →
-             buildDoctorNoteCardHtml; print + timeline call sites pass
-             nothing → default-preserving (R25 safe). */
-          [...docInitial]
-            .sort((a, b) => new Date(b.visitDate || b.createdAt) - new Date(a.visitDate || a.createdAt))
-            .map((n) => <NoteCardEmbed key={n._id} note={n} role="doctor" hideNursingExtras={true} />)
+          // R7hs — Render the LATEST signed doctor IA through the SHARED prose
+          // renderer (buildInitialAssessmentHtml) so the panel matches the
+          // Complete IPD File print and the individual IA print 1:1. Initial
+          // Assessment is one clinical record; amendments / re-sign attempts can
+          // leave older rows, so we show only the most current sign
+          // (_latestDocIA — already the newest by signedAt/createdAt).
+          <IAEmbed key={_latestDocIA._id} note={_latestDocIA} role="doctor" />
         )}
       </div>
 
@@ -268,9 +475,8 @@ export function InitialAssessmentTab({ doctorNotes = [], nursingNotes = [], admi
               {nurseInitial.length} record(s)
             </span>
           </div>
-          {[...nurseInitial]
-            .sort((a, b) => new Date(b.noteDate || b.createdAt) - new Date(a.noteDate || a.createdAt))
-            .map((n) => <NoteCardEmbed key={n._id} note={n} role="nurse" />)}
+          {/* R7hs — LATEST signed nurse IA via the SHARED prose renderer. */}
+          {_latestNurseIA && <IAEmbed key={_latestNurseIA._id} note={_latestNurseIA} role="nurse" />}
         </div>
       )}
     </div>
