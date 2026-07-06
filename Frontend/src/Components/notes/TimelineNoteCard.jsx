@@ -260,9 +260,12 @@ function BodyFor({ note }) {
   // Progress / ICU / Procedure / Discharge / etc.
   const isDoctorIA =
     note?.noteType === "initial" || note?.noteType === "initialAssessment";
+  // R7hr — render the note in the SAME PROSE arrangement the Complete IPD File
+  // print uses, so the on-screen timeline matches the launch-ready file layout
+  // (was card mode — a per-surface style divergence).
   const rawHtml = NURSING_TYPES.has(note.noteType)
-    ? buildNurseNoteCardHtml(note)
-    : buildDoctorNoteCardHtml(note, isDoctorIA ? { hideNursingExtras: true } : {});
+    ? buildNurseNoteCardHtml(note, { prose: true })
+    : buildDoctorNoteCardHtml(note, isDoctorIA ? { prose: true, hideNursingExtras: true } : { prose: true });
   // /uploads signature images are JWT-gated — swap them to authenticated
   // data: URLs before injecting (raw <img> tags can't send the header).
   const html = useInlinedUploadsHtml(rawHtml);

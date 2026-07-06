@@ -2560,7 +2560,8 @@ function NursingNotesContent({ selectedPatient }) {
                         dangerouslySetInnerHTML={{ __html: buildNurseNoteCardHtml(
                           note.noteType === "vitals" && vitalSheets[vitalDateKey(note)]
                             ? { ...note, vitalSheet: vitalSheets[vitalDateKey(note)] }
-                            : note
+                            : note,
+                          { prose: true } // R7hr — match the Complete IPD File prose layout
                         ) }}
                       />
                       {false && (

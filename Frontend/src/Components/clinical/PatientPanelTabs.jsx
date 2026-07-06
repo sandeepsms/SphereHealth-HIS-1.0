@@ -74,9 +74,11 @@ function NoteCardEmbed({ note, role, hideNursingExtras = false }) {
   // the Initial Assessment tab can suppress the "NURSING INTAKE — CROSS-
   // DISCIPLINARY" block when no separate Nurse IA exists. Default false
   // preserves all existing call sites (prints, timelines, MLC tab).
+  // R7hr — PROSE arrangement (same as the Complete IPD File print) so the
+  // patient-panel note view matches the launch-ready file layout everywhere.
   const rawHtml = role === "nurse"
-    ? buildNurseNoteCardHtml(note)
-    : buildDoctorNoteCardHtml(note, { hideNursingExtras });
+    ? buildNurseNoteCardHtml(note, { prose: true })
+    : buildDoctorNoteCardHtml(note, { prose: true, hideNursingExtras });
   // /uploads signature images are JWT-gated — resolve them to data: URLs
   // through the authenticated axios pipe before injecting the markup
   // (a raw <img src="/uploads/…"> can't send the Authorization header).
