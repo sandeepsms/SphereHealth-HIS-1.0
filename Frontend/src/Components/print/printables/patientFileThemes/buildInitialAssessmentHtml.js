@@ -112,6 +112,31 @@ const humanize = (k) =>
     .replace(/^./, (c) => c.toUpperCase())
     .trim();
 
+// Generic object → humanized bold-label lines, for free-shape blocks whose
+// inner keys vary by source (e.g. the admission-backfilled nursing IA's
+// head-to-toe systemAssessment / nutritionHydration). Rules: false flags are
+// noise → skipped; true → "Yes"; arrays join; one level of nested object
+// flattens to "Label: value; Label2: value2". Empty values never print.
+const objLines = (obj, skip = []) => {
+  if (!obj || typeof obj !== "object" || Array.isArray(obj)) return "";
+  return Object.entries(obj)
+    .map(([k, v]) => {
+      if (skip.includes(k) || v == null || v === false) return "";
+      if (v === true) return line(humanize(k), "Yes");
+      if (Array.isArray(v)) {
+        return line(humanize(k), v.filter((x) => x != null && String(x).trim()).join(", "));
+      }
+      if (typeof v === "object") {
+        const inner = Object.entries(v)
+          .filter(([, iv]) => iv != null && iv !== false && typeof iv !== "object" && String(iv).trim() !== "")
+          .map(([ik, iv]) => `${humanize(ik)}: ${iv === true ? "Yes" : iv}`);
+        return inner.length ? line(humanize(k), inner.join("; ")) : "";
+      }
+      return line(humanize(k), v);
+    })
+    .join("");
+};
+
 /* ── the self-contained <style> block (.ia-* namespace) ──────────────── */
 const IA_STYLE = `<style>
   .ia-root{font-size:11px;color:#1e293b;line-height:1.45}
@@ -499,12 +524,19 @@ function renderNursing(n) {
     ])
   );
 
-  // Anthropometry
+  // System / Head-to-Toe Assessment — free-shape object keyed per system
+  // (neuro / respiratory / cardiac / GI / GU / skin …) carried by the
+  // admission-backfilled nursing IA. Rendered generically so no captured
+  // system is ever silently dropped.
+  out.push(section("System / Head-to-Toe Assessment", objLines(n.systemAssessment)));
+
+  // Anthropometry — the nurse-IA note saves {height, weight, bmi}; the IPD
+  // form's live state uses {heightCm, weightKg}. Accept both.
   const an = n.anthropometry || {};
   out.push(
     section("Anthropometry", [
-      line("Height (cm)", an.heightCm),
-      line("Weight (kg)", an.weightKg),
+      line("Height (cm)", an.heightCm ?? an.height),
+      line("Weight (kg)", an.weightKg ?? an.weight),
       line("BMI", an.bmi),
     ])
   );
@@ -575,7 +607,12 @@ function renderNursing(n) {
   ].join("");
   out.push(section("Nutrition Quick-Screen", nrsBody));
 
-  // Psychosocial
+  // Nutrition & Hydration — free-shape detail block (admission-backfilled
+  // nursing IA's nutritionHydration). Generic so no field is dropped.
+  out.push(section("Nutrition & Hydration", objLines(n.nutritionDetail)));
+
+  // Psychosocial — known keys first, then a generic tail so source shapes
+  // with different inner keys (admission copy) still render fully.
   const ps = n.psychosocial || {};
   out.push(
     section("Psychosocial", [
@@ -584,6 +621,7 @@ function renderNursing(n) {
       line("Family support", ps.familySupport),
       line("Preferred language", ps.languagePreferred),
       line("Notes", ps.notes),
+      objLines(ps, ["emotionalState", "moodAffect", "familySupport", "languagePreferred", "notes"]),
     ])
   );
 
@@ -642,7 +680,8 @@ function renderNursing(n) {
     ])
   );
 
-  // Discharge Planning (Day 1)
+  // Discharge Planning (Day 1) — known keys first + generic tail (the
+  // admission copy carries extras like followUpPlan / medicationsToContinue).
   const dp = n.dischargePlanning || {};
   out.push(
     section("Discharge Planning (Day 1)", [
@@ -651,6 +690,7 @@ function renderNursing(n) {
       line("Transport", dp.transportNeed),
       line("Anticipated barriers", dp.anticipatedBarriers),
       line("Equipment needed", Array.isArray(dp.equipmentNeeded) ? dp.equipmentNeeded.join(", ") : dp.equipmentNeeded),
+      objLines(dp, ["homeSupport", "primaryCaregiver", "transportNeed", "anticipatedBarriers", "equipmentNeeded"]),
     ])
   );
 

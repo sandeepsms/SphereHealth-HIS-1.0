@@ -209,15 +209,28 @@ function adaptDoctor(note) {
 
 // Flatten the nurse note: nursingNabh first, then the plain nursing block, then
 // the noteData.* mirror (NursingNotes row), then the note top-level.
-function adaptNursing(note) {
+// R7hr(F5-audit) — `admIA` (admission.nurseInitialAssessment) is layered ON TOP:
+// the two nursing-IA copies are each partial (the note carries anthropometry/
+// allergies/mobility; the admission-backfilled record carries riskAssessments/
+// systemAssessment/psychosocial/nutritionHydration/carePlan). The union — with
+// the admission copy winning collisions — is exactly what the Complete File's
+// Narrative adapter builds, so both surfaces render the identical IA.
+function adaptNursing(note, admIA) {
   if (!note || typeof note !== "object") return {};
   const nabh = note.noteDetails?.nursingNabh || note.noteData?.nursingNabh || {};
   const nur = note.noteDetails?.nursing || note.noteData?.nursing || {};
-  const n = { ...nabh, ...nur, ...note };
+  const n = { ...nabh, ...nur, ...note, ...((admIA && typeof admIA === "object") ? admIA : {}) };
 
   const score = (obj) =>
     (obj && typeof obj === "object")
       ? { total: obj.total ?? obj.score, meta: obj.meta, risk: obj.risk || obj.band }
+      : null;
+  // Admission-copy risk shape: riskAssessments.{morseFallScale,bradenScale}
+  // = { totalScore, riskLevel }.
+  const ra = n.riskAssessments || {};
+  const raScore = (o) =>
+    (o && typeof o === "object" && (o.totalScore != null || o.riskLevel))
+      ? { total: o.totalScore ?? o.total ?? o.score, risk: o.riskLevel || o.risk }
       : null;
 
   return {
@@ -241,8 +254,8 @@ function adaptNursing(note) {
       present: n.painPresent, score: n.painScore,
       location: n.painLocation, character: n.painCharacter,
     },
-    morse: score(n.morse),
-    braden: score(n.braden),
+    morse: score(n.morse) || raScore(ra.morseFallScale),
+    braden: score(n.braden) || raScore(ra.bradenScale),
     // saved as `nutri`; renderer reads `nutrition`. Carry the quick-screen too.
     nutrition: (() => {
       const s = score(n.nutrition || n.nutri);
@@ -254,6 +267,9 @@ function adaptNursing(note) {
     dvt: score(n.dvt),
     gcs: score(n.gcs),
     psychosocial: (typeof n.psychosocial === "object" && n.psychosocial) ? n.psychosocial : {},
+    // R7hr(F5-audit) — head-to-toe + nutrition detail from the admission copy.
+    systemAssessment: (typeof n.systemAssessment === "object" && n.systemAssessment) ? n.systemAssessment : {},
+    nutritionDetail: (typeof n.nutritionHydration === "object" && n.nutritionHydration) ? n.nutritionHydration : {},
     barthel: n.adlBarthel || n.barthel || n.adl || {},
     bodyChart: n.bodyChart || {},
     precautions: n.specialPrecautions || n.precautions || {},
@@ -266,13 +282,18 @@ function adaptNursing(note) {
     valuables: n.valuablesBelongings || n.valuables || {},
     caregiver: (typeof (n.familyCaregiver || n.caregiver) === "object") ? (n.familyCaregiver || n.caregiver) : {},
     highRisk: n.highRiskFlags || n.highRisk || {},
-    mobility: (typeof (n.mobilityGait || n.mobility) === "object") ? (n.mobilityGait || n.mobility) : (n.mobility || {}),
+    // Structured mobilityGait object only — a plain mobility STRING already
+    // renders on the Admission line (matches the Complete File adapter, so
+    // both surfaces show the same section set).
+    mobility: (typeof (n.mobilityGait || n.mobility) === "object") ? (n.mobilityGait || n.mobility) : {},
     preAnaesthesia: n.preAnaesthesia || {},
     prom: n.promPremTriggers || n.prom || {},
     plan: {
       problems: n.nursingProblems || n.plan?.problems,
       goals: n.nursingGoals || n.plan?.goals,
-      notes: n.nursingNotes || n.plan?.notes,
+      notes: n.nursingNotes || n.plan?.notes
+        || (typeof n.carePlan === "string" ? n.carePlan : "")
+        || (typeof n.notes === "string" ? n.notes : ""),
     },
     signedBy: {
       name: n.nurseName || n.signedByName || n.signedBy,
@@ -286,9 +307,9 @@ function adaptNursing(note) {
 /* Renders a single IA note (doctor OR nurse) through the shared prose renderer,
    inlining any /uploads signature images through the authenticated pipe just
    like NoteCardEmbed. */
-function IAEmbed({ note, role }) {
+function IAEmbed({ note, role, admissionIA }) {
   const ia = role === "nurse"
-    ? { role: "nurse", nursing: adaptNursing(note) }
+    ? { role: "nurse", nursing: adaptNursing(note, admissionIA) }
     : { role: "doctor", doctor: adaptDoctor(note) };
   const rawHtml = buildInitialAssessmentHtml(ia, { prose: true });
   const html = useInlinedUploadsHtml(rawHtml);
@@ -476,7 +497,14 @@ export function InitialAssessmentTab({ doctorNotes = [], nursingNotes = [], admi
             </span>
           </div>
           {/* R7hs — LATEST signed nurse IA via the SHARED prose renderer. */}
-          {_latestNurseIA && <IAEmbed key={_latestNurseIA._id} note={_latestNurseIA} role="nurse" />}
+          {_latestNurseIA && (
+            <IAEmbed
+              key={_latestNurseIA._id}
+              note={_latestNurseIA}
+              role="nurse"
+              admissionIA={admission?.nurseInitialAssessment}
+            />
+          )}
         </div>
       )}
     </div>

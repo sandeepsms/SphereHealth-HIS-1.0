@@ -4273,7 +4273,16 @@ export default function CompletePatientFilePage() {
     // riskAssessments / dischargePlanning) over the thin nurse-note payload, so
     // the Complete File prints the ENTIRE assessment. Fall back to the note.
     const richNurseIA = adm.nurseInitialAssessment || data.nurseInitialAssessment;
-    const noteNurseIA = iaNurseNote?.noteDetails?.nursing || iaNurseNote?.noteData?.nursing || {};
+    // R7hr(F5-audit) — include the note's nursingNabh wrapper too: it carries
+    // anthropometry / allergies / homeMedications, which the plain `nursing`
+    // block doesn't. Without this spread those fields silently vanished from
+    // the Complete File while the patient panel (which flattens both
+    // wrappers) still showed them — the exact per-surface divergence the
+    // shared-renderer work exists to prevent.
+    const noteNurseIA = {
+      ...(iaNurseNote?.noteData?.nursingNabh || iaNurseNote?.noteDetails?.nursingNabh || {}),
+      ...(iaNurseNote?.noteDetails?.nursing || iaNurseNote?.noteData?.nursing || {}),
+    };
     // R7ht — MERGE, don't replace. When BOTH a rich admission IA and a nurse
     // note IA exist, spread the note first and let the rich form win per-field,
     // so note-only fields (identification, psychosocial narrative, sleep,
@@ -4620,11 +4629,15 @@ export default function CompletePatientFilePage() {
                               || adm.initialAssessment
                               || data.initialAssessment
                               || {};
-              const iaNurse = iaNurseNote?.noteDetails?.nursing
-                              || iaNurseNote?.noteData?.nursing
-                              || adm.nurseInitialAssessment
-                              || data.nurseInitialAssessment
-                              || {};
+              // R7hr(F5-audit) — UNION the nurse-IA sources (same precedence
+              // as the primary buildReceipt + the panel adapter): note's
+              // nursingNabh (anthropometry/allergies/homeMeds) + nursing
+              // block, with the rich admission-backfilled copy winning.
+              const iaNurse = {
+                ...(iaNurseNote?.noteData?.nursingNabh || iaNurseNote?.noteDetails?.nursingNabh || {}),
+                ...(iaNurseNote?.noteDetails?.nursing || iaNurseNote?.noteData?.nursing || {}),
+                ...(adm.nurseInitialAssessment || data.nurseInitialAssessment || {}),
+              };
               // Filter the loud "Doctor — initial" / "Nurse — initial"
               // entries out of the regular notes timeline — the IA is its
               // own dedicated print section, so leaving them in produces

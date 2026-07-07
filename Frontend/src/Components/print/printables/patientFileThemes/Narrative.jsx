@@ -919,7 +919,27 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
 
   /* ── Risk scores extraction (consumed by the IA adapter + the
        Scoring-Trends section below) ─────────────────────────────── */
-  const n = f.ia?.nursing || {};
+  // R7hr(F5-audit) — UNION the two nursing-IA copies so the Complete File
+  // shows everything: the admission-backfilled record (riskAssessments,
+  // systemAssessment, psychosocial, nutritionHydration, carePlan…) PLUS the
+  // signed nurse-IA note's wrappers (anthropometry, allergies, mobility…).
+  // Each copy is partial; the admission copy wins on collisions (canonical
+  // backfill) — the same precedence the patient panel's adapter uses, so
+  // both surfaces render the identical union.
+  const _nurseIaNote = [...(f.nursingNotes || []), ...(f.doctorNotes || [])].find(
+    (x) => x && (x.noteType === "initial" || x.noteType === "initialAssessment") &&
+      (x.section === "nursing" || x.noteData?.nursing || x.noteData?.nursingNabh ||
+       x.noteDetails?.nursing || x.noteDetails?.nursingNabh)
+  );
+  const _nurseIaNoteFlat = _nurseIaNote
+    ? {
+        ...(_nurseIaNote.noteData?.nursingNabh || {}),
+        ...(_nurseIaNote.noteData?.nursing || {}),
+        ...(_nurseIaNote.noteDetails?.nursingNabh || {}),
+        ...(_nurseIaNote.noteDetails?.nursing || {}),
+      }
+    : {};
+  const n = { ..._nurseIaNoteFlat, ...(f.ia?.nursing || {}) };
   const d = f.ia?.doctor || {};
 
   const morseVal   = pick(n, "fallRisk", "morseTotal", "morseScore") ?? scalarOrNum(n.morse?.total) ?? scalarOrNum(n.riskAssessments?.morseFallScale?.totalScore);
@@ -1194,7 +1214,15 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
             familyHistory: f.history?.family || d.familyHistory,
             socialHistory: f.history?.social || d.socialHistory,
             comorbidities: d.comorbidities || null,
-            allergies: { noKnown: d.noKnownAllergies, list: _iaAllergies },
+            // R7hr(F5-audit) — the doctor IA block shows only what the DOCTOR
+            // recorded (the signed note's own allergies); the patient-level
+            // alert list already surfaces in the file's alerts banner and the
+            // nursing block. Injecting it here made the file's doctor IA
+            // differ from the panel's / individual print's.
+            allergies: {
+              noKnown: d.allergies?.noKnown ?? d.noKnownAllergies,
+              list: Array.isArray(d.allergies?.list) ? d.allergies.list : [],
+            },
             medReconciliation: Array.isArray(d.medicationReconciliation) ? d.medicationReconciliation : [],
             clinicalExamination: {
               general: f.exam?.generalExam || d.generalExamination,
@@ -1209,7 +1237,10 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
             icd10Description: f.admission?.icd10Desc || d.icd10Description,
             patientStatus: d.patientStatus,
             differentialDiagnosis: d.differentialDiagnosis || d.differentialDx,
-            anthropometry: f.history?.anthropometry || d.anthropometry || {},
+            // R7hr(F5-audit) — doctor's own anthropometry only (see allergies
+            // note above); nurse-measured height/weight render in the nursing
+            // block's Anthropometry.
+            anthropometry: d.anthropometry || {},
             investigations: Array.isArray(d.investigations) ? d.investigations : [],
             investigationsText: typeof d.investigations === "string" ? d.investigations : (d.plannedInvestigations || ""),
             treatmentPlan: d.treatmentPlan,
@@ -1247,7 +1278,13 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
             identification: n.identification || n.idBand || {},
             vitals: n.vitals || {},
             anthropometry: n.anthropometry || {},
-            allergies: { noKnown: n.noKnownAllergies || n.nurseNoKnownAllergies, list: _iaAllergies },
+            // R7hr(F5-audit) — prefer the nurse-IA's own allergy block (from
+            // the note's nursingNabh, now unioned into n) over the generic
+            // patient-level alerts list, matching the panel adapter.
+            allergies: {
+              noKnown: n.allergies?.noKnown ?? (n.noKnownAllergies || n.nurseNoKnownAllergies),
+              list: (Array.isArray(n.allergies?.list) && n.allergies.list.length) ? n.allergies.list : _iaAllergies,
+            },
             briefHistory: n.briefPmh || n.nurseBriefPmh || f.history?.medical,
             homeMeds: Array.isArray(homeMeds) ? homeMeds : [],
             pain: n.pain || (n.painScore != null ? { score: n.painScore } : {}),
@@ -1258,6 +1295,10 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
             dvt: dvtVal != null ? { total: dvtVal } : null,
             gcs: gcsVal != null ? { total: gcsVal } : null,
             psychosocial: (typeof n.psychosocial === "object" && n.psychosocial) ? n.psychosocial : {},
+            // R7hr(F5-audit) — head-to-toe + nutrition detail from the
+            // admission-backfilled copy (rendered generically).
+            systemAssessment: (typeof n.systemAssessment === "object" && n.systemAssessment) ? n.systemAssessment : {},
+            nutritionDetail: (typeof n.nutritionHydration === "object" && n.nutritionHydration) ? n.nutritionHydration : {},
             barthel: n.adl || n.barthel || {},
             bodyChart: n.bodyChart || {},
             precautions: n.precautions || {},
@@ -1273,7 +1314,13 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
             mobility: (typeof n.mobilityGait === "object" && n.mobilityGait) ? n.mobilityGait : {},
             preAnaesthesia: n.preAnaesthesia || {},
             prom: n.promPrem || {},
-            plan: { problems: n.nursingProblems, goals: n.nursingGoals, notes: n.nursingNotes || (typeof n.carePlan === "string" ? n.carePlan : "") },
+            plan: {
+              problems: n.nursingProblems,
+              goals: n.nursingGoals,
+              notes: n.nursingNotes
+                || (typeof n.carePlan === "string" ? n.carePlan : "")
+                || (typeof n.notes === "string" ? n.notes : ""),
+            },
             signedBy: {
               name: n.nurseName || n.signedByName || n.signedBy,
               reg: n.signedByReg || n.nurseRegNo,

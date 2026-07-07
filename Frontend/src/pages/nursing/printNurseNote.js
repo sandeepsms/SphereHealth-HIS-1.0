@@ -92,7 +92,7 @@ const COMPACT_GRID_CSS = `<style>
   /* R7hu — 2-column "book" layout (see buildDoctorNoteCardHtml for rationale):
      fields flow into two columns; title / section heading / signature / tables
      span both; a field line never splits across a column. */
-  .pfx-note{font-size:11px;color:#1e293b;line-height:1.4;display:grid;grid-template-columns:1fr 1fr;column-gap:26px;row-gap:1px;align-content:start}
+  .pfx-note{font-size:11px;color:#1e293b;line-height:1.4;display:grid;grid-template-columns:repeat(auto-fit,minmax(max(240px,40%),1fr));column-gap:26px;row-gap:1px;align-content:start}
   .pfx-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:#334155;margin:0 0 5px;padding-bottom:3px;border-bottom:2px solid #e2e8f0;grid-column:1 / -1}
   .pfx-h{margin:7px 0 1px;font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;grid-column:1 / -1}
   .pfx-line{margin:2px 0;font-size:11px;line-height:1.4;color:#1e293b;white-space:pre-wrap;break-inside:avoid;min-width:0}
