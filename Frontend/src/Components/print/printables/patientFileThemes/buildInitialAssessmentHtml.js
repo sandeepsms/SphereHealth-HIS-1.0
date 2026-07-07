@@ -105,12 +105,17 @@ const flagList = (obj, entries) => {
 };
 
 // Title-case a camelCase / snake key for a fallback label.
+// Post-passes keep clinical acronyms readable: "oxygenLPM" → "Oxygen LPM"
+// (not "Oxygen L P M"), "ivAccess" → "IV Access", "spo2" → "SpO₂".
+const _ACRONYMS = { Iv: "IV", Bp: "BP", Rr: "RR", Gcs: "GCS", Bmi: "BMI", Lpm: "LPM", Cvc: "CVC", Spo2: "SpO₂", Uhid: "UHID", Ipd: "IPD" };
 const humanize = (k) =>
   String(k)
     .replace(/([A-Z])/g, " $1")
     .replace(/[_-]+/g, " ")
     .replace(/^./, (c) => c.toUpperCase())
-    .trim();
+    .trim()
+    .replace(/\b([A-Z])\s(?=[A-Z]\b)/g, "$1") // re-join split capital runs: "L P M" → "LPM"
+    .replace(/\b(Iv|Bp|Rr|Gcs|Bmi|Lpm|Cvc|Spo2|Uhid|Ipd)\b/g, (m) => _ACRONYMS[m] || m);
 
 // Generic object → humanized bold-label lines, for free-shape blocks whose
 // inner keys vary by source (e.g. the admission-backfilled nursing IA's
@@ -143,7 +148,15 @@ const IA_STYLE = `<style>
   .ia-role-title{font-size:12.5px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:#334155;margin:2px 0 8px;padding-bottom:4px;border-bottom:2px solid #e2e8f0}
   .ia-sec{margin:0 0 9px;break-inside:avoid;page-break-inside:avoid}
   .ia-h{margin:11px 0 3px;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:#3730a3}
-  .ia-line{margin:2px 0;font-size:11px;line-height:1.45;color:#1e293b;white-space:pre-wrap;overflow-wrap:anywhere}
+  .ia-line{margin:2px 0;font-size:11px;line-height:1.45;color:#1e293b;white-space:pre-wrap;overflow-wrap:anywhere;min-width:0;break-inside:avoid}
+  /* Nursing IA — 2-column "book page" layout (same responsive grid as the
+     prose notes): each section's label:value lines flow into two columns;
+     the section heading and any table span both. Collapses to ONE readable
+     column inside narrow containers (< ~506px, e.g. the patient-panel
+     column) and stays EXACTLY two on A4 print / wide screens — never three. */
+  .ia-nursing .ia-sec{display:grid;grid-template-columns:repeat(auto-fit,minmax(max(240px,40%),1fr));column-gap:26px;row-gap:1px;align-content:start}
+  .ia-nursing .ia-h{grid-column:1 / -1}
+  .ia-nursing .ia-tbl{grid-column:1 / -1}
   .ia-line strong{color:#0f172a;font-weight:700}
   .ia-tbl{width:100%;border-collapse:collapse;table-layout:fixed;font-size:10.5px;margin:5px 0 8px;page-break-inside:avoid;break-inside:avoid}
   .ia-tbl th{padding:4px 7px;border:1px solid #e2e8f0;background:#f1f5f9;font-size:9.5px;font-weight:800;text-align:left;color:#475569;text-transform:uppercase;letter-spacing:.3px;word-break:break-word}
@@ -859,7 +872,8 @@ function renderNursing(n) {
 
   const body = out.filter(Boolean).join("");
   if (!body.trim()) return "";
-  return `<div class="ia-role-title">Nursing Initial Assessment</div>${body}`;
+  // .ia-nursing scopes the 2-column "book page" section grid (see IA_STYLE).
+  return `<div class="ia-nursing"><div class="ia-role-title">Nursing Initial Assessment</div>${body}</div>`;
 }
 
 /**
