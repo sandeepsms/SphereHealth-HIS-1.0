@@ -57,6 +57,14 @@ const fmtDateTime = (d) => {
   });
 };
 
+// R7hr — signer's digital-signature image for the signed lines (rendered on
+// every surface). Accepts data: URLs, /uploads paths and http(s) only.
+const signImg = (src) => {
+  if (typeof src !== "string" || !src) return "";
+  if (!(src.startsWith("data:image/") || src.startsWith("/uploads/") || /^https?:\/\//.test(src))) return "";
+  return `<br/><img src="${esc(src)}" alt="Signature" style="max-height:36px;max-width:200px;margin-top:4px;border:1px solid #e2e8f0;background:#fff;padding:2px;border-radius:3px"/>`;
+};
+
 /* ── prose primitives ───────────────────────────────────────────────── */
 // A bold-label prose line. Returns "" when the value is empty (so the caller
 // can .join("") without leaving blank rows).
@@ -483,7 +491,7 @@ function renderDoctor(d) {
   const signAt = fmtDateTime(sb.at);
   if (signAt) signBits.push(esc(signAt));
   if (signBits.length) {
-    out.push(`<div class="ia-sign"><strong>Doctor Initial Assessment signed</strong> · ${signBits.join(" · ")}</div>`);
+    out.push(`<div class="ia-sign"><strong>Doctor Initial Assessment signed</strong> · ${signBits.join(" · ")}${signImg(sb.signature)}</div>`);
   }
 
   const body = out.filter(Boolean).join("");
@@ -867,7 +875,7 @@ function renderNursing(n) {
   const signAt = fmtDateTime(sb.at);
   if (signAt) signBits.push(esc(signAt));
   if (signBits.length) {
-    out.push(`<div class="ia-sign"><strong>Nursing Initial Assessment signed</strong> · ${signBits.join(" · ")}</div>`);
+    out.push(`<div class="ia-sign"><strong>Nursing Initial Assessment signed</strong> · ${signBits.join(" · ")}${signImg(sb.signature)}</div>`);
   }
 
   const body = out.filter(Boolean).join("");

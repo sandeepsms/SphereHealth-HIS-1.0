@@ -972,8 +972,15 @@ export function buildNurseNoteCardHtml(note, opts = {}) {
     const _when = note.signedAt ? fmtDate(note.signedAt) : noteDate;
     const prem = (note.remarks && note.noteType !== "general")
       ? `<div class="pfx-line"><strong>Remarks:</strong> ${escapeHtml(note.remarks)}</div>` : "";
+    // R7hr — signer's digital-signature image on EVERY signed line (all
+    // surfaces render this same prose). data:/uploads/https only.
+    const _sigSrc = note.signature || note.signatureImage || "";
+    const _sigImg = (isSigned && typeof _sigSrc === "string"
+                     && (_sigSrc.startsWith("data:image/") || _sigSrc.startsWith("/uploads/") || /^https?:\/\//.test(_sigSrc)))
+      ? `<br/><img src="${escapeHtml(_sigSrc)}" alt="Signature" style="max-height:36px;max-width:200px;margin-top:4px;border:1px solid #e2e8f0;background:#fff;padding:2px;border-radius:3px"/>`
+      : "";
     const psign = isSigned
-      ? `<div class="pfx-sign">✓ <strong>${escapeHtml(typeLabel)} — signed</strong> · By: <strong>${escapeHtml(note.nurseName || note.signedByName || "Nurse")}</strong>${_empId ? ` · Emp ${escapeHtml(_empId)}` : ""} · ${escapeHtml(_when)}</div>`
+      ? `<div class="pfx-sign">✓ <strong>${escapeHtml(typeLabel)} — signed</strong> · By: <strong>${escapeHtml(note.nurseName || note.signedByName || "Nurse")}</strong>${_empId ? ` · Emp ${escapeHtml(_empId)}` : ""} · ${escapeHtml(_when)}${_sigImg}</div>`
       : `<div class="pfx-sign">✎ Draft — not yet signed</div>`;
     const out = COMPACT_GRID_CSS + `<div class="pfx-note"><div class="pfx-title">${escapeHtml(typeLabel)}</div>${lateBanner}${typeBody}${prem}${psign}</div>`;
     _prose = false;

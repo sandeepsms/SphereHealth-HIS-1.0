@@ -203,6 +203,7 @@ function adaptDoctor(note) {
       reg: d.signedByReg || d.mciRegNo || d.regNo,
       empId: d.signedByEmpId || d.doctorEmpId,
       at: d.signedAt || d.assessmentDate,
+      signature: d.signature || d.signatureImage,
     },
   };
 }
@@ -300,6 +301,7 @@ function adaptNursing(note, admIA) {
       reg: n.signedByReg || n.nurseRegNo,
       empId: n.signedByEmpId || n.nurseEmployeeId,
       at: n.signedAt || n.submittedAt,
+      signature: n.signature || n.nurseSignature || n.signatureImage,
     },
   };
 }

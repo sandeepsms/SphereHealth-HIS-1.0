@@ -953,8 +953,15 @@ ${parts.map(p => `<div style="margin-bottom:6px;border-left:3px solid ${p[1]};pa
     const _empId = note.signedByEmpId || note.doctorEmpId || "";
     const _reg = note.doctorRegNo || note.signedByReg;
     const _when = note.signedAt ? fmtDate(note.signedAt) : noteDate;
+    // R7hr — the signer's digital-signature image (captured at sign time)
+    // renders on EVERY signed line, on every surface. data:/uploads/https only.
+    const _sigSrc = note.signature || note.signatureImage || "";
+    const _sigImg = (isSigned && typeof _sigSrc === "string"
+                     && (_sigSrc.startsWith("data:image/") || _sigSrc.startsWith("/uploads/") || /^https?:\/\//.test(_sigSrc)))
+      ? `<br/><img src="${escapeHtml(_sigSrc)}" alt="Signature" style="max-height:36px;max-width:200px;margin-top:4px;border:1px solid #e2e8f0;background:#fff;padding:2px;border-radius:3px"/>`
+      : "";
     const psign = isSigned
-      ? `<div class="pfx-sign">✓ <strong>${escapeHtml(typeLabel)} signed</strong> · By: <strong>${escapeHtml(note.doctorName || note.signedByName || "Doctor")}</strong>${_empId ? ` · Emp ${escapeHtml(_empId)}` : ""}${_reg ? ` · Reg ${escapeHtml(_reg)}` : ""} · ${escapeHtml(_when)}</div>`
+      ? `<div class="pfx-sign">✓ <strong>${escapeHtml(typeLabel)} signed</strong> · By: <strong>${escapeHtml(note.doctorName || note.signedByName || "Doctor")}</strong>${_empId ? ` · Emp ${escapeHtml(_empId)}` : ""}${_reg ? ` · Reg ${escapeHtml(_reg)}` : ""} · ${escapeHtml(_when)}${_sigImg}</div>`
       : `<div class="pfx-sign">✎ Draft — not yet signed</div>`;
     const out = COMPACT_GRID_CSS + `<div class="pfx-note"><div class="pfx-title">${escapeHtml(typeLabel)}</div>${lateBanner}${pv}${ps}${pd}${typeBody}${psign}</div>`;
     _prose = false;

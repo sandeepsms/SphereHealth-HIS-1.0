@@ -1267,6 +1267,7 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
               reg: d.signedByReg || d.mciRegNo,
               empId: d.signedByEmpId || d.doctorEmpId,
               at: d.signedAt || d.assessmentDate,
+              signature: d.signature || d.signatureImage,
             },
           },
           nursing: {
@@ -1326,6 +1327,7 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
               reg: n.signedByReg || n.nurseRegNo,
               empId: n.signedByEmpId || n.nurseEmployeeId,
               at: n.signedAt || n.submittedAt,
+              signature: n.signature || n.nurseSignature || n.signatureImage,
             },
           },
         };

@@ -1663,6 +1663,12 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
     // discarded; only on a signed save. A matching copy lives in
     // noteDetails.doctor for the Complete File print (f.ia.doctor.signature).
     signature: status === "signed" ? (signature || undefined) : undefined,
+    // R7hr — stamp signer identity at note top-level too (buildReceipt lifts
+    // these onto f.ia.*), so signed lines always carry Name · Emp ID · sign.
+    signedByName: status === "signed"
+      ? ((section === "nursing" ? nurseName : doctorName) || user?.fullName || undefined)
+      : undefined,
+    signedByEmpId: status === "signed" ? (user?.employeeId || undefined) : undefined,
     // R7fb/R7fc — DoctorNotes schema is strict; the only catch-all field is
     // `noteDetails` (Mixed). Pack the entire role-specific form data here so
     // the new NABH P0 fields persist instead of being silently dropped.
@@ -1851,7 +1857,13 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
         dietAdvice,
         activityAdvice,
         followupNotes,
-        signedBy: { name: doctorName || user?.fullName, reg: regNo, at: new Date().toISOString() },
+        signedBy: {
+          name: doctorName || user?.fullName,
+          reg: regNo,
+          empId: user?.employeeId,
+          signature: signature || undefined,
+          at: new Date().toISOString(),
+        },
       },
       nursing: {
         admission: {
@@ -1887,7 +1899,12 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
         preAnaesthesia,
         prom: promPrem,
         plan: { problems: nursingProblems, goals: nursingGoals, notes: nursingNotes },
-        signedBy: { name: nurseName || user?.fullName, at: new Date().toISOString() },
+        signedBy: {
+          name: nurseName || user?.fullName,
+          empId: user?.employeeId,
+          signature: signature || undefined,
+          at: new Date().toISOString(),
+        },
       },
     };
   };
@@ -2070,6 +2087,10 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
                  }`,
             tags: ["initial-assessment", "nabh-aac1", "nabh-cop2"],
             signedByName: sign ? (nurseName || user?.fullName || "") : undefined,
+            // R7hr — stamp employee code + e-sign image on the mirrored nurse
+            // note too, so every signed line shows Name · Emp ID · signature.
+            signedByEmpId: sign ? (user?.employeeId || undefined) : undefined,
+            signature: sign ? (signature || undefined) : undefined,
             // Mixed catch-all — full role-specific payload so any downstream
             // reader (timeline expansion, print, audit) has the whole record.
             noteData: payload.noteDetails?.nursing && {

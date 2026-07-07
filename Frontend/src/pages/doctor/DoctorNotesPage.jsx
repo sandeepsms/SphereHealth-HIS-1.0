@@ -626,7 +626,11 @@ function DoctorNotesContent({ selectedPatient }) {
       doctorId: doctorId,   // backend key
       doctorName, doctorRegNo,
       shift, status,
-      ...(status === "signed" && signature ? { signature, signedByName: doctorName, signedByReg: doctorRegNo } : {}),
+      // R7hr — stamp the signer's employee code too, so every signed line can
+      // ALWAYS show name + Emp ID + signature image on every surface.
+      ...(status === "signed" && signature
+        ? { signature, signedByName: doctorName, signedByReg: doctorRegNo, signedByEmpId: user?.employeeId || undefined }
+        : {}),
       soap,
       vitals: Object.values(vitals).some(v => v) ? {
         ...((vitals.bp_sys || vitals.bp_dia) ? { bp: { systolic: Number(vitals.bp_sys||0), diastolic: Number(vitals.bp_dia||0) } } : {}),
