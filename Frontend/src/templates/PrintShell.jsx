@@ -28,6 +28,11 @@ import printShellCssText from "./printShell.css?inline";
 // OPD, Refund, Service, Discharge, PatientFile themes, Pharmacy bills…)
 // inherits it without each caller importing PrintWatermark separately.
 import PrintWatermark from "../Components/print/PrintWatermark";
+// R7hr — THE ONE canonical letterhead. The pf- shell's former triple-zone
+// header (address/GSTIN in the footer, no ROHINI/Reg) is replaced by the
+// shared identity band so every pf- printable matches the pr- shell and the
+// on-screen previews exactly.
+import Letterhead, { buildLetterheadHtml, LETTERHEAD_CSS } from "../Components/print/Letterhead";
 
 /* ============================================================
    Shared helpers (pure — used by both React + HTML branches)
@@ -54,27 +59,9 @@ const fmtPrintedAt = (iso) => {
   }
 };
 
-const composeAddress = (h) => {
-  const parts = [h.addressLine1, h.addressLine2, [h.city, h.pincode].filter(Boolean).join("-")]
-    .map((s) => (s || "").trim())
-    .filter(Boolean);
-  return parts.join(", ");
-};
-
-const composeContactLine = (h) => {
-  const bits = [];
-  if (h.phone) bits.push(`Phone: ${h.phone}`);
-  if (h.email) bits.push(`Email: ${h.email}`);
-  if (h.website) bits.push(`Web: ${h.website}`);
-  return bits.join("  ·  ");
-};
-
-const composeGstinLine = (h) => {
-  const bits = [];
-  if (h.gstin) bits.push(`GSTIN: ${h.gstin}`);
-  if (h.nabhCertNumber) bits.push(`NABH Cert: ${h.nabhCertNumber}`);
-  return bits.join("  ·  ");
-};
+// R7hr — composeAddress / composeContactLine / composeGstinLine retired: the
+// address, contact and GSTIN now render once in the shared <Letterhead> band
+// (top of every document) instead of the pf- footer.
 
 const safe = (o, k, d = "") => (o && o[k] != null ? o[k] : d);
 
@@ -175,47 +162,16 @@ export default function PrintShell(props) {
         <span className="pf-page-string-uhid">{rhUhid}</span>
         <span className="pf-page-string-doctitle">{rhDocTitle}</span>
       </div>
-      {/* 1. Triple-zone header */}
-      <header className="pf-header">
-        <div className="pf-header-left">
-          {/* R7hr-328 — BIMS logo default when none uploaded. */}
-          <img src={hospital.logo || "/bims-logo.png"} alt="" className="pf-logo"
-            onError={(e) => { e.currentTarget.style.display = "none"; }} />
-          {hospital.taglineLeft ? (
-            <div className="pf-tagline-side">{hospital.taglineLeft}</div>
-          ) : null}
-        </div>
-        <div className="pf-header-center">
-          <h1 className="pf-hospital-name" style={{ color: headerColor }}>
-            {hospital.name || hospital.hospitalName || "Hospital"}
-          </h1>
-          {hospital.tagline ? (
-            <div className="pf-tagline-main">{hospital.tagline}</div>
-          ) : null}
-        </div>
-        <div className="pf-header-right">
-          {hospital.nabhLogo ? (
-            <img src={hospital.nabhLogo} alt="" className="pf-nabh-logo" />
-          ) : null}
-          {hospital.nabhSinceDate ? (
-            <div className="pf-nabh-caption">ACCREDITED {hospital.nabhSinceDate}</div>
-          ) : null}
-          {hospital.nabhCertNumber ? (
-            <div className="pf-nabh-cert">Cert No: {hospital.nabhCertNumber}</div>
-          ) : null}
-          {hospital.taglineRight ? (
-            <div className="pf-tagline-side">{hospital.taglineRight}</div>
-          ) : null}
-        </div>
-      </header>
-
-      <div className="pf-header-divider" />
-
-      {/* 3. Title bar */}
-      <div className="pf-title-bar">
-        <div className="pf-title">{docTitle}</div>
-        {docSubtitle ? <div className="pf-subtitle">{docSubtitle}</div> : null}
-      </div>
+      {/* 1 + 3. Canonical letterhead — identity band + document title bar.
+          R7hr — replaces the old triple-zone .pf-header + .pf-title-bar so
+          the pf- shell now carries the SAME full identity (address · GSTIN ·
+          Reg No · PAN · ROHINI · NABH) as the pr- shell and the on-screen
+          previews. Contact + address moved out of the footer into the band. */}
+      <Letterhead
+        settings={hospital}
+        documentTitle={docTitle}
+        documentSubtitle={docSubtitle}
+      />
 
       {/* 4. Patient demographics strip.
           R7hr — "no dashes on printouts": empty / "—" values are omitted
@@ -263,9 +219,9 @@ export default function PrintShell(props) {
         <div>{meta.docNumber ? `Doc#: ${meta.docNumber}` : ""}</div>
         <div>{meta.pageOf ? `Page ${meta.pageOf}` : ""}</div>
       </div>
-
-      {/* 10. Footer */}
-      <Footer hospital={hospital} />
+      {/* R7hr — footer identity (address/contact/GSTIN) retired: it now lives
+          once in the canonical <Letterhead> at the top, matching the pr- shell
+          which carries no footer address either. */}
     </div>
   );
 }
@@ -350,19 +306,6 @@ function BannerStack({ banners, hospital }) {
   return <div className="pf-banners">{out}</div>;
 }
 
-function Footer({ hospital }) {
-  const addr = composeAddress(hospital);
-  const contact = composeContactLine(hospital);
-  const gstLine = composeGstinLine(hospital);
-  return (
-    <footer className="pf-footer">
-      {addr ? <div className="pf-footer-address">{addr}</div> : null}
-      {contact ? <div className="pf-footer-line">{contact}</div> : null}
-      {gstLine ? <div className="pf-footer-line">{gstLine}</div> : null}
-    </footer>
-  );
-}
-
 /* ============================================================
    HTML HELPER — sibling agents will use this from window.open()
    ============================================================ */
@@ -429,31 +372,14 @@ export function buildPrintShellHtml(opts = {}) {
     return `<div aria-hidden="true" class="pr-watermark" style="${wmStyle}">${esc(fullLabel)}</div>`;
   })();
 
-  const headerLeft = `
-    <div class="pf-header-left">
-      <img src="${esc(hospital.logo || ((typeof window !== "undefined" ? window.location.origin : "") + "/bims-logo.png"))}" alt="" class="pf-logo" />
-      ${hospital.taglineLeft ? `<div class="pf-tagline-side">${esc(hospital.taglineLeft)}</div>` : ""}
-    </div>`;
-
-  const headerCenter = `
-    <div class="pf-header-center">
-      <h1 class="pf-hospital-name" style="color:${esc(headerColor)};">${esc(hospital.name || hospital.hospitalName || "Hospital")}</h1>
-      ${hospital.tagline ? `<div class="pf-tagline-main">${esc(hospital.tagline)}</div>` : ""}
-    </div>`;
-
-  const headerRight = `
-    <div class="pf-header-right">
-      ${hospital.nabhLogo ? `<img src="${esc(hospital.nabhLogo)}" alt="" class="pf-nabh-logo" />` : ""}
-      ${hospital.nabhSinceDate ? `<div class="pf-nabh-caption">ACCREDITED ${esc(hospital.nabhSinceDate)}</div>` : ""}
-      ${hospital.nabhCertNumber ? `<div class="pf-nabh-cert">Cert No: ${esc(hospital.nabhCertNumber)}</div>` : ""}
-      ${hospital.taglineRight ? `<div class="pf-tagline-side">${esc(hospital.taglineRight)}</div>` : ""}
-    </div>`;
-
-  const titleBar = `
-    <div class="pf-title-bar">
-      <div class="pf-title">${esc(docTitle)}</div>
-      ${docSubtitle ? `<div class="pf-subtitle">${esc(docSubtitle)}</div>` : ""}
-    </div>`;
+  // R7hr — canonical letterhead (identity band + document title bar) for the
+  // window.open() popup path. Same shared builder the pr- shell + React use,
+  // so all three render byte-identical hospital identity.
+  const letterheadHtml = buildLetterheadHtml({
+    settings: hospital,
+    documentTitle: docTitle,
+    documentSubtitle: docSubtitle,
+  });
 
   const kvHtml = (kv) => `
       <div class="pf-kv">
@@ -548,34 +474,17 @@ export function buildPrintShellHtml(opts = {}) {
       <div>${meta.pageOf ? `Page ${esc(meta.pageOf)}` : ""}</div>
     </div>`;
 
-  const addr = composeAddress(hospital);
-  const contact = composeContactLine(hospital);
-  const gstLine = composeGstinLine(hospital);
-  const footer = `
-    <footer class="pf-footer">
-      ${addr ? `<div class="pf-footer-address">${esc(addr)}</div>` : ""}
-      ${contact ? `<div class="pf-footer-line">${esc(contact)}</div>` : ""}
-      ${gstLine ? `<div class="pf-footer-line">${esc(gstLine)}</div>` : ""}
-    </footer>`;
-
   const page = `
     <div class="pf-page" style="--pf-header-color:${esc(headerColor)};">
       ${watermarkHtml}
       ${pageStrings}
-      <header class="pf-header">
-        ${headerLeft}
-        ${headerCenter}
-        ${headerRight}
-      </header>
-      <div class="pf-header-divider"></div>
-      ${titleBar}
+      ${letterheadHtml}
       ${patientStrip}
       <div class="pf-body">${bodyHtml}</div>
       ${sigHtml}
       ${bannerHtml}
       ${disclaimerHtml}
       ${metaStrip}
-      ${footer}
     </div>`;
 
   // Embedded CSS — `?inline` returns the stylesheet text at build time.
@@ -589,7 +498,8 @@ export function buildPrintShellHtml(opts = {}) {
 <meta charset="utf-8" />
 <title>${esc(docTitle)}${meta.docNumber ? ` — ${esc(meta.docNumber)}` : ""}</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<style>${css}</style>
+<style>${css}
+${LETTERHEAD_CSS}</style>
 </head>
 <body>
 ${page}

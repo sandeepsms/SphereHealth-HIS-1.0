@@ -10,6 +10,7 @@ import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
 import { openPrint } from "../../Components/print/openPrint";
 import useHospitalSettings from "../../Components/print/useHospitalSettings";
+import Letterhead from "../../Components/print/Letterhead";
 import { useAuth } from "../../context/AuthContext";
 import { toast } from "react-toastify";
 import { useAutoSave } from "../../hooks/useAutoSave";
@@ -646,9 +647,8 @@ function PrintModal({ data, dept, onClose }) {
   // Cached in module — first open hits API, reprints are free.
   const { settings: hs } = useHospitalSettings();
   const _hospName   = hs.hospitalName || "Hospital";
-  const _hospTagline = hs.tagline || "";
-  const _addrLine   = [hs.addressLine1, hs.addressLine2, [hs.city, hs.state, hs.pincode].filter(Boolean).join(" ")].filter(Boolean).join(" · ");
-  const _phoneLine  = [hs.phone1, hs.phone2, hs.emergencyPhone].filter(Boolean).join(" · ");
+  // R7hr — tagline/address/phone lines retired here: the identity now renders
+  // via the shared <Letterhead>. _hospName stays for the footer claim below.
   /* Wired to the unified print system — picks up the hospital
    * header/footer + paper-size selector automatically. */
   const handlePrint = () => {
@@ -768,17 +768,14 @@ function PrintModal({ data, dept, onClose }) {
             <MLCAutoStamp uhid={data.UHID} variant="banner" />
             <MLCAutoStamp uhid={data.UHID} />
             {/* Hospital header */}
-            <div className="hosp" style={{ textAlign: "center", marginBottom: 6 }}>
-              {hs.logo && <img src={hs.logo} alt="" style={{ maxHeight: 48, marginBottom: 4 }} />}
-              <div style={{ fontWeight: 800, fontSize: 16, textTransform: "uppercase", color: hs.printHeaderColor || undefined }}>{_hospName}</div>
-              <div style={{ fontSize: 11, color: C.muted }}>{_hospTagline ? `${_hospTagline} · ` : ""}Department of {dept?.label}</div>
-              {_addrLine && <div style={{ fontSize: 10, color: C.muted }}>{_addrLine}</div>}
-              {_phoneLine && <div style={{ fontSize: 10, color: C.muted }}>{_phoneLine}</div>}
-              {hs.gstin && <div style={{ fontSize: 10, color: C.muted }}>GSTIN: {hs.gstin}</div>}
+            {/* R7hr — canonical letterhead (identical to the print + every
+                other surface). Department + NABH standard move to the doc-title
+                sub-line below so no identity detail is lost. */}
+            <Letterhead settings={hs} screen />
+            <div style={{ textAlign: "center", fontWeight: 800, fontSize: 17, margin: "4px 0", fontFamily: "serif" }}>DISCHARGE SUMMARY</div>
+            <div style={{ textAlign: "center", fontSize: 11, color: C.muted, marginBottom: 14 }}>
+              {dept?.label ? `Department of ${dept.label} · ` : ""}NABH Standard: COP.7 | Date: {new Date().toLocaleDateString("en-IN")}
             </div>
-            <hr style={{ border: "none", borderTop: `2px solid ${dept?.color}`, marginBottom: 10 }} />
-            <div style={{ textAlign: "center", fontWeight: 800, fontSize: 17, marginBottom: 4, fontFamily: "serif" }}>DISCHARGE SUMMARY</div>
-            <div style={{ textAlign: "center", fontSize: 11, color: C.muted, marginBottom: 14 }}>NABH Standard: COP.7 | Date: {new Date().toLocaleDateString("en-IN")}</div>
 
             {/* Patient info */}
             <div style={{ border: `1.5px solid ${C.border}`, borderRadius: 8, padding: "12px 16px", marginBottom: 14, background: "#f8fafc", display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: "8px 16px" }}>

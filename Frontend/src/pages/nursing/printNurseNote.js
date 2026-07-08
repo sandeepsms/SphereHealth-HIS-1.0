@@ -86,22 +86,48 @@ const COMPACT_GRID_CSS = `<style>
   .nfx-tbl th{padding:5px 8px;border:1px solid #e7edf3;background:#f6f8fb;font-size:10px;font-weight:800;text-align:left;color:#475569;text-transform:uppercase;letter-spacing:.3px}
   .nfx-tbl td{padding:5px 8px;border:1px solid #eef2f6;color:#0f172a}
   .nfx-narr{margin:6px 0 11px;padding:9px 13px;background:#f8fafc;border-left:3px solid #cbd5e1;border-radius:0 6px 6px 0;font-size:11.5px;white-space:pre-wrap;line-height:1.45}
+  /* R7hu — PROSE variant (Complete File print): flowing bold-label lines, no
+     card chrome, matching the Doctor Initial Assessment narrative. Triggered by
+     opts.prose; the nfx-* card classes above stay for the timeline + panel. */
+  /* R7hu — 2-column "book" layout (see buildDoctorNoteCardHtml for rationale):
+     fields flow into two columns; title / section heading / signature / tables
+     span both; a field line never splits across a column. */
+  .pfx-note{font-size:11px;color:#1e293b;line-height:1.4;display:grid;grid-template-columns:repeat(auto-fit,minmax(max(240px,40%),1fr));column-gap:26px;row-gap:1px;align-content:start}
+  .pfx-title{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.6px;color:#334155;margin:0 0 5px;padding-bottom:3px;border-bottom:2px solid #e2e8f0;grid-column:1 / -1}
+  .pfx-h{margin:7px 0 1px;font-size:9.5px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;grid-column:1 / -1}
+  .pfx-line{margin:2px 0;font-size:11px;line-height:1.4;color:#1e293b;white-space:pre-wrap;break-inside:avoid;min-width:0}
+  .pfx-line strong{color:#0f172a;font-weight:700}
+  .pfx-sign{margin-top:8px;padding-top:5px;border-top:1px solid #e2e8f0;font-size:10px;color:#475569;grid-column:1 / -1}
+  .pfx-note table{grid-column:1 / -1}
 </style>`;
 
+// R7hu — when true, the shared helpers emit the PROSE variant instead of the
+// card grid. Set per-call at the top of buildNurseNoteCardHtml from opts.prose.
+let _prose = false;
+
+// R7hu — a value that is only a placeholder dash (— / – / - / -- ) or N/A /
+// null / undefined must NOT print as a field: the standing rule is that "—"
+// never appears where a value should. Live forms sometimes save "—" for an
+// untouched field (e.g. a procedure note's Urine Colour / Initial Drainage),
+// so the row rendered "Urine Colour: —". Treat those as empty and omit the
+// row. Real clinical negatives ("None", "Nil") are kept — they're meaningful.
+const _isPlaceholderDash = (s) =>
+  /^[\s—–-]+$/.test(String(s)) || /^(n\/?a|null|undefined)$/i.test(String(s).trim());
 const _kv = (label, value, isFull = false) => {
   const v = fmtVal(value);
-  if (!v) return "";
+  if (!v || _isPlaceholderDash(v)) return "";
+  if (_prose) return `<div class="pfx-line"><strong>${escapeHtml(label)}:</strong> ${escapeHtml(v)}</div>`;
   return `<div${isFull ? ' class="full"' : ""}><span class="lbl">${escapeHtml(label)}</span><span class="val">${escapeHtml(v)}</span></div>`;
 };
 const _section = (title, color, bodyHtml) =>
-  bodyHtml
-    ? `<div class="nfx-h" style="background:${color}20;color:${color};border-left:3px solid ${color}">${escapeHtml(title)}</div>${bodyHtml}`
-    : "";
+  !bodyHtml ? ""
+  : _prose ? `<div class="pfx-h" style="color:${color}">${escapeHtml(title)}</div>${bodyHtml}`
+  : `<div class="nfx-h" style="background:${color}20;color:${color};border-left:3px solid ${color}">${escapeHtml(title)}</div>${bodyHtml}`;
 const _grid = (cells) => {
   const kept = cells.filter(Boolean);
-  return kept.length ? `<div class="nfx-grid">${kept.join("")}</div>` : "";
+  return kept.length ? (_prose ? kept.join("") : `<div class="nfx-grid">${kept.join("")}</div>`) : "";
 };
-const _narr = (text) => (text ? `<div class="nfx-narr">${escapeHtml(String(text))}</div>` : "");
+const _narr = (text) => (text ? (_prose ? `<div class="pfx-line">${escapeHtml(String(text))}</div>` : `<div class="nfx-narr">${escapeHtml(String(text))}</div>`) : "");
 
 // ── Per-type builders ──────────────────────────────────────────────
 // Each builder reads from `nd` (note.noteData first, then note top-level
@@ -136,6 +162,40 @@ const buildBuilder = (note) => {
   const BUILDERS = {
     // ─── VITAL SIGNS ─────────────────────────────────────────────────
     vitals: () => {
+      // R7hu — user requirement: nurses enter vitals in the HOURLY Vital Chart
+      // (VitalSheet grid), so a "Vital Signs" note must show that whole day's
+      // grid — one day's readings together — not a single snapshot. When the
+      // day's sheet is attached as `note.vitalSheet = {activeVitals, tableData,
+      // date}` (done by the Complete File print, the nurse timeline and the
+      // patient panel), render the full hourly table; otherwise fall back to
+      // the single reading (legacy single-snapshot note) so nothing regresses.
+      const sheet = note.vitalSheet || nd.vitalSheet;
+      const rows = Array.isArray(sheet?.tableData) ? sheet.tableData.filter((r) => r && r.time) : [];
+      const cellOf = (r, c) => {
+        const raw = r.values instanceof Map ? r.values.get(c) : r.values?.[c];
+        const val = raw && typeof raw === "object" ? raw.value : raw;
+        return val === 0 || val ? String(val) : "";
+      };
+      const cols = rows.length
+        ? (Array.isArray(sheet.activeVitals) && sheet.activeVitals.length
+            ? sheet.activeVitals.map((a) => a.name || a)
+            : [...new Set(rows.flatMap((r) => (r.values instanceof Map ? [...r.values.keys()] : Object.keys(r.values || {}))))])
+        : [];
+      const filled = rows.filter((r) => cols.some((c) => cellOf(r, c) !== "") || (r.notes && String(r.notes).trim()));
+      if (filled.length) {
+        const showNurse = filled.some((r) => r.nurseName);
+        const showNotes = filled.some((r) => r.notes && String(r.notes).trim());
+        const head = `<tr><th>Time</th>${cols.map((c) => `<th>${escapeHtml(c)}</th>`).join("")}${showNotes ? "<th>Remarks</th>" : ""}${showNurse ? "<th>By</th>" : ""}</tr>`;
+        const body = filled.map((r) =>
+          `<tr><td><strong>${escapeHtml(r.time)}</strong></td>${cols.map((c) => `<td>${escapeHtml(cellOf(r, c))}</td>`).join("")}${showNotes ? `<td>${escapeHtml(r.notes || "")}</td>` : ""}${showNurse ? `<td>${escapeHtml(r.nurseName || "")}</td>` : ""}</tr>`
+        ).join("");
+        // R7hu — a fully-configured VitalSheet can have 10+ columns; table-
+        // layout:fixed + a compact font keeps the grid inside the A4 print
+        // width, and the wrapper lets it scroll on screen.
+        return _section(`Vital Signs — Hourly Chart${sheet.date ? ` · ${sheet.date}` : ""}`, "#dc2626",
+          `<div style="overflow-x:auto"><table class="nfx-tbl" style="table-layout:fixed;font-size:${cols.length > 7 ? "9px" : "11px"}">${head}${body}</table></div>`);
+      }
+      // Fallback — single reading (legacy single-snapshot vitals note).
       const v = get("vitals");
       const bp = v.bp || (v.bp_sys ? { systolic: v.bp_sys, diastolic: v.bp_dia } : null);
       return _section("Vital Signs", "#dc2626", _grid([
@@ -282,18 +342,33 @@ const buildBuilder = (note) => {
     // ─── SKIN / BRADEN ───────────────────────────────────────────────
     skin: () => {
       const s = get("skinAssessment");
+      // R7hu — live form saves the six Braden sub-scores as b1..b6 (+ stage /
+      // intervention / repositioned / repositionFreq / area), not the
+      // bradenSensoryPerception…/bradenTotal/riskBand/actions the old builder
+      // read — so every sub-scale + the total printed "—". Read both shapes,
+      // auto-sum the total, and derive the risk band from it.
       const rows = [
-        ["Sensory Perception", s.bradenSensoryPerception],
-        ["Moisture", s.bradenMoisture],
-        ["Activity", s.bradenActivity],
-        ["Mobility", s.bradenMobility],
-        ["Nutrition", s.bradenNutrition],
-        ["Friction & Shear", s.bradenFrictionShear],
-      ];
-      const bradenTbl = `<table class="nfx-tbl"><tr><th>Braden Sub-scale</th><th style="width:30%">Score</th></tr>${rows.map(r => `<tr><td>${escapeHtml(r[0])}</td><td>${fmtVal(r[1]) || "—"}</td></tr>`).join("")}<tr style="background:#f0fdf4"><td><strong>Total</strong></td><td><strong>${s.bradenTotal ?? "—"}</strong></td></tr></table>`;
+        ["Sensory Perception", s.b1 ?? s.bradenSensoryPerception],
+        ["Moisture",           s.b2 ?? s.bradenMoisture],
+        ["Activity",           s.b3 ?? s.bradenActivity],
+        ["Mobility",           s.b4 ?? s.bradenMobility],
+        ["Nutrition",          s.b5 ?? s.bradenNutrition],
+        ["Friction & Shear",   s.b6 ?? s.bradenFrictionShear],
+      ].filter((r) => fmtVal(r[1]));
+      const nums = rows.map((r) => Number(r[1])).filter((n) => Number.isFinite(n));
+      const total = s.bradenTotal ?? (nums.length === 6 ? nums.reduce((a, b) => a + b, 0) : null);
+      const band = s.riskBand || (total == null ? "" :
+        total <= 9 ? "Very High Risk" : total <= 12 ? "High Risk" :
+        total <= 14 ? "Moderate Risk" : total <= 18 ? "Mild Risk" : "No Risk");
+      const bradenTbl = rows.length
+        ? `<table class="nfx-tbl"><tr><th>Braden Sub-scale</th><th style="width:30%">Score</th></tr>${rows.map((r) => `<tr><td>${escapeHtml(r[0])}</td><td>${escapeHtml(fmtVal(r[1]))}</td></tr>`).join("")}${total != null ? `<tr style="background:#f0fdf4"><td><strong>Total</strong></td><td><strong>${escapeHtml(String(total))} / 23</strong></td></tr>` : ""}</table>`
+        : "";
       return _section("Skin Assessment (Braden)", "#475569", bradenTbl + _grid([
-        _kv("Risk Band", s.riskBand, true),
-        _kv("Actions", s.actions, true),
+        _kv("Body Area", s.area),
+        _kv("Risk Band", band, true),
+        _kv("Pressure-ulcer Stage", s.stage),
+        _kv("Repositioned", s.repositioned === true ? `Yes${s.repositionFreq ? ` · ${s.repositionFreq}` : ""}` : (s.repositioned === false ? "No" : null)),
+        _kv("Intervention / Actions", s.intervention || s.actions, true),
       ]));
     },
 
@@ -400,7 +475,6 @@ const buildBuilder = (note) => {
         [m.dbp ? "Blood Pressure" : "Systolic BP", _bp],
         ["Temperature", m.temperature ?? m.temp],
         ["Consciousness", m.consciousness ?? m.avpu],
-        ["Urine Output", m.urineOutput],
       ];
       const tbl = `<table class="nfx-tbl"><tr><th>MEWS Parameter</th><th style="width:30%">Score</th></tr>${rows.map(r => `<tr><td>${escapeHtml(r[0])}</td><td>${fmtVal(r[1]) || "—"}</td></tr>`).join("")}<tr style="background:#fffbeb"><td><strong>Total</strong></td><td><strong>${m.total ?? "—"}</strong></td></tr></table>`;
       return _section("MEWS Score (Modified Early Warning)", "#d97706", tbl + _grid([
@@ -444,15 +518,25 @@ const buildBuilder = (note) => {
 
     // ─── PROCEDURE (nurse-side) ──────────────────────────────────────
     procedure: () => {
+      // R7hu — the nurse procedure form saves site/laterality/performedBy/
+      // designation/assistant/sterile/position/outcome/specimen*/followUp; the
+      // old builder read ghost fields (urineColour/initialDrainage the form
+      // never saves) and dropped every real one. Read the actual keys.
       const p = get("procedure");
       return _section(`Procedure — ${p.procedureName || "—"}`, "#ea580c", _grid([
         _kv("Indication", p.indication, true),
-        _kv("Consent", p.consentObtained),
-        _kv("Asepsis", p.asepsisMaintained),
+        _kv("Site", p.laterality ? `${p.site || ""} (${p.laterality})`.trim() : p.site),
+        _kv("Performed By", [p.performedBy, p.designation].filter(Boolean).join(" · ") || null),
+        _kv("Assistant", p.assistant),
+        _kv("Time", p.time),
+        _kv("Consent", typeof p.consentObtained === "boolean" ? (p.consentObtained ? "Obtained" : "Not obtained") : p.consentObtained),
+        _kv("Aseptic / Sterile", typeof p.sterile === "boolean" ? (p.sterile ? "Yes" : "No") : (p.sterile || p.asepsisMaintained)),
+        _kv("Position", p.position),
+        _kv("Outcome", p.outcome, true),
         _kv("Complications", p.complications, true),
-        _kv("Urine Colour", p.urineColour),
-        _kv("Initial Drainage", p.initialDrainage),
+        _kv("Specimen", typeof p.specimenSent === "boolean" ? (p.specimenSent ? (p.specimenType || "Sent") : "") : (p.specimenType || null)),
         _kv("Post-procedure Vitals", p.postProcVitals, true),
+        _kv("Follow-up", p.followUp, true),
       ]));
     },
 
@@ -529,27 +613,53 @@ const buildBuilder = (note) => {
     // ─── CARE PLAN ───────────────────────────────────────────────────
     careplan: () => {
       const c = get("carePlan");
-      return _section("Nursing Care Plan", "#16a34a", _grid([
-        _kv("Problem", c.problem, true),
-        _kv("Goal", c.goal, true),
-        _kv("Interventions", c.interventions, true),
-        _kv("Expected Outcome", c.expectedOutcome, true),
-        _kv("Evaluation Date", c.evaluationDate),
-      ]));
+      // R7hu — live form saves carePlan.problems[] (NANDA rows: statement /
+      // relatedTo / evidencedBy / priority / goals / targetDate / interventions
+      // / evaluation / status). The old builder read flat c.problem/c.goal, so
+      // the whole plan was blank. Render every problem; keep the flat shape as
+      // a fallback for any legacy note.
+      const probs = Array.isArray(c.problems) ? c.problems.filter(Boolean)
+        : (c.problem || c.goal || c.interventions)
+          ? [{ statement: c.problem, goals: c.goal, interventions: c.interventions, evaluation: c.expectedOutcome, targetDate: c.evaluationDate }]
+          : [];
+      if (!probs.length) return "";
+      const body = probs.map((p, i) => _grid([
+        _kv(`Problem${probs.length > 1 ? ` ${i + 1}` : ""}`, p.statement || p.problem, true),
+        _kv("Related To", p.relatedTo),
+        _kv("Evidenced By", p.evidencedBy),
+        _kv("Priority", p.priority),
+        _kv("Goals", p.goals || p.goal, true),
+        _kv("Target Date", p.targetDate),
+        _kv("Interventions", p.interventions, true),
+        _kv("Evaluation", p.evaluation || p.expectedOutcome, true),
+        _kv("Status", p.status),
+      ])).join('<div style="height:4px"></div>');
+      return _section("Nursing Care Plan", "#16a34a", body);
     },
 
     // ─── NUTRITIONAL (NRS-2002) ──────────────────────────────────────
     nutrition: () => {
       const n = get("nutritionalAssessment");
+      // R7hu — render the fields the NRS-2002 form actually saves (BMI, diet
+      // type/consistency, appetite, swallowing, feeding mode, dietitian
+      // referral…). The old builder read riskBand/weightChange/recommendations
+      // (never saved → always blank) and printed the boolean ageScore as a raw
+      // "true".
+      const yn = (v) => v === true ? "Yes" : v === false ? "No" : v;
       return _section("Nutritional Assessment (NRS-2002)", "#65a30d", _grid([
+        _kv("NRS Total", n.nrsTotal),
         _kv("Nutrition Score", n.nutritionScore),
         _kv("Disease Score", n.diseaseScore),
-        _kv("Age Score", n.ageScore),
-        _kv("NRS Total", n.nrsTotal),
-        _kv("Risk Band", n.riskBand, true),
+        _kv("BMI", n.bmi),
+        _kv("Weight", n.weight != null && n.weight !== "" ? `${n.weight} kg` : null),
         _kv("Appetite", n.appetite),
-        _kv("Weight Change", n.weightChange),
-        _kv("Recommendations", n.recommendations, true),
+        _kv("Swallowing", n.swallowing),
+        _kv("Diet Type", n.dietType),
+        _kv("Consistency", n.consistency),
+        _kv("Feeding Mode", n.feedingMode),
+        _kv("NGT Present", yn(n.ngtPresent)),
+        _kv("Fluid Restriction", n.fluidRestriction ? (n.fluidLimit ? `Yes · ${n.fluidLimit}` : "Yes") : null),
+        _kv("Dietitian Referral", n.dietitianReferral ? (n.referralReason ? `Yes · ${n.referralReason}` : "Yes") : null),
       ]));
     },
 
@@ -617,6 +727,26 @@ const buildBuilder = (note) => {
     // ─── DISCHARGE PLANNING ──────────────────────────────────────────
     discharge: () => {
       const d = get("discharge");
+      // R7hu — the nurse "Discharge / Handover" note is an SBAR SHIFT HANDOVER
+      // (situation / background / assessment / recommendation + incoming nurse),
+      // NOT discharge-planning. The old builder read homeSupport/primaryCaregiver
+      // /… so every handover card printed an empty body. Render the SBAR block;
+      // fall back to the discharge-planning keys for any legacy note.
+      const isSbar = d.situation || d.background || d.assessment || d.recommendation || d.incomingNurse;
+      if (isSbar) {
+        const yn = (v) => v === true ? "Yes" : v === false ? "No" : v;
+        return _section(`Shift Handover${d.type ? ` — ${d.type}` : " (SBAR)"}`, "#0891b2", _grid([
+          _kv("S — Situation", d.situation, true),
+          _kv("B — Background", d.background, true),
+          _kv("A — Assessment", d.assessment, true),
+          _kv("R — Recommendation", d.recommendation, true),
+          _kv("Patient Status", d.patientStatus),
+          _kv("Incoming Nurse", d.incomingNurse),
+          _kv("Education Given", d.educationGiven ? (d.educationTopics ? `Yes · ${d.educationTopics}` : "Yes") : null),
+          _kv("Follow-up Date", d.followUpDate),
+          _kv("Valuables Handed Over", yn(d.valuablesHandedOver)),
+        ]));
+      }
       return _section("Discharge Planning", "#16a34a", _grid([
         _kv("Home Support", d.homeSupport),
         _kv("Primary Caregiver", d.primaryCaregiver),
@@ -634,6 +764,62 @@ const buildBuilder = (note) => {
     initial: () => {
       const nrs = nd.nursing || {};
       const nNabh = nd.nursingNabh || {};
+      // R7hu — the NursingNotes.jsx "Initial Assessment" modal saves a FLAT
+      // shape under noteData.initialAssessment (not the nd.nursing/nursingNabh
+      // shape the canonical IA form writes), so those notes rendered a blank
+      // body. When that flat shape is the only one present, render a compact
+      // flat card and return.
+      const flat = nd.initialAssessment;
+      if (flat && typeof flat === "object" && Object.keys(nrs).length === 0 && Object.keys(nNabh).length === 0) {
+        const yn = (x) => x === true ? "Yes" : x === false ? "No" : x;
+        const sum = (keys) => { const ns = keys.map((k) => Number(flat[k])).filter(Number.isFinite); return ns.length === 6 ? ns.reduce((a, b) => a + b, 0) : null; };
+        const braden = sum(["b1", "b2", "b3", "b4", "b5", "b6"]);
+        const morse  = sum(["m1", "m2", "m3", "m4", "m5", "m6"]);
+        const bp = (flat.bp_sys || flat.bp_dia) ? `${flat.bp_sys || "—"}/${flat.bp_dia || "—"} mmHg` : null;
+        return [
+          _section("Chief Complaint & History", "#0d9488", _grid([
+            _kv("Admission Mode", flat.admissionMode),
+            _kv("Chief Complaint", flat.chiefComplaint, true),
+            _kv("Duration", flat.duration),
+            _kv("History of Illness", flat.historyOfIllness, true),
+            _kv("Past Medical", flat.pastMedical, true),
+            _kv("Past Surgical", flat.pastSurgical, true),
+            _kv("Home Medications", flat.medications, true),
+            _kv("Allergies", flat.allergies, true),
+            _kv("Family History", flat.familyHistory, true),
+          ])),
+          _section("Admission Vitals", "#dc2626", _grid([
+            _kv("BP", bp), _kv("Pulse", flat.pulse), _kv("Temp", flat.temp),
+            _kv("SpO₂", flat.spo2), _kv("RR", flat.rr),
+            _kv("Weight", flat.weight ? `${flat.weight} kg` : null), _kv("Height", flat.height ? `${flat.height} cm` : null),
+          ])),
+          _section("Systems Review", "#475569", _grid([
+            _kv("Respiratory", flat.respiratory), _kv("Cardiovascular", flat.cardiovascular),
+            _kv("Gastrointestinal", flat.gastrointestinal), _kv("Genitourinary", flat.genitourinary),
+            _kv("Musculoskeletal", flat.musculoskeletal), _kv("Neurological", flat.neurological),
+          ])),
+          _section("Risk Screens", "#d97706", _grid([
+            _kv("Braden Total", braden != null ? `${braden} / 23` : null),
+            _kv("Morse Total", morse != null ? String(morse) : null),
+            _kv("Pain Level", flat.painLevel),
+          ])),
+          _section("Psychosocial & Needs", "#7c3aed", _grid([
+            _kv("Anxiety", flat.anxiety), _kv("Depression", flat.depression),
+            _kv("Sleep Pattern", flat.sleepPattern), _kv("Cognition", flat.cognition),
+            _kv("Communication", flat.communication), _kv("Religion", flat.religion),
+            _kv("Language Barrier", yn(flat.languageBarrier)),
+            _kv("Nutrition Status", flat.nutritionStatus), _kv("Appetite", flat.appetiteStatus),
+            _kv("Swallowing", flat.swallowing), _kv("Special Needs", flat.specialNeeds, true),
+          ])),
+          _section("Discharge Planning & IV Access", "#0891b2", _grid([
+            _kv("Discharge Plan", flat.dischargePlan, true),
+            _kv("Caregiver Available", yn(flat.caregiverAvailable)),
+            _kv("Caregiver Name", flat.caregiverName),
+            _kv("IV Site", flat.ivSite), _kv("IV Type", flat.ivType),
+            _kv("IV Date", flat.ivDate), _kv("IV Condition", flat.ivCondition),
+          ])),
+        ].join("");
+      }
       const v = nrs.vitals || {};
       const anthro = nNabh.anthropometry || {};
 
@@ -741,7 +927,8 @@ const buildBuilder = (note) => {
  * Complete Patient File Narrative theme to embed identical per-type
  * cards inside the day-wise Clinical Journey.
  */
-export function buildNurseNoteCardHtml(note) {
+export function buildNurseNoteCardHtml(note, opts = {}) {
+  _prose = !!opts.prose;   // R7hu — prose variant for the Complete File print
   const fmtDate = (d) => d ? new Date(d).toLocaleString("en-IN", {
     day: "2-digit", month: "short", year: "numeric",
     hour: "2-digit", minute: "2-digit",
@@ -756,7 +943,7 @@ export function buildNurseNoteCardHtml(note) {
     blood: "Blood Transfusion", procedure: "Procedure Note",
     daily: "Daily Assessment", careplan: "Care Plan", dvt: "DVT / VTE Risk",
     nutrition: "Nutritional Assessment", education: "Patient Education",
-    discharge: "Discharge Planning", initial: "Initial Assessment",
+    discharge: "Discharge / Handover", initial: "Initial Assessment",
     general: "General Observation",
   };
   const typeLabel = TYPE_LABELS[note.noteType] || (note.noteType || "Nursing Note").toUpperCase();
@@ -777,6 +964,29 @@ export function buildNurseNoteCardHtml(note) {
 
   const builder = buildBuilder(note);
   const typeBody = builder();
+
+  if (_prose) {
+    // R7hu — Complete File print: flowing bold-label prose (matching the Doctor
+    // Initial Assessment narrative), no card chrome. Reset the flag before return.
+    const _empId = note.signedByEmpId || note.nurseEmployeeId || "";
+    const _when = note.signedAt ? fmtDate(note.signedAt) : noteDate;
+    const prem = (note.remarks && note.noteType !== "general")
+      ? `<div class="pfx-line"><strong>Remarks:</strong> ${escapeHtml(note.remarks)}</div>` : "";
+    // R7hr — signer's digital-signature image on EVERY signed line (all
+    // surfaces render this same prose). data:/uploads/https only.
+    const _sigSrc = note.signature || note.signatureImage || "";
+    const _sigImg = (isSigned && typeof _sigSrc === "string"
+                     && (_sigSrc.startsWith("data:image/") || _sigSrc.startsWith("/uploads/") || /^https?:\/\//.test(_sigSrc)))
+      ? `<br/><img src="${escapeHtml(_sigSrc)}" alt="Signature" style="max-height:36px;max-width:200px;margin-top:4px;border:1px solid #e2e8f0;background:#fff;padding:2px;border-radius:3px"/>`
+      : "";
+    const psign = isSigned
+      ? `<div class="pfx-sign">✓ <strong>${escapeHtml(typeLabel)} — signed</strong> · By: <strong>${escapeHtml(note.nurseName || note.signedByName || "Nurse")}</strong>${_empId ? ` · Emp ${escapeHtml(_empId)}` : ""} · ${escapeHtml(_when)}${_sigImg}</div>`
+      : `<div class="pfx-sign">✎ Draft — not yet signed</div>`;
+    const out = COMPACT_GRID_CSS + `<div class="pfx-note"><div class="pfx-title">${escapeHtml(typeLabel)}</div>${lateBanner}${typeBody}${prem}${psign}</div>`;
+    _prose = false;
+    return out;
+  }
+
   const remarks = (note.remarks && note.noteType !== "general")
     ? `<div style="margin-top:8px;padding:6px 10px;background:#f8fafc;border-left:3px solid #94a3b8;font-size:11.5px;white-space:pre-wrap">${escapeHtml(note.remarks)}</div>` : "";
   // R7go — Surface hospital employee ID next to the signer's name so
@@ -863,7 +1073,7 @@ export function printNurseNote(note, hospitalSettings = {}) {
     blood: "Blood Transfusion", procedure: "Procedure Note",
     daily: "Daily Assessment", careplan: "Care Plan", dvt: "DVT / VTE Risk",
     nutrition: "Nutritional Assessment", education: "Patient Education",
-    discharge: "Discharge Planning", initial: "Initial Assessment",
+    discharge: "Discharge / Handover", initial: "Initial Assessment",
     general: "General Observation",
   };
   const typeLabel = TYPE_LABELS[note.noteType] || (note.noteType || "Nursing Note").toUpperCase();
@@ -875,54 +1085,27 @@ export function printNurseNote(note, hospitalSettings = {}) {
     ? '<div style="padding:4px 10px;border-radius:5px;font-size:11px;font-weight:700;background:#fef2f2;color:#dc2626">⚠ CRITICAL EVENT</div>'
     : "";
 
-  // Late-entry banner (NABH HIC.6)
-  const lateBanner = note.lateEntry
-    ? `<div style="margin:8px 0 14px;padding:8px 12px;border:1px solid #fcd34d;background:#fffbeb;border-radius:6px;font-size:11px;color:#92400e;display:flex;gap:8px;align-items:flex-start">
-  <strong style="white-space:nowrap">⚠ LATE ENTRY</strong>
-  <div style="flex:1">${escapeHtml(note.lateEntryReason || "Retrospective entry — NABH HIC.6 backdated-documentation justification on file")}${note.lateEntryAt ? ` · Recorded: ${fmtDate(note.lateEntryAt)}` : ""}</div>
-</div>` : "";
+  // (Late-entry banner comes from the prose builder output — see below.)
 
-  // Body via per-type builder
-  const builder = buildBuilder(note);
-  const typeBody = builder();
-
-  // Free-form remarks footer (if any in addition to structured body)
-  const remarks = (note.remarks && note.noteType !== "general")
-    ? `<div style="margin-top:8px;padding:6px 10px;background:#f8fafc;border-left:3px solid #94a3b8;font-size:11.5px;white-space:pre-wrap">${escapeHtml(note.remarks)}</div>` : "";
-
-  // Signature footer
-  // R7go — Surface employee ID alongside name on the standalone nurse-note
-  // print too (same field precedence as buildNurseNoteCardHtml).
-  // R7gu — Embed signature image on the standalone print as well.
-  const nurseEmpIdShownStandalone = note.signedByEmpId || note.nurseEmployeeId || "";
-  const nSigSrcStandalone = note.signature || note.signatureImage || "";
-  const nSigImgStandalone = (isSigned && nSigSrcStandalone && typeof nSigSrcStandalone === "string"
-                             && (nSigSrcStandalone.startsWith("data:image/")
-                                 || nSigSrcStandalone.startsWith("/uploads/")
-                                 || /^https?:\/\//.test(nSigSrcStandalone)))
-    ? `<br/><img src="${escapeHtml(nSigSrcStandalone)}" alt="Signature" style="max-height:42px;max-width:220px;margin-top:6px;border:1px solid #e2e8f0;background:#fff;padding:2px;border-radius:3px"/>`
-    : "";
-  const sigHtml = isSigned
-    ? `<div style="margin-top:20px;padding:10px 14px;border:1px solid #bbf7d0;border-radius:8px;background:#f0fdf4">
-  <strong style="color:#15803d;font-size:12px">✓ SIGNED & SUBMITTED</strong><br/>
-  <span style="font-size:11px;color:#166534">By: ${escapeHtml(note.nurseName || note.signedByName || "Nurse")}${nurseEmpIdShownStandalone ? ` · Emp ID: ${escapeHtml(nurseEmpIdShownStandalone)}` : ""}${note.signedAt ? ` · ${fmtDate(note.signedAt)}` : ` · ${noteDate}`}${nSigImgStandalone}</span>
-</div>`
-    : `<div style="margin-top:20px;padding:8px 12px;border:1px solid #fde68a;border-radius:8px;background:#fffbeb">
-  <strong style="color:#d97706;font-size:12px">DRAFT — Not yet signed</strong>
-</div>`;
+  // R7hr — the single-note print body now comes from the SAME shared
+  // buildNurseNoteCardHtml() in the SAME prose mode the Complete IPD File uses
+  // (Narrative EmbeddedNoteCard), so an individual nursing note prints
+  // byte-identical to how it renders inside the full file. (Was calling the
+  // per-type buildBuilder() directly in card mode — a style divergence.)
 
   // Assembly
-  const bodyHtml = COMPACT_GRID_CSS + `
+  // R7hr(launch-review) — the prose builder output ALREADY carries the
+  // late-entry banner, the remarks line and the "✓ … signed · By … · Emp … ·
+  // <signature image>" line, so the page adds ONLY the status strip. The old
+  // page-level remarks / sigHtml / lateBanner blocks printed every one of
+  // those TWICE on the standalone sheet.
+  const bodyHtml = `
   <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #e2e8f0">
-    <div style="padding:5px 14px;border-radius:6px;font-size:13px;font-weight:800;background:#fce7f3;color:#9d174d">${escapeHtml(typeLabel)}</div>
     ${statusBadge}
     ${critical}
     <div style="margin-left:auto;font-size:12px;color:#64748b">Shift: <strong style="text-transform:capitalize">${escapeHtml(shift)}</strong> · Recorded: ${noteDate}</div>
   </div>
-  ${lateBanner}
-  ${typeBody}
-  ${remarks}
-  ${sigHtml}`;
+  ${buildNurseNoteCardHtml(note, { prose: true })}`;
 
   // PrintShell hospital metadata
   const hs = {

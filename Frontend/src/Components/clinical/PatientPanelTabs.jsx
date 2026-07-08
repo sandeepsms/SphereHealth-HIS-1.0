@@ -30,6 +30,13 @@ import "./patient-panel-tabs.css";
 // templates, same headers, same vitals tables.
 import { buildDoctorNoteCardHtml } from "../../pages/doctor/buildDoctorNoteCardHtml";
 import { buildNurseNoteCardHtml }  from "../../pages/nursing/printNurseNote";
+// R7hs — The Initial Assessment tab renders the doctor + nurse IA through the
+// SAME comprehensive prose renderer that the Complete IPD File print and the
+// individual IA print use, so the panel IA is 1:1 with the print. The per-type
+// note-card builders (buildDoctorNoteCardHtml / buildNurseNoteCardHtml) are a
+// LESS-comprehensive renderer and stay in use only for the day-wise timelines.
+import { buildInitialAssessmentHtml } from "@/Components/print/printables/patientFileThemes/buildInitialAssessmentHtml";
+import { getVitalSheet } from "../../Services/vital/vitalService";
 
 /* ──────────────────────── Formatters ───────────────────────── */
 const fmtDateTime = (d) =>
@@ -73,13 +80,247 @@ function NoteCardEmbed({ note, role, hideNursingExtras = false }) {
   // the Initial Assessment tab can suppress the "NURSING INTAKE — CROSS-
   // DISCIPLINARY" block when no separate Nurse IA exists. Default false
   // preserves all existing call sites (prints, timelines, MLC tab).
+  // R7hr — PROSE arrangement (same as the Complete IPD File print) so the
+  // patient-panel note view matches the launch-ready file layout everywhere.
   const rawHtml = role === "nurse"
-    ? buildNurseNoteCardHtml(note)
-    : buildDoctorNoteCardHtml(note, { hideNursingExtras });
+    ? buildNurseNoteCardHtml(note, { prose: true })
+    : buildDoctorNoteCardHtml(note, { prose: true, hideNursingExtras });
   // /uploads signature images are JWT-gated — resolve them to data: URLs
   // through the authenticated axios pipe before injecting the markup
   // (a raw <img src="/uploads/…"> can't send the Authorization header).
   const html = useInlinedUploadsHtml(rawHtml);
+  return (
+    <div
+      className={`ppt-embed-card ppt-embed-card--${role}`}
+      // eslint-disable-next-line react/no-danger
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  );
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   R7hs — Initial-Assessment adapters + shared-renderer embed.
+
+   A saved IA note stores its role-specific data under nested NABH wrappers
+   (mirrors IPDInitialAssessmentPage's save payload L1679-1775 and its restore
+   L1421-1571):
+     • Doctor : note.noteDetails.doctor  +  note.noteDetails.doctor.nabh
+                (plus top-level mirrors chiefComplaint / provisionalDiagnosis …)
+     • Nurse  : note.noteDetails.nursing +  note.noteDetails.nursingNabh
+                (or, on the mirrored NursingNotes row, note.noteData.nursing +
+                 note.noteData.nursingNabh)
+
+   The shared prose renderer buildInitialAssessmentHtml expects the CANONICAL
+   nested shape (renderDoctor / renderNursing). adaptDoctor / adaptNursing map
+   the raw saved keys → canonical, using the SAME field aliases as Narrative's
+   `iaForFile` (L1184-1284) and IPDInitialAssessmentPage's `buildIaFromState`
+   (L1789-1893) so the panel output is identical to the two print surfaces.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+// Flatten the doctor note the way IPDInitialAssessmentPage restore reads it:
+// nabh wrapper first (so its canonical NABH keys are visible), then the plain
+// doctor block, then the note's top-level mirrors. Later spreads win on a key
+// collision — top-level mirrors (chiefComplaint etc.) override, matching
+// normalizeData.js L124-126's "flat legacy field wins" precedence.
+function adaptDoctor(note) {
+  if (!note || typeof note !== "object") return {};
+  const doc = note.noteDetails?.doctor || {};
+  const d = { ...(doc.nabh || {}), ...doc, ...note };
+
+  return {
+    doctorName: d.doctorName || d.signedByName || d.signedBy,
+    regNo: d.regNo || d.signedByReg || d.mciRegNo,
+    assessedAt: d.assessmentDate || d.signedAt || d.createdAt,
+    // chiefComplaint (nabh/top-level) → chiefComplaints; hopi is the CC fallback.
+    chiefComplaints: d.chiefComplaints || d.chiefComplaint || d.cc,
+    ccDuration: d.ccDuration,
+    hopi: d.hopi || d.historyOfPresentIllness || d.historyOfPresentingIllness,
+    // R7hr-70 — structured PSH/Fam/Soc summaries feed History; legacy strings fall back.
+    pastMedical: d.pastMedical || d.pmh || d.briefPmh || d.pastMedicalHistory,
+    pastSurgical: d.pastSurgical || d.psh,
+    familyHistory: d.familyHistory || d.famHx,
+    socialHistory: d.socialHistory || d.socHx,
+    comorbidities: d.comorbidities || null,
+    allergies: {
+      noKnown: d.allergies?.noKnown ?? d.noKnownAllergies,
+      list: d.allergies?.list || [],
+    },
+    medReconciliation: Array.isArray(d.medicationReconciliation)
+      ? d.medicationReconciliation
+      : (Array.isArray(d.medReconciliation) ? d.medReconciliation : []),
+    clinicalExamination: {
+      general: d.clinicalExamination?.general || d.generalExamination || d.genExam,
+      systemic: d.clinicalExamination?.systemic || d.systemicExamination,
+      cvs: d.clinicalExamination?.cvs || d.cvs,
+      rs: d.clinicalExamination?.rs || d.rs,
+      abdomen: d.clinicalExamination?.abdomen || d.abdomen,
+      cns: d.clinicalExamination?.cns || d.cns,
+      ros: d.clinicalExamination?.ros || d.reviewOfSystems || d.ros || {},
+    },
+    localExam: (typeof d.localExamination === "string" ? d.localExamination : "") || d.localExam,
+    provisionalDiagnosis: d.provisionalDiagnosis || d.provDx,
+    workingDiagnosis: d.workingDiagnosis || d.workingDx,
+    finalDiagnosis: d.finalDiagnosis || d.finalDx,
+    icd10: d.icd10 || d.icdCode,
+    icd10Description: d.icd10Description || d.icdDescription,
+    patientStatus: d.patientStatus,
+    differentialDiagnosis: d.differentialDiagnosis || d.differentialDx,
+    anthropometry: d.anthropometry || {},
+    investigations: Array.isArray(d.invests)
+      ? d.invests
+      : (Array.isArray(d.investigations) ? d.investigations : []),
+    investigationsText: typeof d.investigations === "string" ? d.investigations : (d.plannedInvestigations || ""),
+    treatmentPlan: d.treatmentPlan,
+    // Structured Rx (meds) preferred; legacy rxRows fall back.
+    prescription: (Array.isArray(d.meds) && d.meds.length)
+      ? d.meds.map((m) => ({
+          drug: m.drug || m.name, dose: m.dose, route: m.route, frequency: m.frequency,
+          duration: m.duration, instructions: m.instructions,
+          dilutionVolume: m.dilutionVolume, dilutionFluid: m.dilutionFluid,
+          infuseOverMinutes: m.infuseOverMinutes,
+        }))
+      : (Array.isArray(d.prescription) ? d.prescription
+         : (Array.isArray(d.rxRows) ? d.rxRows : [])),
+    infusions: Array.isArray(d.infusions) ? d.infusions : [],
+    codeStatus: (typeof d.codeStatus === "object" && d.codeStatus) ? d.codeStatus.value : d.codeStatus,
+    codeStatusDiscussedWith: (typeof d.codeStatus === "object" && d.codeStatus) ? d.codeStatus.discussedWith : d.codeStatusDiscussedWith,
+    codeStatusLimitations: (typeof d.codeStatus === "object" && d.codeStatus) ? d.codeStatus.limitations : d.codeStatusLimitations,
+    elosDays: d.elosDays,
+    goalOfCare: d.goalOfCare,
+    riskAcknowledgement: d.riskAcknowledgement || null,
+    referrals: Array.isArray(d.referrals) ? d.referrals : [],
+    prognosis: (typeof d.prognosis === "object" && d.prognosis) ? d.prognosis : (d.prognosis ? { summary: d.prognosis } : {}),
+    consentNeeded: d.consentNeeded || d.consentRequired || d.consentsRequired || {},
+    obGyn: d.obstetricGynae || d.obGyn || {},
+    immunisation: d.immunisationStatus || d.immunisation || {},
+    ecog: (typeof d.functionalEcog === "object" && d.functionalEcog) ? d.functionalEcog : (d.functionalEcog ? { score: d.functionalEcog } : (d.ecog || {})),
+    spiritual: d.spiritualNeeds || d.spiritual || {},
+    dietAdvice: d.dietAdvice,
+    activityAdvice: d.activityAdvice,
+    followupNotes: d.followupNotes || d.followUp,
+    signedBy: {
+      name: d.signedByName || d.signedBy || d.doctorName,
+      reg: d.signedByReg || d.mciRegNo || d.regNo,
+      empId: d.signedByEmpId || d.doctorEmpId,
+      at: d.signedAt || d.assessmentDate,
+      signature: d.signature || d.signatureImage,
+    },
+  };
+}
+
+// Flatten the nurse note: nursingNabh first, then the plain nursing block, then
+// the noteData.* mirror (NursingNotes row), then the note top-level.
+// R7hr(F5-audit) — `admIA` (admission.nurseInitialAssessment) is layered ON TOP:
+// the two nursing-IA copies are each partial (the note carries anthropometry/
+// allergies/mobility; the admission-backfilled record carries riskAssessments/
+// systemAssessment/psychosocial/nutritionHydration/carePlan). The union — with
+// the admission copy winning collisions — is exactly what the Complete File's
+// Narrative adapter builds, so both surfaces render the identical IA.
+function adaptNursing(note, admIA) {
+  if (!note || typeof note !== "object") return {};
+  const nabh = note.noteDetails?.nursingNabh || note.noteData?.nursingNabh || {};
+  const nur = note.noteDetails?.nursing || note.noteData?.nursing || {};
+  const n = { ...nabh, ...nur, ...note, ...((admIA && typeof admIA === "object") ? admIA : {}) };
+
+  const score = (obj) =>
+    (obj && typeof obj === "object")
+      ? { total: obj.total ?? obj.score, meta: obj.meta, risk: obj.risk || obj.band }
+      : null;
+  // Admission-copy risk shape: riskAssessments.{morseFallScale,bradenScale}
+  // = { totalScore, riskLevel }.
+  const ra = n.riskAssessments || {};
+  const raScore = (o) =>
+    (o && typeof o === "object" && (o.totalScore != null || o.riskLevel))
+      ? { total: o.totalScore ?? o.total ?? o.score, risk: o.riskLevel || o.risk }
+      : null;
+
+  return {
+    admission: {
+      date: n.admitDate, time: n.admitTime, ipdNo: n.ipdNo,
+      mode: n.modeOfAdmit || n.modeOfAdmission, ward: n.ward, bed: n.bedNo,
+      consciousness: n.consciousnessLevel,
+      mobility: typeof n.mobility === "string" ? n.mobility : "",
+    },
+    identification: n.identification || n.idBand || {},
+    vitals: n.vitals || {},
+    anthropometry: n.anthropometry || {},
+    allergies: {
+      noKnown: n.allergies?.noKnown ?? n.noKnownAllergies ?? n.nurseNoKnownAllergies,
+      list: n.allergies?.list || [],
+    },
+    briefHistory: n.briefPmh || n.briefHistory || n.nurseBriefPmh,
+    homeMeds: Array.isArray(n.homeMedications) ? n.homeMedications
+              : (Array.isArray(n.homeMeds) ? n.homeMeds : []),
+    pain: n.pain || {
+      present: n.painPresent, score: n.painScore,
+      location: n.painLocation, character: n.painCharacter,
+    },
+    morse: score(n.morse) || raScore(ra.morseFallScale),
+    braden: score(n.braden) || raScore(ra.bradenScale),
+    // saved as `nutri`; renderer reads `nutrition`. Carry the quick-screen too.
+    nutrition: (() => {
+      const s = score(n.nutrition || n.nutri);
+      const quick = n.nutritionalScreeningQuick || n.nutrition?.quick || n.nutri?.quick;
+      if (!s && !quick) return null;
+      return { ...(s || {}), quick };
+    })(),
+    vte: score(n.vte),
+    dvt: score(n.dvt),
+    gcs: score(n.gcs),
+    psychosocial: (typeof n.psychosocial === "object" && n.psychosocial) ? n.psychosocial : {},
+    // R7hr(F5-audit) — head-to-toe + nutrition detail from the admission copy.
+    systemAssessment: (typeof n.systemAssessment === "object" && n.systemAssessment) ? n.systemAssessment : {},
+    nutritionDetail: (typeof n.nutritionHydration === "object" && n.nutritionHydration) ? n.nutritionHydration : {},
+    barthel: n.adlBarthel || n.barthel || n.adl || {},
+    bodyChart: n.bodyChart || {},
+    precautions: n.specialPrecautions || n.precautions || {},
+    education: (typeof (n.educationNeeds || n.education) === "object") ? (n.educationNeeds || n.education) : {},
+    dischargePlanning: (typeof n.dischargePlanning === "object" && n.dischargePlanning) ? n.dischargePlanning : {},
+    cognitive: (typeof (n.cognitiveCommunication || n.cognitive) === "object") ? (n.cognitiveCommunication || n.cognitive) : {},
+    cultural: n.culturalSpiritual || n.cultural || {},
+    elimination: (typeof (n.bowelBladder || n.elimination) === "object") ? (n.bowelBladder || n.elimination) : {},
+    sleep: (typeof (n.sleepPattern || n.sleep) === "object") ? (n.sleepPattern || n.sleep) : {},
+    valuables: n.valuablesBelongings || n.valuables || {},
+    caregiver: (typeof (n.familyCaregiver || n.caregiver) === "object") ? (n.familyCaregiver || n.caregiver) : {},
+    highRisk: n.highRiskFlags || n.highRisk || {},
+    // Structured mobilityGait object only — a plain mobility STRING already
+    // renders on the Admission line (matches the Complete File adapter, so
+    // both surfaces show the same section set).
+    mobility: (typeof (n.mobilityGait || n.mobility) === "object") ? (n.mobilityGait || n.mobility) : {},
+    preAnaesthesia: n.preAnaesthesia || {},
+    prom: n.promPremTriggers || n.prom || {},
+    plan: {
+      problems: n.nursingProblems || n.plan?.problems,
+      goals: n.nursingGoals || n.plan?.goals,
+      notes: n.nursingNotes || n.plan?.notes
+        || (typeof n.carePlan === "string" ? n.carePlan : "")
+        || (typeof n.notes === "string" ? n.notes : ""),
+    },
+    signedBy: {
+      name: n.nurseName || n.signedByName || n.signedBy,
+      reg: n.signedByReg || n.nurseRegNo,
+      empId: n.signedByEmpId || n.nurseEmployeeId,
+      at: n.signedAt || n.submittedAt,
+      signature: n.signature || n.nurseSignature || n.signatureImage,
+    },
+  };
+}
+
+/* Renders a single IA note (doctor OR nurse) through the shared prose renderer,
+   inlining any /uploads signature images through the authenticated pipe just
+   like NoteCardEmbed. */
+function IAEmbed({ note, role, admissionIA }) {
+  // R7hr(launch) — memoize: the adapter + renderer build a multi-KB HTML
+  // string; without this it re-ran on every parent re-render (tab state,
+  // polling) even though the note/admission records hadn't changed.
+  const rawHtml = useMemo(() => {
+    const ia = role === "nurse"
+      ? { role: "nurse", nursing: adaptNursing(note, admissionIA) }
+      : { role: "doctor", doctor: adaptDoctor(note) };
+    return buildInitialAssessmentHtml(ia, { prose: true });
+  }, [note, role, admissionIA]);
+  const html = useInlinedUploadsHtml(rawHtml);
+  if (!html) return null;
   return (
     <div
       className={`ppt-embed-card ppt-embed-card--${role}`}
@@ -168,6 +409,11 @@ export function InitialAssessmentTab({ doctorNotes = [], nursingNotes = [], admi
     (a, b) => new Date(b.signedAt || b.createdAt || 0) - new Date(a.signedAt || a.createdAt || 0)
   );
   const _latestDocIA = _docIAsorted[0] || null;
+  // R7hs — latest signed nurse IA (newest by signedAt/noteDate/createdAt), fed
+  // to the shared renderer the same way the doctor card is.
+  const _latestNurseIA = [...nurseInitial].sort(
+    (a, b) => new Date(b.signedAt || b.noteDate || b.createdAt || 0) - new Date(a.signedAt || a.noteDate || a.createdAt || 0)
+  )[0] || null;
   const _isBlank = (v) => v == null || String(v).trim() === "" || String(v).trim() === "—";
   const _derivedChiefComplaint =
     _latestDocIA?.chiefComplaint ||
@@ -229,21 +475,13 @@ export function InitialAssessmentTab({ doctorNotes = [], nursingNotes = [], admi
             ⚠️ Doctor's initial assessment is mandatory before any further documentation. NABH COP.2.
           </div>
         ) : (
-          // Latest first — Initial Assessment is usually one record but
-          // amendments / re-sign attempts can produce extras; show newest
-          // at top so the most current sign is the first thing read.
-          /* R7hr-100 — Hide the doctor-card's embedded "NURSING INTAKE
-             — CROSS-DISCIPLINARY" block while no separate Nurse IA
-             record exists. Doctors used to see Barthel max scores +
-             dropdown defaults baked into the doctor note's nursingNabh
-             payload (legacy combined-form artifact) even when nursing
-             hadn't started — confusing and clinically misleading. The
-             flag is forwarded all the way through NoteCardEmbed →
-             buildDoctorNoteCardHtml; print + timeline call sites pass
-             nothing → default-preserving (R25 safe). */
-          [...docInitial]
-            .sort((a, b) => new Date(b.visitDate || b.createdAt) - new Date(a.visitDate || a.createdAt))
-            .map((n) => <NoteCardEmbed key={n._id} note={n} role="doctor" hideNursingExtras={nurseInitial.length === 0} />)
+          // R7hs — Render the LATEST signed doctor IA through the SHARED prose
+          // renderer (buildInitialAssessmentHtml) so the panel matches the
+          // Complete IPD File print and the individual IA print 1:1. Initial
+          // Assessment is one clinical record; amendments / re-sign attempts can
+          // leave older rows, so we show only the most current sign
+          // (_latestDocIA — already the newest by signedAt/createdAt).
+          <IAEmbed key={_latestDocIA._id} note={_latestDocIA} role="doctor" />
         )}
       </div>
 
@@ -265,9 +503,15 @@ export function InitialAssessmentTab({ doctorNotes = [], nursingNotes = [], admi
               {nurseInitial.length} record(s)
             </span>
           </div>
-          {[...nurseInitial]
-            .sort((a, b) => new Date(b.noteDate || b.createdAt) - new Date(a.noteDate || a.createdAt))
-            .map((n) => <NoteCardEmbed key={n._id} note={n} role="nurse" />)}
+          {/* R7hs — LATEST signed nurse IA via the SHARED prose renderer. */}
+          {_latestNurseIA && (
+            <IAEmbed
+              key={_latestNurseIA._id}
+              note={_latestNurseIA}
+              role="nurse"
+              admissionIA={admission?.nurseInitialAssessment}
+            />
+          )}
         </div>
       )}
     </div>
@@ -394,6 +638,44 @@ export function NursingNotesExpandedTab({ nursingNotes = [], admission }) {
     education: "📚 Education",
   };
 
+  // R7hu — attach each vitals note's day VitalSheet so its card shows that
+  // day's hourly grid (matching the Complete File print + the nurse timeline)
+  // instead of a single snapshot. Self-contained fetch — vitals notes
+  // dual-write the sheet on save, so it's always available; the card falls
+  // back to the snapshot until the sheet loads.
+  const _vsUhid = (nursingNotes || []).map((n) => n.patientUHID || n.UHID).find(Boolean)
+    || admission?.UHID || admission?.patientId?.UHID || admission?.uhid;
+  const [vitalSheets, setVitalSheets] = useState({});
+  const vitalDateKey = (n) => {
+    const d = new Date(n?.noteDate || n?.visitDate || n?.createdAt || 0);
+    if (isNaN(d.getTime())) return null;
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+  useEffect(() => {
+    if (!_vsUhid) return;
+    const want = [...new Set(filtered.filter((n) => n.noteType === "vitals").map(vitalDateKey).filter(Boolean))]
+      .filter((d) => !(d in vitalSheets));
+    if (!want.length) return;
+    let cancelled = false;
+    (async () => {
+      const pairs = await Promise.all(want.map(async (date) => {
+        try {
+          const res = await getVitalSheet(_vsUhid, date);
+          const s = res?.data && Array.isArray(res.data.tableData) ? res.data
+                  : Array.isArray(res?.tableData) ? res : null;
+          return [date, s];
+        } catch { return [date, null]; }
+      }));
+      if (!cancelled) setVitalSheets((prev) => { const nx = { ...prev }; pairs.forEach(([d, s]) => { nx[d] = s; }); return nx; });
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtered, _vsUhid]);
+  const withSheet = (n) =>
+    (n.noteType === "vitals" && vitalSheets[vitalDateKey(n)])
+      ? { ...n, vitalSheet: vitalSheets[vitalDateKey(n)] }
+      : n;
+
   return (
     <div className="ppt-tab">
       <div className="ppt-tab-header">
@@ -427,7 +709,7 @@ export function NursingNotesExpandedTab({ nursingNotes = [], admission }) {
                 <span className="ppt-day-date">{dayHeading(k)}</span>
                 <span className="ppt-day-count">{notes.length} note{notes.length === 1 ? "" : "s"}</span>
               </div>
-              {notes.map((n) => <NoteCardEmbed key={n._id} note={n} role="nurse" />)}
+              {notes.map((n) => <NoteCardEmbed key={n._id} note={withSheet(n)} role="nurse" />)}
             </div>
           );
         })
@@ -1218,205 +1500,6 @@ function BedTransferRow({ t, state }) {
   );
 }
 
-/* ════════════════════════════════════════════════════════════════
-   Building blocks — DoctorNoteExpanded, NurseNoteExpanded, MLCExpanded
-   ════════════════════════════════════════════════════════════════ */
-
-function DoctorNoteExpanded({ note }) {
-  const TYPE_LABELS = {
-    initial:"Initial Assessment", medication:"Medication Order", infusion:"Infusion Order",
-    daily:"Daily Progress", icu:"ICU / Critical Care", procedure:"Procedure Note",
-    consultation:"Consultation", preop:"Pre-operative", postop:"Post-operative",
-    death:"Death Note", amendment:"Amendment", initialAssessment:"Initial Assessment",
-    progress:"Progress Note", assessment:"Assessment", admission:"Admission Note",
-    discharge:"Discharge Note", general:"General Note", operative:"Operative Note",
-  };
-  const typeLabel = TYPE_LABELS[note.noteType] || note.noteType || "Clinical Note";
-  return (
-    <div className="ppt-note ppt-note--doctor">
-      {/* Banner — chart-style: type + meta + status badge */}
-      <div className="ppt-note-head">
-        <span className="ppt-note-type">{typeLabel}</span>
-        <span className="ppt-note-meta">
-          <strong>{note.doctorName || "Doctor"}</strong>
-          {note.doctorRegNo && <span className="ppt-reg">Reg {note.doctorRegNo}</span>}
-          · {fmtDateTime(note.visitDate || note.createdAt || note.noteDate)}
-          {note.shift && <span className="ppt-shift-badge">{note.shift}</span>}
-          {note.status && <span className={`ppt-note-status ppt-note-status--${note.status}`}>{note.status}</span>}
-          {note.isCritical && <span className="ppt-note-status ppt-note-status--critical">⚠ critical</span>}
-        </span>
-      </div>
-
-      {/* SOAP block (S/O/A/P) — collapsible labelled paragraphs */}
-      {note.soap && Object.values(note.soap).some(Boolean) && (
-        <div className="ppt-soap">
-          {note.soap.subjective && <SoapRow letter="S" label="Subjective"  body={note.soap.subjective} />}
-          {note.soap.objective  && <SoapRow letter="O" label="Objective"   body={note.soap.objective} />}
-          {note.soap.assessment && <SoapRow letter="A" label="Assessment"  body={note.soap.assessment} />}
-          {note.soap.plan       && <SoapRow letter="P" label="Plan"        body={note.soap.plan} />}
-        </div>
-      )}
-
-      {/* Diagnosis line */}
-      {(note.provisionalDiagnosis || note.workingDiagnosis || note.finalDiagnosis || note.icd10Code) && (
-        <div className="ppt-detail-grid ppt-dx-grid">
-          {note.provisionalDiagnosis && <Field label="Provisional Diagnosis" value={note.provisionalDiagnosis} wide />}
-          {note.workingDiagnosis     && <Field label="Working Diagnosis"     value={note.workingDiagnosis}     wide />}
-          {note.finalDiagnosis       && <Field label="Final Diagnosis"       value={note.finalDiagnosis}       wide />}
-          {note.icd10Code            && <Field label="ICD-10"                value={`${note.icd10Code}${note.icd10Description ? ` — ${note.icd10Description}` : ""}`} />}
-        </div>
-      )}
-
-      {/* Vitals chips */}
-      {note.vitals && Object.values(note.vitals).some((v) => v != null && v !== "") && (
-        <VitalsChipRow vitals={note.vitals} />
-      )}
-
-      {/* Investigations ordered (just the list) */}
-      {Array.isArray(note.investigations) && note.investigations.length > 0 && (
-        <div className="ppt-inline-block">
-          <div className="ppt-section-sub">Investigations Ordered</div>
-          <div className="ppt-chip-list">
-            {note.investigations.map((inv, i) => (
-              <span key={i} className="ppt-chip ppt-chip--info">{typeof inv === "string" ? inv : (inv.testName || inv.name || "—")}</span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Orders table */}
-      {Array.isArray(note.orders) && note.orders.length > 0 && (
-        <div className="ppt-inline-block">
-          <div className="ppt-section-sub">Orders ({note.orders.length})</div>
-          <div className="ppt-table-wrap">
-            <table className="ppt-table">
-              <thead>
-                <tr><th>Type</th><th>Instruction</th><th>Route</th><th>Frequency</th><th>Duration</th><th>Status</th></tr>
-              </thead>
-              <tbody>
-                {note.orders.map((o, i) => (
-                  <tr key={i}>
-                    <td className="ppt-cap">{o.type || "—"}</td>
-                    <td>{o.instruction || "—"}</td>
-                    <td>{o.route || "—"}</td>
-                    <td>{o.frequency || "—"}</td>
-                    <td>{o.duration || "—"}</td>
-                    <td><span className={`ppt-status ppt-status--${(o.nurseStatus || "pending")}`}>{o.nurseStatus || "pending"}</span></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Free-text body for non-SOAP notes (legacy "remarks" / "note" / "content") */}
-      {(note.remarks || note.note || note.noteText || note.content || note.patientStatus) && (
-        <div className="ppt-detail-grid">
-          {note.patientStatus && <Field label="Patient Status" value={note.patientStatus} />}
-          {(note.remarks || note.note || note.noteText || note.content) && (
-            <Field label="Notes" value={note.remarks || note.note || note.noteText || note.content} wide />
-          )}
-        </div>
-      )}
-
-      {/* Extended noteDetails (ICU/procedure-specific custom JSON) */}
-      {note.noteDetails && typeof note.noteDetails === "object" && Object.keys(note.noteDetails).length > 0 && (
-        <div className="ppt-inline-block">
-          <div className="ppt-section-sub">Additional Details</div>
-          <KeyValueAll obj={note.noteDetails} skip={EMPTY_SKIP} />
-        </div>
-      )}
-
-      {/* Tags */}
-      {Array.isArray(note.tags) && note.tags.length > 0 && (
-        <div className="ppt-chip-list" style={{ marginTop: 6 }}>
-          {note.tags.map((t, i) => <span key={i} className="ppt-chip">{t}</span>)}
-        </div>
-      )}
-
-      {/* Signature footer */}
-      <NoteSignature note={note} role="Doctor" />
-    </div>
-  );
-}
-
-function NurseNoteExpanded({ note }) {
-  const TYPE_LABELS = {
-    initial:"Initial Assessment", initialAssessment:"Initial Assessment",
-    general:"General Note", vitals:"Vitals", pain:"Pain Assessment",
-    neuro:"Neuro / GCS", intake:"Intake / Output", iv:"IV / Cannula Note",
-    blood:"Blood Transfusion", wound:"Wound Care", skin:"Skin Assessment",
-    procedure:"Procedure Note", discharge:"Discharge Note", fall:"Fall Risk",
-    mews:"MEWS Score", daily:"Daily Care", careplan:"Care Plan",
-    nutrition:"Nutrition", education:"Patient Education",
-  };
-  const typeLabel = TYPE_LABELS[note.noteType] || note.noteType || "Nursing Note";
-  return (
-    <div className="ppt-note ppt-note--nurse">
-      <div className="ppt-note-head">
-        <span className="ppt-note-type">{typeLabel}</span>
-        <span className="ppt-note-meta">
-          <strong>{note.nurseName || "Nurse"}</strong>
-          · {fmtDateTime(note.noteDate || note.createdAt)}
-          {note.shift && <span className="ppt-shift-badge">{note.shift}</span>}
-          {note.status && <span className={`ppt-note-status ppt-note-status--${note.status}`}>{note.status}</span>}
-        </span>
-      </div>
-
-      {/* Vitals chips (common to many nurse note types) */}
-      {note.vitals && Object.values(note.vitals).some((v) => v != null && v !== "") && (
-        <VitalsChipRow vitals={note.vitals} />
-      )}
-
-      {/* Free-text body — the primary content of a nursing note */}
-      {(note.remarks || note.note || note.noteText || note.content) && (
-        <div className="ppt-detail-grid">
-          <Field label="Notes" value={note.remarks || note.note || note.noteText || note.content} wide />
-        </div>
-      )}
-
-      {/* Pain assessment block */}
-      {note.painAssessment && Object.values(note.painAssessment).some(Boolean) && (
-        <div className="ppt-inline-block">
-          <div className="ppt-section-sub">Pain Assessment</div>
-          <KeyValueAll obj={note.painAssessment} skip={EMPTY_SKIP} />
-        </div>
-      )}
-
-      {/* GCS / neuro block */}
-      {note.gcs && (
-        <div className="ppt-inline-block">
-          <div className="ppt-section-sub">GCS / Neuro</div>
-          <KeyValueAll obj={note.gcs} skip={EMPTY_SKIP} />
-        </div>
-      )}
-
-      {/* Intake / output rows */}
-      {(Array.isArray(note.intake) || Array.isArray(note.output)) && (note.intake?.length > 0 || note.output?.length > 0) && (
-        <div className="ppt-inline-block">
-          <div className="ppt-section-sub">Intake / Output</div>
-          <IORows intake={note.intake} output={note.output} />
-        </div>
-      )}
-
-      {/* Blood transfusion specific block */}
-      {note.bloodTransfusion && (
-        <div className="ppt-inline-block">
-          <div className="ppt-section-sub">Blood Transfusion</div>
-          <KeyValueAll obj={note.bloodTransfusion} skip={EMPTY_SKIP} />
-        </div>
-      )}
-
-      {/* Generic catch-all for any other structured field that has content */}
-      <ExtraFields note={note} />
-
-      {/* Signature footer */}
-      <NoteSignature note={note} role="Nurse" />
-    </div>
-  );
-}
-
 /* ─── note building-blocks ─── */
 
 function SoapRow({ letter, label, body }) {
@@ -1765,29 +1848,6 @@ const SKIP_NOTE_FIELDS = new Set([
   "signature","nurseSignature","signedByName","signedByReg","signedAt","signedByRole",
   "updatedBy",
 ]);
-
-// Empty Set passed when a child needs the FULL auto-render of an object
-// (e.g. noteDetails Mixed type — we want every key surfaced there).
-const EMPTY_SKIP = new Set();
-
-function KeyValueAll({ obj, skip = new Set() }) {
-  const entries = Object.entries(obj || {})
-    .filter(([k, v]) => !skip.has(k) && v != null && v !== "" && !(Array.isArray(v) && v.length === 0))
-    .filter(([, v]) => {
-      if (typeof v === "object") {
-        return Object.keys(v).length > 0;
-      }
-      return true;
-    });
-  if (entries.length === 0) return <div className="ppt-note-empty">— no extra fields recorded —</div>;
-  return (
-    <div className="ppt-detail-grid">
-      {entries.map(([k, v]) => (
-        <Field key={k} label={prettyKey(k)} value={renderValue(v)} wide={typeof v === "string" && v.length > 60} />
-      ))}
-    </div>
-  );
-}
 
 function renderValue(v) {
   if (v == null) return "—";

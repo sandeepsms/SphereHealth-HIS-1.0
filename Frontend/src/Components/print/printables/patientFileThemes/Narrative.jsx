@@ -53,17 +53,30 @@ import { fmtDate, fmtTime, fmtDayMonth, pronoun } from "./normalizeData";
 // layout the user saw in the standalone printouts.
 import { buildDoctorNoteCardHtml } from "@/pages/doctor/buildDoctorNoteCardHtml";
 import { buildNurseNoteCardHtml }  from "@/pages/nursing/printNurseNote";
-// /uploads signature images are JWT-gated — SecureImage (JSX) and the
-// inline-to-data-URL hook (builder HTML) fetch them through axios with
-// the Bearer token; a plain <img src="/uploads/…"> would 401.
-import SecureImage from "@/Components/SecureImage";
+// Shared, comprehensive PROSE Initial-Assessment renderer — the SAME renderer
+// the individual IA print uses — so the IA reads identically on both surfaces.
+import { buildInitialAssessmentHtml } from "./buildInitialAssessmentHtml";
+// /uploads signature images are JWT-gated — the inline-to-data-URL hook
+// (builder HTML) fetches them through axios with the Bearer token; a plain
+// <img src="/uploads/…"> would 401.
 import { useInlinedUploadsHtml } from "@/utils/secureUploads";
 
 /* R7gd note-card embed wrapped in a component so the JWT-gated /uploads
    signature inlining hook can run per-card (hooks can't live in a .map). */
 function EmbeddedNoteCard({ note }) {
   const isDoc = note._kind === "doctor";
-  const raw = isDoc ? buildDoctorNoteCardHtml(note) : buildNurseNoteCardHtml(note);
+  // R7hu — mirror the timeline + panel: hide the "nursing intake / cross-
+  // disciplinary" tail on a DOCTOR Initial Assessment card so the note renders
+  // identically on all three surfaces. Was `buildDoctorNoteCardHtml(note)` with
+  // no opts (default false → the block showed only in the Complete File print).
+  const isDoctorIA = note.noteType === "initial" || note.noteType === "initialAssessment";
+  // R7hu — the Complete File print renders every note in the PROSE variant
+  // (flowing bold-label lines like the Doctor Initial Assessment narrative), so
+  // the whole printed file reads in one consistent design. The Doctor Notes
+  // timeline + patient panel pass no `prose`, so they keep the card design.
+  const raw = isDoc
+    ? buildDoctorNoteCardHtml(note, { prose: true, hideNursingExtras: isDoctorIA })
+    : buildNurseNoteCardHtml(note, { prose: true });
   const html = useInlinedUploadsHtml(raw);
   return (
     <div
@@ -179,18 +192,6 @@ const _doseTiming = (a) => {
   return diff > 0 ? { label: `late ${_fmtDelay(diff)}`, color: "#b45309" }
                   : { label: `early ${_fmtDelay(-diff)}`, color: "#b45309" };
 };
-const vitalsSentence = (v) => {
-  if (!v || typeof v !== "object") return "";
-  const bits = [];
-  if (v.bp)    bits.push(`BP ${v.bp}`);
-  if (v.pulse) bits.push(`pulse ${v.pulse}/min`);
-  if (v.temp)  bits.push(`temperature ${fmtTemp(v.temp)}`);
-  if (v.spo2)  bits.push(`SpO₂ ${v.spo2}%`);
-  if (v.rr)    bits.push(`respiratory rate ${v.rr}/min`);
-  if (!bits.length) return "";
-  return `Admission vitals: ${oxford(bits)}.`;
-};
-
 const allergyLine = (a) => {
   if (!a) return "";
   if (typeof a === "string") return a;
@@ -650,30 +651,6 @@ const FlagLine = ({ obj, labelMap, label, allDescription }) => {
   );
 };
 
-/* =====================================================================
-   6. COMPACT RISK SCORE LINE
-   ===================================================================== */
-
-const expandScoresFlag = () => {
-  try {
-    const u = new URL(window.location.href);
-    return u.searchParams.get("expandScores") === "1";
-  } catch { return false; }
-};
-
-const RiskLine = ({ label, value, max, band, sub }) => {
-  if (value == null || value === "") return null;
-  return (
-    <Para style={{ marginBottom: 2 }}>
-      <strong>{label}:</strong> {value}{max != null ? `/${max}` : ""}
-      {band ? <> — <em>{band}</em></> : null}
-      {expandScoresFlag() && sub ? (
-        <span style={{ color: COL.muted }}> ({sub})</span>
-      ) : null}
-    </Para>
-  );
-};
-
 const pick = (obj, ...keys) => {
   if (!obj) return null;
   for (const k of keys) {
@@ -753,48 +730,10 @@ const buildDayIndex = (file, events) => {
   return days;
 };
 
-/* =====================================================================
-   8. ADL / BARTHEL helper
-   ===================================================================== */
-
-const BARTHEL_TOTAL_BAND = (total) => {
-  const n = Number(total); if (!Number.isFinite(n)) return null;
-  if (n >= 80) return "Independent";
-  if (n >= 60) return "Mildly dependent";
-  if (n >= 40) return "Moderately dependent";
-  if (n >= 20) return "Severely dependent";
-  return "Totally dependent";
-};
-
-const barthelTotal = (adl) => {
-  if (!adl || typeof adl !== "object") return null;
-  if (adl.total != null) return Number(adl.total);
-  const keys = ["feeding","bathing","grooming","dressing","bowels","bladder","toilet","transfer","mobility","stairs"];
-  let sum = 0; let any = false;
-  for (const k of keys) {
-    const v = Number(adl[k]);
-    if (Number.isFinite(v)) { sum += v; any = true; }
-  }
-  return any ? sum : null;
-};
-
 /* Safe scalar — avoids React "objects are not valid as a child" crashes
-   when an IA field carries a nested object instead of a primitive. */
+   when an IA field carries a nested object instead of a primitive. Still used
+   by the risk-score extraction (morseVal / bradenVal / …) below. */
 const scalarOrNum = (v) => (v != null && (typeof v === "number" || typeof v === "string")) ? v : null;
-
-/* Lightweight prose summariser for free-form text fields. */
-const proseLine = (label, val) => {
-  if (val == null) return null;
-  if (typeof val === "object") {
-    const inner = Object.entries(val)
-      .filter(([, v]) => v != null && v !== "" && typeof v !== "object")
-      .map(([k, v]) => `${k}: ${v}`).join("; ");
-    if (!inner) return null;
-    return <Para><strong>{label}:</strong> {inner}.</Para>;
-  }
-  if (String(val).trim() === "") return null;
-  return <Para><strong>{label}:</strong> {String(val).trim().replace(/\.+$/, "")}.</Para>;
-};
 
 /* =====================================================================
    9. PRIMARY THEME COMPONENT
@@ -849,14 +788,6 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
   /* ── derived names ──────────────────────────────────────────── */
   const fullName = fullNameWithHonorific(f.patient?.fullName, f.patient?.gender);
   const ageGender = ageGenderPhrase(f.patient?.age, f.patient?.gender);
-
-  /* ── HOPI with fallback to nurse chief-complaint ──────────── */
-  let hopiText = stripDot(f.history?.hopi || "");
-  const chief = stripDot(f.history?.chief || f.ia?.nursing?.chiefComplaint || "");
-  if (!hopiText) {
-    const nurseChief = stripDot(f.ia?.nursing?.chiefComplaint || "");
-    if (nurseChief) hopiText = nurseChief;
-  }
 
   /* ── Discharge meds with fallback ───────────────────────────── */
   let dischargeMeds = Array.isArray(f.discharge?.medications) ? f.discharge.medications : [];
@@ -943,8 +874,20 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
   // save timestamp, so 8 am notes appear before 8 pm notes regardless
   // of which one was filed first.
   const notesForDay = (dayKeyStr) => {
-    const docs  = (docNotesByDay.get(dayKeyStr) || []).map((n) => ({ ...n, _kind: "doctor"  }));
-    const nurs  = (nurNotesByDay.get(dayKeyStr) || []).map((n) => ({ ...n, _kind: "nursing" }));
+    // R7hu — Initial Assessments (doctor + nurse) render in their own dedicated
+    // prose sections above the journey, so drop them here to avoid printing the
+    // IA twice (once in its section, once in the day-wise stream).
+    const _isIA = (n) => n.noteType === "initial" || n.noteType === "initialAssessment";
+    const docs  = (docNotesByDay.get(dayKeyStr) || []).filter((n) => !_isIA(n)).map((n) => ({ ...n, _kind: "doctor"  }));
+    // R7hu — vitals are entered in the hourly Vital Chart (VitalSheet); the day
+    // renders that as a full hourly grid below (vitalsBlock). So when this day
+    // HAS a grid, drop the redundant single-snapshot "Vital Signs" note card —
+    // the user's "vitals aise show he nhi honge". A day with a vitals note but
+    // no grid still shows the note (fallback), so nothing is ever lost.
+    const hasVitalGrid = (vitalsByDay.get(dayKeyStr) || []).length > 0;
+    const nurs  = (nurNotesByDay.get(dayKeyStr) || [])
+      .filter((n) => !(hasVitalGrid && n.noteType === "vitals"))
+      .map((n) => ({ ...n, _kind: "nursing" }));
     return [...docs, ...nurs].sort((a, b) =>
       new Date(a.noteDate || a.createdAt || 0).getTime()
       - new Date(b.noteDate || b.createdAt || 0).getTime()
@@ -965,119 +908,38 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
   const allergies = (f.alerts?.allergies || []).map(allergyLine).filter(Boolean);
   const isolationFlags = (f.alerts?.isolationFlags || []).filter(Boolean);
 
-  /* ── Comorbidities flag map (active-only) ───────────────────── */
-  // R7hu — keys MUST match what the IPD IA form saves (`comorbid` checklist:
-  // diabetes/hypertension/cad/ckd/copd/asthma/liverDx/cancer/stroke/mentalHealth/
-  // hypothyroid/hiv/hepB/hepC). The old map used cld/hepb/hepc/thyroid/psych +
-  // ihd/tb/epilepsy — so liver disease, hepatitis B/C, hypothyroidism and mental
-  // health were silently DROPPED from the Complete File comorbidities line.
-  const comorbiditiesLabels = {
-    diabetes: "Diabetes mellitus",
-    hypertension: "Hypertension",
-    cad: "Coronary artery disease",
-    ckd: "Chronic kidney disease",
-    copd: "COPD",
-    asthma: "Asthma",
-    liverDx: "Chronic liver disease",
-    cancer: "Active malignancy",
-    stroke: "Prior CVA / stroke",
-    mentalHealth: "Mental health disorder",
-    hypothyroid: "Hypothyroidism",
-    hiv: "HIV",
-    hepB: "Hepatitis B",
-    hepC: "Hepatitis C",
-  };
-  const comorbidities = f.ia?.doctor?.comorbidities
-                     || f.ia?.nursing?.comorbidities
-                     || receipt.comorbidities
-                     || null;
+  // Comorbidities / devices / skin / code-status / risk-acknowledgement / care
+  // plan derivations were removed here — the shared Initial-Assessment renderer
+  // (buildInitialAssessmentHtml) now normalises those from the canonical `ia`
+  // shape built by the adapter below.
 
-  /* ── Devices flag map (active-only) ─────────────────────────── */
-  const devicesLabels = {
-    ivCannula: "IV cannula",
-    centralLine: "Central line",
-    urinaryCatheter: "Urinary catheter",
-    foleys: "Foley's catheter",
-    rylesTube: "Ryle's tube",
-    ngTube: "NG tube",
-    et: "ET tube",
-    tracheostomy: "Tracheostomy",
-    chestDrain: "Chest drain",
-    drain: "Surgical drain",
-    pacemaker: "Pacemaker",
-    ostomy: "Ostomy",
-  };
-  const devices = f.ia?.nursing?.devices
-               || f.ia?.doctor?.devices
-               || receipt.devices
-               || null;
-
-  /* ── Skin / pressure-area flag map ──────────────────────────── */
-  const skinLabels = {
-    intact: "Intact",
-    dry: "Dry",
-    pruritic: "Pruritic",
-    pressureUlcer: "Pressure ulcer present",
-    rash: "Rash",
-    bruises: "Bruises",
-    abrasions: "Abrasions",
-    surgicalWound: "Surgical wound",
-    dressing: "Dressing in situ",
-  };
-  const skin = f.ia?.nursing?.skin
-            || f.ia?.doctor?.skin
-            || receipt.skin
-            || null;
-
-  /* ── Code Status ────────────────────────────────────────────── */
-  // R7hu — the IPD form saves codeStatus as an OBJECT {value,discussedWith,
-  // limitations}; rendering it raw as a React child crashed the print. Extract
-  // the scalar value (demo/legacy records store it as a plain string).
-  const _codeStatusRaw = f.ia?.doctor?.codeStatus
-                  || f.ia?.nursing?.codeStatus
-                  || receipt.codeStatus
-                  || "";
-  const codeStatus = (typeof _codeStatusRaw === "object"
-                        ? (_codeStatusRaw.value || "")
-                        : _codeStatusRaw).toString().replace(/_/g, " ");
-
-  /* ── Risk acknowledgement (flag map) ────────────────────────── */
-  const riskAckLabels = {
-    fallRiskExplained: "Fall risk explained",
-    pressureUlcerRiskExplained: "Pressure-ulcer risk explained",
-    dvtRiskExplained: "VTE / DVT risk explained",
-    painRiskExplained: "Pain-management explained",
-  };
-  const _riskAckRaw = f.ia?.doctor?.riskAcknowledgement
-              || f.ia?.nursing?.riskAcknowledgement
-              || receipt.riskAcknowledgement
-              || null;
-  // R7hu — the IPD form saves docRiskAck as nested {fall:{acknowledged,plan},
-  // dvt:{…}, ulcer:{…}, pain:{…}} keyed fall/dvt/ulcer/pain — none of which match
-  // riskAckLabels, so FlagLine (which counts every labelMap key toward `total`)
-  // printed the FALSE negative "explanation not documented" even when the doctor
-  // DID acknowledge. Map to the flat boolean shape FlagLine expects (demo/legacy
-  // already-flat keys still pass through via the ?? fallback).
-  const riskAck = _riskAckRaw ? {
-    fallRiskExplained:          !!(_riskAckRaw.fall?.acknowledged  ?? _riskAckRaw.fallRiskExplained),
-    pressureUlcerRiskExplained: !!(_riskAckRaw.ulcer?.acknowledged ?? _riskAckRaw.pressureUlcerRiskExplained),
-    dvtRiskExplained:           !!(_riskAckRaw.dvt?.acknowledged   ?? _riskAckRaw.dvtRiskExplained),
-    painRiskExplained:          !!(_riskAckRaw.pain?.acknowledged  ?? _riskAckRaw.painRiskExplained),
-  } : null;
-
-  /* ── Home meds ─────────────────────────────────────────────── */
+  /* ── Home meds (still consumed by the IA adapter below) ─────── */
   const homeMeds = Array.isArray(f.history?.homeMeds) ? f.history.homeMeds
                  : Array.isArray(f.ia?.nursing?.homeMedications) ? f.ia.nursing.homeMedications : [];
 
-  /* ── Care plan (text or list) ───────────────────────────────── */
-  const carePlan = f.ia?.nursing?.carePlan
-                || f.ia?.doctor?.plan
-                || f.ia?.doctor?.managementPlan
-                || receipt.carePlan
-                || "";
-
-  /* ── Risk scores extraction ─────────────────────────────────── */
-  const n = f.ia?.nursing || {};
+  /* ── Risk scores extraction (consumed by the IA adapter + the
+       Scoring-Trends section below) ─────────────────────────────── */
+  // R7hr(F5-audit) — UNION the two nursing-IA copies so the Complete File
+  // shows everything: the admission-backfilled record (riskAssessments,
+  // systemAssessment, psychosocial, nutritionHydration, carePlan…) PLUS the
+  // signed nurse-IA note's wrappers (anthropometry, allergies, mobility…).
+  // Each copy is partial; the admission copy wins on collisions (canonical
+  // backfill) — the same precedence the patient panel's adapter uses, so
+  // both surfaces render the identical union.
+  const _nurseIaNote = [...(f.nursingNotes || []), ...(f.doctorNotes || [])].find(
+    (x) => x && (x.noteType === "initial" || x.noteType === "initialAssessment") &&
+      (x.section === "nursing" || x.noteData?.nursing || x.noteData?.nursingNabh ||
+       x.noteDetails?.nursing || x.noteDetails?.nursingNabh)
+  );
+  const _nurseIaNoteFlat = _nurseIaNote
+    ? {
+        ...(_nurseIaNote.noteData?.nursingNabh || {}),
+        ...(_nurseIaNote.noteData?.nursing || {}),
+        ...(_nurseIaNote.noteDetails?.nursingNabh || {}),
+        ...(_nurseIaNote.noteDetails?.nursing || {}),
+      }
+    : {};
+  const n = { ..._nurseIaNoteFlat, ...(f.ia?.nursing || {}) };
   const d = f.ia?.doctor || {};
 
   const morseVal   = pick(n, "fallRisk", "morseTotal", "morseScore") ?? scalarOrNum(n.morse?.total) ?? scalarOrNum(n.riskAssessments?.morseFallScale?.totalScore);
@@ -1094,71 +956,10 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
   const nutriRisk  = (typeof n.nutri?.risk === "string") ? n.nutri.risk : (typeof n.nutrition?.risk === "string" ? n.nutrition.risk : null);
   const vteRisk    = (typeof n.vte?.risk === "string") ? n.vte.risk : null;
 
-  /* ── Doctor / Nursing IA actor lines ────────────────────────── */
-  const dIASigner = displayActor(d.signedByName || d.signedBy, "signed digitally");
-  const dIAReg    = displayActor(d.signedByReg || d.mciRegNo, "");
-  const dIAEmpId  = displayActor(d.signedByEmpId || d.doctorEmpId, "");
-  const dIASig    = d.signature || d.signatureImage || "";
-  const dIAAt     = d.signedAt || d.assessmentDate;
-  const nIASigner = displayActor(n.nurseName || n.signedByName || n.signedBy, "signed digitally");
-  const nIAReg    = displayActor(n.signedByReg || n.nurseRegNo, "");
-  const nIAEmpId  = displayActor(n.signedByEmpId || n.nurseEmployeeId, "");
-  const nIASig    = n.signature || n.signatureImage || "";
-  const nIAAt     = n.signedAt || n.submittedAt;
-
-  /* ── Past history + family + social one-liner ───────────────── */
-  const pastLine = (() => {
-    const bits = [];
-    if (f.history?.medical)  bits.push(`past medical history is significant for ${stripDot(f.history.medical)}`);
-    if (f.history?.surgical) bits.push(`past surgical history includes ${stripDot(f.history.surgical)}`);
-    return bits.length ? cleanSentence(bits.join("; ")) : "";
-  })();
-
-  const famSocLine = (() => {
-    const bits = [];
-    if (f.history?.family) bits.push(`Family history: ${stripDot(f.history.family)}`);
-    if (f.history?.social) bits.push(`Social history: ${stripDot(f.history.social)}`);
-    return bits.length ? cleanSentence(bits.join(". ")) : "";
-  })();
-
-  /* ── Exam paragraphs ────────────────────────────────────────── */
-  const examLines = [];
-  if (f.exam?.generalExam) examLines.push(cleanSentence(`On general examination ${stripDot(f.exam.generalExam)}`));
-  if (f.exam?.systemicExam) examLines.push(cleanSentence(`On systemic examination ${stripDot(f.exam.systemicExam)}`));
-  const vSent = vitalsSentence(f.vitals?.onAdmission);
-  if (vSent) examLines.push(vSent);
-
-  /* ── ROS one-liner ─────────────────────────────────────────── */
-  const rosLine = (() => {
-    const ros = f.exam?.ros || {};
-    if (!ros || typeof ros !== "object") return "";
-    // R7hu — the IPD IA form saves ROS under NABH keys (constitutional/cardiac/
-    // respiratory/gi/gu/musculoskeletal/neuro/skin/endocrine/psych); older/demo
-    // records use cvs/rs/git/gut/cns. Accept both, de-dupe by label, and skip the
-    // "NAD" default so only abnormal systems surface (matches the card renderer).
-    const order = [
-      ["constitutional", "Constitutional"],
-      ["cardiac", "CVS"], ["cvs", "CVS"],
-      ["respiratory", "RS"], ["rs", "RS"],
-      ["gi", "GIT"], ["git", "GIT"],
-      ["gu", "GUT"], ["gut", "GUT"],
-      ["neuro", "CNS"], ["cns", "CNS"],
-      ["musculoskeletal", "MSK"], ["msk", "MSK"],
-      ["skin", "Skin"], ["heent", "HEENT"],
-      ["endocrine", "Endocrine"], ["endo", "Endocrine"], ["psych", "Psych"],
-    ];
-    const seenRos = new Set();
-    const bits = order
-      .map(([k, label]) => {
-        const v = ros[k];
-        if (!v || seenRos.has(label)) return "";
-        if (String(v).trim().toUpperCase() === "NAD") return "";
-        seenRos.add(label);
-        return `${label}: ${String(v).trim()}`;
-      })
-      .filter(Boolean);
-    return bits.join("; ");
-  })();
+  // Doctor / nursing IA signer lines, past/family/social one-liners, exam
+  // paragraphs and the ROS one-liner were removed here — the shared
+  // Initial-Assessment renderer (buildInitialAssessmentHtml) now composes all
+  // of those from the canonical `ia` shape assembled by the adapter below.
 
   /* ── Helper to compose drug name from a doctor-order row ──── */
   const orderDetailLine = (o) => {
@@ -1176,64 +977,10 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
     return <span style={{ color, fontWeight: 600, textTransform: "capitalize" }}>{s || "—"}</span>;
   };
 
-  /* ── Rich Nursing IA renderers (admission.nurseInitialAssessment) ────────
-     The comprehensive head-to-toe assessment the NurseInitialAssessmentPage
-     captures. Each sub-block prints as a 2-column table of every populated
-     field, so the Complete File shows the ENTIRE nursing IA. */
-  // Head-to-toe examination grouped by body system — one short prose line per
-  // system (like the doctor IA's per-category lines), instead of one 25-field
-  // run-on line that reads poorly and risks running off the page.
-  const NIA_SYS_GROUPS = [
-    ["Neurological",    { neuroStatus: "status", neuroNotes: "notes" }],
-    ["Respiratory",     { respiratoryPattern: "pattern", breathSounds: "breath sounds", oxygenSupport: "O₂ support", oxygenLPM: "O₂ flow (LPM)", respiratoryNotes: "notes" }],
-    ["Cardiovascular",  { heartSounds: "heart sounds", capRefill: "cap refill", peripheralPulse: "peripheral pulses", cvNotes: "notes" }],
-    ["Abdomen / GI",    { abdomen: "abdomen", bowelSounds: "bowel sounds", lastBowelMovement: "last bowel movement", nausea: "nausea", vomiting: "vomiting", giNotes: "notes" }],
-    ["Genitourinary",   { urinaryPattern: "pattern", catheter: "catheter", catheterSite: "detail", guNotes: "notes" }],
-    ["Musculoskeletal", { mobility: "mobility", assistiveDevice: "assistive device", musculoNotes: "notes" }],
-    ["Skin & wound",    { skinColor: "colour", skinTurgor: "turgor", skinIntact: "intact", woundPresent: "wound", woundLocation: "location", woundDescription: "description", edema: "edema", edemaLocation: "edema site" }],
-    ["IV access",       { ivAccess: "access", ivSite: "site", ivSize: "size", ivInsertedDate: "inserted" }],
-  ];
-  const NIA_PSYCHO_LABELS = {
-    anxietyLevel: "Anxiety", emotionalStatus: "Emotional status", cooperationLevel: "Cooperation",
-    cognitiveStatus: "Cognition", languageBarrier: "Language barrier", language: "Preferred language",
-    spiritualNeeds: "Spiritual needs", spiritualNotes: "Spiritual notes", physicalAbuseRisk: "Abuse risk", socialSupport: "Social support",
-  };
-  const NIA_NUTRI_LABELS = {
-    dietaryRestrictions: "Diet", allergies: "Food / other allergies", nutritionRisk: "Nutrition risk",
-    hydrationStatus: "Hydration", lastMealTime: "Last meal", swallowingDifficulty: "Swallowing difficulty", feedingMethod: "Feeding method", nutritionNotes: "Nutrition notes",
-  };
-  const NIA_DISCHARGE_LABELS = {
-    livesAlone: "Lives alone", caregiver: "Primary caregiver", homeSupportAvailable: "Home support",
-    anticipatedDischargeNeeds: "Anticipated needs", educationNeeded: "Education needed",
-    socialWorkReferral: "Social-work referral", dischargePlanNotes: "Notes",
-  };
-  // R7hu — render nursing-IA sub-blocks as bold-label PROSE lines, identical
-  // in style to the Doctor IA (e.g. "Review of systems: CVS: X; RS: Y."), not
-  // as tables — so both Initial Assessments read in the same format.
-  const IAGrid = (title, obj, labelMap) => {
-    if (!obj || typeof obj !== "object") return null;
-    const parts = Object.entries(labelMap)
-      .filter(([k]) => obj[k] != null && obj[k] !== "" && obj[k] !== false && typeof obj[k] !== "object")
-      .map(([k, label]) => `${label}: ${obj[k]}`);
-    if (!parts.length) return null;
-    return <Para key={title}><strong>{title}:</strong> {parts.join("; ").replace(/\.+$/, "")}.</Para>;
-  };
-  // Admission vitals — one prose line, mirroring the doctor's "Admission
-  // vitals: BP …, pulse …, temperature …" sentence.
-  const niaVitalsBlock = (() => {
-    const v = f.ia?.nursing?.vitals;
-    if (!v || typeof v !== "object") return null;
-    const parts = [];
-    const bp = (v.bpSys || v.bpDia) ? `${v.bpSys || "?"}/${v.bpDia || "?"} mmHg` : (typeof v.bp === "string" ? v.bp : "");
-    if (bp) parts.push(`BP ${bp}`);
-    const add = (label, val, unit = "") => { if (val != null && val !== "") parts.push(`${label} ${val}${unit}`); };
-    add("pulse", v.pulse, "/min"); if (v.temp != null && v.temp !== "") parts.push(`temperature ${fmtTemp(v.temp)}`); add("SpO₂", v.spo2, "%");
-    add("respiratory rate", v.rr, "/min"); add("pain", v.painScore, "/10");
-    add("consciousness", v.consciousnessLevel); add("GCS", v.gcs); add("pupils", v.pupils);
-    add("capillary glucose", v.glucometer, " mg/dL"); add("weight", v.weight, " kg"); add("height", v.height, " cm"); add("BMI", v.bmi);
-    if (!parts.length) return null;
-    return <Para><strong>Admission vitals:</strong> {parts.join(", ")}.</Para>;
-  })();
+  // The rich nursing-IA sub-block renderers (NIA_SYS_GROUPS / label maps /
+  // IAGrid / niaVitalsBlock) were removed — the shared Initial-Assessment
+  // renderer (buildInitialAssessmentHtml) now owns the entire nursing IA
+  // layout via the canonical adapter below.
 
   /* ── Bills fallback (canonical doesn't normalise yet) ───────── */
   const bills = Array.isArray(f.bills) ? f.bills
@@ -1441,276 +1188,158 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
 
       {/* ════════════════════════════════════════════════════════════
           2. INITIAL ASSESSMENT (Doctor + Nursing)        [NABH AAC.4/5]
+          Rendered by the SHARED comprehensive PROSE renderer
+          (buildInitialAssessmentHtml) — the SAME one the individual IA
+          print uses — so the IA looks identical on both surfaces. The
+          adapter below maps the Complete-File data (f.ia.doctor /
+          f.ia.nursing + f.history/f.exam/f.vitals/f.alerts) into the
+          canonical { role:"both", doctor, nursing } shape.
           ════════════════════════════════════════════════════════════ */}
-      {(Object.keys(d).length > 0 || Object.keys(n).length > 0
-        || hopiText || chief || pastLine || famSocLine
-        || examLines.length > 0 || rosLine) ? (
-        <>
-          <SectionHeader nabh="NABH AAC.4 / AAC.5">Initial Assessment</SectionHeader>
-
-          {/* ── Doctor IA ───────────────────────────────────────── */}
-          {(Object.keys(d).length > 0 || hopiText || chief || pastLine
-            || famSocLine || examLines.length > 0 || rosLine
-            || comorbidities || codeStatus || riskAck) ? (
-            <>
-              <SubHeader>Doctor Initial Assessment</SubHeader>
-              {chief ? (
-                <Para><strong>Chief complaint:</strong> {chief}.</Para>
-              ) : null}
-              {hopiText ? (
-                <>
-                  {hopiText.split(/\n+/).map((t, i) =>
-                    t.trim() ? <Para key={`hopi-${i}`}>{cleanSentence(t)}</Para> : null
-                  )}
-                </>
-              ) : null}
-              {pastLine ? <Para>{pastLine}</Para> : null}
-              {famSocLine ? <Para>{famSocLine}</Para> : null}
-              {(f.alerts?.allergies || []).length > 0 ? (
-                <Para><strong>Allergies on record:</strong> {oxford(allergies)}.</Para>
-              ) : null}
-              {rosLine ? (
-                <Para><strong>Review of systems:</strong> {rosLine}.</Para>
-              ) : null}
-              {examLines.length > 0 ? (
-                <>
-                  {examLines.map((t, i) => <Para key={`ex-${i}`}>{t}</Para>)}
-                </>
-              ) : null}
-              {comorbidities ? (
-                <FlagLine
-                  obj={comorbidities}
-                  labelMap={comorbiditiesLabels}
-                  label="Significant comorbidities"
-                  allDescription="screened — none reported."
-                />
-              ) : null}
-              {codeStatus ? (
-                <Para><strong>Code status:</strong> <strong>{codeStatus}</strong> documented at admission.</Para>
-              ) : null}
-              {riskAck ? (
-                <FlagLine
-                  obj={riskAck}
-                  labelMap={riskAckLabels}
-                  label="Risk acknowledgement (explained to patient / family)"
-                  allDescription="explanation not documented."
-                />
-              ) : null}
-              {(dxProv || dxWork || dxFinal) ? (
-                <Para>
-                  {dxProv ? <><strong>Provisional diagnosis:</strong> {dxProv}. </> : null}
-                  {dxWork && dxWork !== dxProv ? <><strong>Working diagnosis:</strong> {dxWork}. </> : null}
-                  {dxFinal && dxFinal !== dxWork ? <><strong>Final diagnosis:</strong> {dxFinal}.</> : null}
-                </Para>
-              ) : null}
-              {(d.differentialDiagnosis || d.differentialDx || d.nabh?.differentialDx) ? (
-                <Para><strong>Differential diagnosis:</strong> {stripDot(d.differentialDiagnosis || d.differentialDx || d.nabh?.differentialDx)}.</Para>
-              ) : null}
-              {(f.admission?.icd10 || d.icd10 || d.patientStatus || d.nabh?.patientStatus) ? (
-                <Para>
-                  {(f.admission?.icd10 || d.icd10) ? <><strong>ICD-10:</strong> {f.admission?.icd10 || d.icd10}{(f.admission?.icd10Desc || d.icd10Description) ? ` — ${f.admission?.icd10Desc || d.icd10Description}` : ""}. </> : null}
-                  {(d.patientStatus || d.nabh?.patientStatus) ? <><strong>Patient status:</strong> {d.patientStatus || d.nabh?.patientStatus}.</> : null}
-                </Para>
-              ) : null}
-              {(d.elosDays || d.goalOfCare || d.nabh?.elosDays || d.nabh?.goalOfCare) ? (
-                <Para>
-                  {(d.elosDays || d.nabh?.elosDays) ? <><strong>Estimated length of stay:</strong> {d.elosDays || d.nabh?.elosDays} day(s). </> : null}
-                  {(d.goalOfCare || d.nabh?.goalOfCare) ? <><strong>Goal of care:</strong> {d.goalOfCare || d.nabh?.goalOfCare}.</> : null}
-                </Para>
-              ) : null}
-              {typeof (d.investigations || d.plannedInvestigations) === "string" && (d.investigations || d.plannedInvestigations)
-                ? proseLine("Investigations advised", d.investigations || d.plannedInvestigations) : null}
-              {d.treatmentPlan ? proseLine("Treatment plan", d.treatmentPlan) : null}
-              {d.dietAdvice ? proseLine("Diet advice", d.dietAdvice) : null}
-              {d.activityAdvice ? proseLine("Activity / mobilisation advice", d.activityAdvice) : null}
-              {(() => {
-                // R7hu — the IPD form saves prognosis as {discussedWith,languageUsed,
-                // summary,questionsAddressed} and functionalEcog as {score,disabilities,
-                // aidsRequired}; rendering either object raw printed "[object Object]"
-                // or crashed React. Extract scalars (demo/legacy store plain strings).
-                const progRaw = d.prognosis || d.nabh?.prognosis;
-                const prog = progRaw && typeof progRaw === "object" ? progRaw.summary : progRaw;
-                return prog ? <Para><strong>Prognosis:</strong> {stripDot(prog)}.</Para> : null;
-              })()}
-              {(() => {
-                const ecogRaw = d.functionalEcog || d.nabh?.functionalEcog;
-                const ecog = ecogRaw && typeof ecogRaw === "object"
-                  ? [ecogRaw.score, ecogRaw.disabilities].filter(Boolean).join(" — ")
-                  : ecogRaw;
-                return ecog ? <Para><strong>Functional status (ECOG):</strong> {ecog}.</Para> : null;
-              })()}
-              {Object.keys(d).length > 0 ? (
-                /* R7gu — Show signer's name + Emp ID + Reg + digital
-                   signature image (when captured) on the IA summary
-                   line so the print matches NABH AAC.7 traceability
-                   and matches the day-wise per-note footers. */
-                <div style={{ marginTop: 4, padding: "6px 10px", border: `1px solid ${COL.head}33`, background: "#f5f3ff", borderRadius: 4, fontSize: 10, color: COL.head }}>
-                  <strong style={{ color: COL.head }}>✓ DOCTOR IA SIGNED</strong>
-                  {" · By: "}<strong>{dIASigner}</strong>
-                  {dIAEmpId ? <> · Emp ID: <strong>{dIAEmpId}</strong></> : null}
-                  {dIAReg ? <> · Reg: <strong>{dIAReg}</strong></> : null}
-                  {dIAAt ? <> · {fmtDateTime(dIAAt)}</> : null}
-                  {dIASig && typeof dIASig === "string" && (dIASig.startsWith("data:image/") || dIASig.startsWith("/uploads/") || /^https?:\/\//.test(dIASig)) ? (
-                    <div style={{ marginTop: 4 }}>
-                      <SecureImage src={dIASig} alt="Doctor signature"
-                        style={{ maxHeight: 36, maxWidth: 180, border: "1px solid #e2e8f0", background: "#fff", padding: 2, borderRadius: 3 }} />
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-            </>
-          ) : null}
-
-          {/* ── Nursing IA ──────────────────────────────────────── */}
-          {Object.keys(n).length > 0 ? (
-            <>
-              <SubHeader>Nursing Initial Assessment</SubHeader>
-              {(n.modeOfAdmit || n.modeOfAdmission || n.ward || n.bedNo) ? (
-                <Para><strong>Admission:</strong> {[
-                  (n.modeOfAdmit || n.modeOfAdmission) && `via ${n.modeOfAdmit || n.modeOfAdmission}`,
-                  n.ward && `ward ${n.ward}`,
-                  n.bedNo && `bed ${n.bedNo}`,
-                ].filter(Boolean).join(" · ")}.</Para>
-              ) : null}
-              {niaVitalsBlock}
-              {NIA_SYS_GROUPS.map(([title, lm]) => IAGrid(title, n.systemAssessment, lm))}
-              {IAGrid("Psychosocial assessment", n.psychosocial, NIA_PSYCHO_LABELS)}
-              {IAGrid("Nutrition & hydration", n.nutritionHydration, NIA_NUTRI_LABELS)}
-              {n.identification ? proseLine("Identification", n.identification) : null}
-              {n.anthropometry ? proseLine("Anthropometry", n.anthropometry) : null}
-              {(f.alerts?.allergies || []).length > 0 ? (
-                <Para><strong>Allergies:</strong> {oxford(allergies)}.</Para>
-              ) : null}
-              {n.language ? <Para><strong>Preferred language:</strong> {n.language}.</Para> : null}
-              {typeof n.psychosocial === "string" ? proseLine("Psycho-social", n.psychosocial) : null}
-              {n.familySupport ? proseLine("Family support", n.familySupport) : null}
-
-              {/* Risk scores — compact one-liners */}
-              {(morseVal != null || bradenVal != null || painVal != null
-                || nutriVal != null || vteVal != null || dvtVal != null
-                || gcsVal != null) ? (
-                <>
-                  <RiskLine label="Morse Fall Risk"            value={morseVal}  max={125} band={morseRisk  || morseBand(morseVal)}  sub="see expanded scoring" />
-                  <RiskLine label="Braden Pressure-ulcer Risk" value={bradenVal} max={23}  band={bradenRisk || bradenBand(bradenVal)} sub="see expanded scoring" />
-                  <RiskLine label="Pain (numeric rating)"      value={painVal}   max={10}  band={painBand(painVal)} />
-                  <RiskLine label="Nutritional risk (MUST)"    value={nutriVal}  max={6}   band={nutriRisk  || nutritionBand(nutriVal)} />
-                  <RiskLine label="DVT risk"                   value={dvtVal}    max={null} band={null} />
-                  <RiskLine label="VTE risk (Padua)"           value={vteVal}    max={null} band={vteRisk} />
-                  <RiskLine label="Glasgow Coma Scale"         value={gcsVal}    max={15}  band={null} />
-                </>
-              ) : null}
-
-              {/* ADL (Barthel) */}
-              {(() => {
-                const adl = n.adl || n.barthel || {};
-                const total = barthelTotal(adl);
-                if (total == null) return null;
-                const rows = [];
-                const keys = ["feeding","bathing","grooming","dressing","bowels","bladder","toilet","transfer","mobility","stairs"];
-                keys.forEach((k) => {
-                  if (adl[k] != null) rows.push([k.charAt(0).toUpperCase() + k.slice(1), String(adl[k])]);
-                });
-                return (
-                  <>
-                    <SubHeader>Activities of Daily Living (Barthel)</SubHeader>
-                    {rows.length > 0 ? (
-                      <MiniTable headers={["Item", "Score"]} rows={rows} widths={["70%", "30%"]} />
-                    ) : null}
-                    <Para>
-                      Barthel total <strong>{total}/100</strong>
-                      {BARTHEL_TOTAL_BAND(total) ? <> — <em>{BARTHEL_TOTAL_BAND(total)}</em></> : null}.
-                    </Para>
-                  </>
-                );
-              })()}
-
-              {/* Home medications */}
-              {homeMeds.length > 0 ? (
-                <>
-                  <SubHeader>Home Medications</SubHeader>
-                  <MiniTable
-                    headers={["Drug", "Dose", "Frequency", "Duration"]}
-                    rows={homeMeds.map((m) => typeof m === "string"
-                      ? [<strong>{m}</strong>, "—", "—", "—"]
-                      : [
-                          <strong>{m.drug || m.name || "—"}</strong>,
-                          m.dose || "—",
-                          m.frequency || "—",
-                          m.duration || m.since || "—",
-                        ])}
-                    widths={["40%", "20%", "20%", "20%"]}
-                  />
-                </>
-              ) : null}
-
-              {/* Cross-check alerts */}
-              {(f.alerts?.crossCheckAlerts || []).length > 0 ? (
-                <>
-                  <SubHeader>Cross-check Alerts</SubHeader>
-                  <MiniTable
-                    headers={["Alert", "Detail"]}
-                    rows={(f.alerts.crossCheckAlerts || []).map((a) => {
-                      if (typeof a === "string") return [a, "—"];
-                      return [a.label || a.type || "—", a.detail || a.value || "—"];
-                    })}
-                    widths={["35%", "65%"]}
-                  />
-                </>
-              ) : null}
-
-              {/* Devices in situ */}
-              {devices ? (
-                <FlagLine
-                  obj={devices}
-                  labelMap={devicesLabels}
-                  label="Devices present"
-                  allDescription="none in situ at admission."
-                />
-              ) : null}
-
-              {/* Skin survey */}
-              {skin ? (
-                <FlagLine
-                  obj={skin}
-                  labelMap={skinLabels}
-                  label="Skin findings"
-                  allDescription="no abnormality detected."
-                />
-              ) : null}
-
-              {/* Misc nursing IA fields — render only when present */}
-              {n.educationNeeds ? proseLine("Education needs", n.educationNeeds) : null}
-              {n.cognitive ? proseLine("Cognitive", n.cognitive) : null}
-              {n.bowelBladder ? proseLine("Bowel / bladder", n.bowelBladder) : null}
-              {n.sleep ? proseLine("Sleep pattern", n.sleep) : null}
-              {n.caregiver ? proseLine("Family caregiver", n.caregiver) : null}
-              {n.dischargePlanning && typeof n.dischargePlanning === "object"
-                ? IAGrid("Discharge planning", n.dischargePlanning, NIA_DISCHARGE_LABELS)
-                : n.dischargePlanning ? proseLine("Discharge planning", n.dischargePlanning) : null}
-
-              {carePlan ? (
-                <Para><strong>Initial care plan:</strong> <em>{cleanSentence(carePlan)}</em></Para>
-              ) : null}
-
-              {/* R7gu — Match the doctor IA signature block: name +
-                  Emp ID + (any) reg no + digital signature image. */}
-              <div style={{ marginTop: 4, padding: "6px 10px", border: "1px solid #fbcfe833", background: "#fdf2f8", borderRadius: 4, fontSize: 10, color: "#9d174d" }}>
-                <strong style={{ color: "#9d174d" }}>✓ NURSING IA SIGNED</strong>
-                {" · By: "}<strong>{nIASigner}</strong>
-                {nIAEmpId ? <> · Emp ID: <strong>{nIAEmpId}</strong></> : null}
-                {nIAReg ? <> · Reg: <strong>{nIAReg}</strong></> : null}
-                {nIAAt ? <> · {fmtDateTime(nIAAt)}</> : null}
-                {nIASig && typeof nIASig === "string" && (nIASig.startsWith("data:image/") || nIASig.startsWith("/uploads/") || /^https?:\/\//.test(nIASig)) ? (
-                  <div style={{ marginTop: 4 }}>
-                    <SecureImage src={nIASig} alt="Nurse signature"
-                      style={{ maxHeight: 36, maxWidth: 180, border: "1px solid #e2e8f0", background: "#fff", padding: 2, borderRadius: 3 }} />
-                  </div>
-                ) : null}
-              </div>
-            </>
-          ) : null}
-        </>
-      ) : null}
+      {(() => {
+        const _iaAllergies = (f.alerts?.allergies || [])
+          .map((a) => (typeof a === "string"
+            ? { name: a }
+            : { name: a.allergen || a.agent || a.name, agent: a.agent || a.allergen || a.name, severity: a.severity, reaction: a.reaction, type: a.type }))
+          .filter((a) => a.name || a.reaction);
+        const iaForFile = {
+          role: "both",
+          doctor: {
+            doctorName: d.doctorName || d.signedByName || f.admission?.consultant,
+            regNo: d.signedByReg || d.mciRegNo || d.regNo,
+            chiefComplaints: f.history?.chief || d.chiefComplaints || f.ia?.nursing?.chiefComplaint,
+            ccDuration: d.ccDuration,
+            hopi: f.history?.hopi || d.hopi,
+            pastMedical: f.history?.medical || d.pastMedical,
+            pastSurgical: f.history?.surgical || d.pastSurgical,
+            familyHistory: f.history?.family || d.familyHistory,
+            socialHistory: f.history?.social || d.socialHistory,
+            comorbidities: d.comorbidities || null,
+            // R7hr(F5-audit) — the doctor IA block shows only what the DOCTOR
+            // recorded (the signed note's own allergies); the patient-level
+            // alert list already surfaces in the file's alerts banner and the
+            // nursing block. Injecting it here made the file's doctor IA
+            // differ from the panel's / individual print's.
+            allergies: {
+              noKnown: d.allergies?.noKnown ?? d.noKnownAllergies,
+              list: Array.isArray(d.allergies?.list) ? d.allergies.list : [],
+            },
+            medReconciliation: Array.isArray(d.medicationReconciliation) ? d.medicationReconciliation : [],
+            clinicalExamination: {
+              general: f.exam?.generalExam || d.generalExamination,
+              systemic: f.exam?.systemicExam || d.systemicExamination,
+              ros: f.exam?.ros || d.reviewOfSystems || d.ros || {},
+            },
+            localExam: d.localExamination || d.localExam,
+            provisionalDiagnosis: f.admission?.provisionalDiagnosis || d.provisionalDiagnosis,
+            workingDiagnosis: f.admission?.workingDiagnosis || d.workingDiagnosis,
+            finalDiagnosis: f.admission?.finalDiagnosis || d.finalDiagnosis,
+            icd10: f.admission?.icd10 || d.icd10,
+            icd10Description: f.admission?.icd10Desc || d.icd10Description,
+            patientStatus: d.patientStatus,
+            differentialDiagnosis: d.differentialDiagnosis || d.differentialDx,
+            // R7hr(F5-audit) — doctor's own anthropometry only (see allergies
+            // note above); nurse-measured height/weight render in the nursing
+            // block's Anthropometry.
+            anthropometry: d.anthropometry || {},
+            investigations: Array.isArray(d.investigations) ? d.investigations : [],
+            investigationsText: typeof d.investigations === "string" ? d.investigations : (d.plannedInvestigations || ""),
+            treatmentPlan: d.treatmentPlan,
+            prescription: Array.isArray(d.prescription) ? d.prescription : (Array.isArray(d.medications) ? d.medications : []),
+            infusions: Array.isArray(d.infusions) ? d.infusions : [],
+            codeStatus: (typeof d.codeStatus === "object" && d.codeStatus) ? d.codeStatus.value : d.codeStatus,
+            codeStatusDiscussedWith: (typeof d.codeStatus === "object" && d.codeStatus) ? d.codeStatus.discussedWith : d.codeStatusDiscussedWith,
+            codeStatusLimitations: (typeof d.codeStatus === "object" && d.codeStatus) ? d.codeStatus.limitations : d.codeStatusLimitations,
+            elosDays: d.elosDays,
+            goalOfCare: d.goalOfCare,
+            riskAcknowledgement: d.riskAcknowledgement || null,
+            referrals: Array.isArray(d.referrals) ? d.referrals : [],
+            prognosis: (typeof d.prognosis === "object" && d.prognosis) ? d.prognosis : (d.prognosis ? { summary: d.prognosis } : {}),
+            consentNeeded: d.consentNeeded || d.consentsRequired || {},
+            obGyn: f.history?.obstetric || d.obstetricGynae || {},
+            immunisation: f.history?.immunisation || d.immunisation || {},
+            ecog: (typeof d.functionalEcog === "object" && d.functionalEcog) ? d.functionalEcog : (d.functionalEcog ? { score: d.functionalEcog } : (d.ecog || {})),
+            spiritual: d.spiritual || {},
+            dietAdvice: d.dietAdvice,
+            activityAdvice: d.activityAdvice,
+            followupNotes: d.followupNotes || d.followUp,
+            signedBy: {
+              name: d.signedByName || d.signedBy,
+              reg: d.signedByReg || d.mciRegNo,
+              empId: d.signedByEmpId || d.doctorEmpId,
+              at: d.signedAt || d.assessmentDate,
+              signature: d.signature || d.signatureImage,
+            },
+          },
+          nursing: {
+            admission: {
+              date: n.admitDate, time: n.admitTime, ipdNo: n.ipdNo,
+              mode: n.modeOfAdmit || n.modeOfAdmission, ward: n.ward, bed: n.bedNo,
+              consciousness: n.consciousnessLevel, mobility: n.mobility,
+            },
+            identification: n.identification || n.idBand || {},
+            vitals: n.vitals || {},
+            anthropometry: n.anthropometry || {},
+            // R7hr(F5-audit) — prefer the nurse-IA's own allergy block (from
+            // the note's nursingNabh, now unioned into n) over the generic
+            // patient-level alerts list, matching the panel adapter.
+            allergies: {
+              noKnown: n.allergies?.noKnown ?? (n.noKnownAllergies || n.nurseNoKnownAllergies),
+              list: (Array.isArray(n.allergies?.list) && n.allergies.list.length) ? n.allergies.list : _iaAllergies,
+            },
+            briefHistory: n.briefPmh || n.nurseBriefPmh || f.history?.medical,
+            homeMeds: Array.isArray(homeMeds) ? homeMeds : [],
+            pain: n.pain || (n.painScore != null ? { score: n.painScore } : {}),
+            morse: n.morse || (morseVal != null ? { total: morseVal, risk: morseRisk } : null),
+            braden: n.braden || (bradenVal != null ? { total: bradenVal, risk: bradenRisk } : null),
+            nutrition: n.nutrition || n.nutri || (nutriVal != null ? { total: nutriVal, risk: nutriRisk } : null),
+            vte: n.vte || (vteVal != null ? { total: vteVal, risk: vteRisk } : null),
+            dvt: dvtVal != null ? { total: dvtVal } : null,
+            gcs: gcsVal != null ? { total: gcsVal } : null,
+            psychosocial: (typeof n.psychosocial === "object" && n.psychosocial) ? n.psychosocial : {},
+            // R7hr(F5-audit) — head-to-toe + nutrition detail from the
+            // admission-backfilled copy (rendered generically).
+            systemAssessment: (typeof n.systemAssessment === "object" && n.systemAssessment) ? n.systemAssessment : {},
+            nutritionDetail: (typeof n.nutritionHydration === "object" && n.nutritionHydration) ? n.nutritionHydration : {},
+            barthel: n.adl || n.barthel || {},
+            bodyChart: n.bodyChart || {},
+            precautions: n.precautions || {},
+            education: (typeof n.educationNeeds === "object" && n.educationNeeds) ? n.educationNeeds : {},
+            dischargePlanning: (typeof n.dischargePlanning === "object" && n.dischargePlanning) ? n.dischargePlanning : {},
+            cognitive: (typeof n.cognitive === "object" && n.cognitive) ? n.cognitive : {},
+            cultural: n.cultural || {},
+            elimination: (typeof n.bowelBladder === "object" && n.bowelBladder) ? n.bowelBladder : (n.elimination || {}),
+            sleep: (typeof n.sleep === "object" && n.sleep) ? n.sleep : {},
+            valuables: n.valuables || {},
+            caregiver: (typeof n.caregiver === "object" && n.caregiver) ? n.caregiver : {},
+            highRisk: n.highRisk || {},
+            mobility: (typeof n.mobilityGait === "object" && n.mobilityGait) ? n.mobilityGait : {},
+            preAnaesthesia: n.preAnaesthesia || {},
+            prom: n.promPrem || {},
+            plan: {
+              problems: n.nursingProblems,
+              goals: n.nursingGoals,
+              notes: n.nursingNotes
+                || (typeof n.carePlan === "string" ? n.carePlan : "")
+                || (typeof n.notes === "string" ? n.notes : ""),
+            },
+            signedBy: {
+              name: n.nurseName || n.signedByName || n.signedBy,
+              reg: n.signedByReg || n.nurseRegNo,
+              empId: n.signedByEmpId || n.nurseEmployeeId,
+              at: n.signedAt || n.submittedAt,
+              signature: n.signature || n.nurseSignature || n.signatureImage,
+            },
+          },
+        };
+        const html = buildInitialAssessmentHtml(iaForFile, { prose: true });
+        if (!html) return null;
+        return (
+          <>
+            <SectionHeader nabh="NABH AAC.4 / AAC.5">Initial Assessment</SectionHeader>
+            <div dangerouslySetInnerHTML={{ __html: html }} />
+          </>
+        );
+      })()}
 
       {/* ════════════════════════════════════════════════════════════
           R7hr — PREVIOUS OPD ASSESSMENTS (latest 2)     [NABH AAC.4]
@@ -2028,19 +1657,23 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
 
               const vitalsBlock = vitals.length > 0 ? (
                 <div key={`day-vit-${k}`} style={{ marginBottom: 6 }}>
-                  <Para style={subHeadStyle}>Vital Signs</Para>
+                  <Para style={subHeadStyle}>Vital Signs — Hourly Chart</Para>
                   <MiniTable
-                    headers={["Time", "BP", "P", "T", "SpO₂", "RR", "By"]}
+                    // R7hu — one day's hourly readings together; GCS added, and
+                    // empty cells stay blank (never a "—" placeholder). MiniTable
+                    // auto-drops any column that is empty for every row.
+                    headers={["Time", "BP", "Pulse", "Temp", "SpO₂", "RR", "GCS", "By"]}
                     rows={vitals.map((v) => [
                       fmtTimeOnly(v.at || v.recordedAt || v.createdAt),
-                      v.bp || v.bloodPressure || "—",
-                      v.pulse != null ? String(v.pulse) : "—",
-                      v.temp != null ? String(v.temp) : "—",
-                      v.spo2 != null ? String(v.spo2) : "—",
-                      v.rr   != null ? String(v.rr)   : "—",
-                      displayActor(v.recordedBy || v.by) || "—",
+                      v.bp || v.bloodPressure || "",
+                      v.pulse != null ? String(v.pulse) : "",
+                      v.temp != null ? String(v.temp) : "",
+                      v.spo2 != null ? String(v.spo2) : "",
+                      v.rr   != null ? String(v.rr)   : "",
+                      (v.gcs != null && v.gcs !== "") ? String(v.gcs) : "",
+                      displayActor(v.recordedBy || v.by) || "",
                     ])}
-                    widths={["12%", "16%", "10%", "10%", "12%", "10%", "30%"]}
+                    widths={["11%", "15%", "10%", "10%", "11%", "9%", "9%", "25%"]}
                   />
                 </div>
               ) : null;

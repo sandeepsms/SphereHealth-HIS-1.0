@@ -1494,81 +1494,9 @@
   line-height: 1.55;
 }
 
-.pf-print-letterhead {
-  border-bottom: 2px solid var(--pf-accent-d);
-  padding: 18px 28px 14px;
-  margin-bottom: 14px;
-  background: #fff;
-}
-.pf-print-letterhead__brand {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding-bottom: 10px;
-}
-.pf-print-letterhead__logo {
-  width: 48px; height: 48px;
-  border-radius: 10px;
-  background: linear-gradient(135deg, var(--pf-accent-d), var(--pf-accent));
-  color: #fff;
-  display: flex; align-items: center; justify-content: center;
-  font-weight: 900; font-size: 22px;
-  letter-spacing: -0.5px;
-}
-.pf-print-letterhead__hospital {
-  font-size: 18px; font-weight: 900; color: var(--pf-accent-d);
-  letter-spacing: -0.3px;
-}
-.pf-print-letterhead__sub {
-  font-size: 11px; color: #475569;
-  letter-spacing: 0.3px;
-}
-.pf-print-letterhead__doc {
-  display: flex; justify-content: space-between; align-items: baseline;
-  border-top: 1px dashed #cbd5e1;
-  padding-top: 10px; margin-top: 4px;
-}
-.pf-print-letterhead__doc-title {
-  font-size: 16px; font-weight: 800; color: #0f172a;
-  text-transform: uppercase; letter-spacing: 1px;
-}
-.pf-print-letterhead__doc-sub { font-size: 11px; color: #64748b; }
-
-/* Patient identity block under the letterhead */
-.pf-print-patient {
-  margin-top: 14px;
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  gap: 16px;
-  padding: 12px 14px;
-  background: var(--pf-accent-l);
-  border: 1px solid var(--pf-accent-m);
-  border-radius: 8px;
-  align-items: center;
-}
-.pf-print-patient__avatar {
-  width: 56px; height: 56px;
-  border-radius: 12px;
-  background: var(--pf-accent);
-  color: #fff;
-  display: flex; align-items: center; justify-content: center;
-  font-weight: 900; font-size: 24px;
-}
-.pf-print-patient__name {
-  font-size: 17px; font-weight: 800; color: var(--pf-accent-d);
-  letter-spacing: -0.3px;
-}
-.pf-print-patient__meta {
-  display: flex; flex-wrap: wrap; gap: 14px;
-  font-size: 11.5px; color: #334155; margin-top: 3px;
-}
-.pf-print-patient__adm {
-  font-size: 11px; color: #1e293b;
-  text-align: right;
-  line-height: 1.7;
-  border-left: 1px solid var(--pf-accent-m);
-  padding-left: 14px;
-}
+/* R7hr — .pf-print-letterhead* and .pf-print-patient* removed: they styled the
+   deleted hand-rolled PrintLetterhead. The canonical hospital identity now
+   comes from the shared <Letterhead> (Components/print/letterhead.css). */
 
 .pf-print-body {
   padding: 0 28px 28px;
@@ -1654,10 +1582,7 @@
 
   /* Preserve colours — letterhead gradient, section bars, status pills */
   .pf-print-mode,
-  .pf-print-letterhead,
-  .pf-print-letterhead__logo,
   .pf-print-section__title,
-  .pf-print-patient,
   .pf-record, .pf-badge,
   .ppt-soap-letter, .ppt-vital-chip, .ppt-chip,
   .ppt-note, .ppt-note-status, .ppt-shift-badge {

@@ -23,6 +23,9 @@ import { API_ENDPOINTS } from "../../config/api";
 import { fetchHospitalSettings } from "../../Components/print/useHospitalSettings";
 import { buildPrintIssuerHtml } from "../../Components/print/printIssuer";
 import { openPrint } from "../../Components/print/openPrint";
+// R7hr — the registration receipt's hand-rolled `.hd` masthead is replaced by
+// the ONE shared canonical letterhead so it matches every other document.
+import { buildLetterheadHtml, LETTERHEAD_CSS } from "../../Components/print/Letterhead";
 import "../../Components/clinical/clinical-forms.css";
 import "./ReceptionConsole.css";
 
@@ -2156,9 +2159,8 @@ async function printReceipt({ patient, visitType, opd, ipd, dayCare, er, service
   const hs = await fetchHospitalSettings();
   const esc = (s = "") => String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
   const _hospName    = hs.hospitalName || "Hospital";
-  const _hospTagline = hs.tagline || "";
-  const _addrLine    = [hs.addressLine1, hs.addressLine2, [hs.city, hs.state, hs.pincode].filter(Boolean).join(" ")].filter(Boolean).join(" · ");
-  const _phoneLine   = [hs.phone1, hs.phone2, hs.emergencyPhone].filter(Boolean).join(" · ");
+  // R7hr — tagline/address/phone lines now render via the shared <Letterhead>;
+  // _hospName stays for the computer-generated-receipt footer note below.
   const now = new Date();
   const fmt = (d) => d ? new Date(d).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }) : "—";
   const color = ({ OPD: "#0891b2", IPD: "#7c3aed", Daycare: "#d97706", Emergency: "#dc2626", Services: "#059669" })[visitType] || "#0891b2";
@@ -2239,21 +2241,9 @@ async function printReceipt({ patient, visitType, opd, ipd, dayCare, er, service
       .sign-label{font-size:10px;color:#64748b;font-weight:700;margin-top:4px}
       .note{margin-top:14px;text-align:center;font-size:10px;color:#94a3b8}
       @media print{body{padding:0} .wrap{border:0}}
+      ${LETTERHEAD_CSS}
     </style></head><body><div class="wrap">
-      <div class="hd">
-        ${hs.logo ? `<img src="${hs.logo}" alt="" style="height:54px;width:auto;border-radius:6px"/>` : ""}
-        <div class="hd-body">
-          <h1 class="hd-title">${esc(_hospName)}</h1>
-          ${_hospTagline ? `<div class="hd-tag">${esc(_hospTagline)}</div>` : ""}
-          ${_addrLine ? `<div class="hd-addr">${esc(_addrLine)}</div>` : ""}
-          ${_phoneLine ? `<div class="hd-addr">${esc(_phoneLine)}</div>` : ""}
-        </div>
-        <div class="hd-meta">
-          ${hs.gstin ? `<div><strong>GSTIN:</strong> ${esc(hs.gstin)}</div>` : ""}
-          ${hs.registrationNo ? `<div><strong>Reg No:</strong> ${esc(hs.registrationNo)}</div>` : ""}
-          ${hs.panNumber ? `<div><strong>PAN:</strong> ${esc(hs.panNumber)}</div>` : ""}
-        </div>
-      </div>
+      ${buildLetterheadHtml({ settings: hs })}
       <div class="title-bar">
         <div class="title-bar__title">Registration Receipt</div>
         <div class="title-bar__meta">

@@ -16,6 +16,10 @@ import SignaturePad from "../../Components/signature/SignaturePad";
 // header + 2-col patient strip + double-signature zone. The
 // role-aware nursing/doctor block HTML (R7fh) flows in via bodyHtml.
 import { buildPrintShellHtml } from "@/templates/PrintShell";
+// Shared, comprehensive PROSE Initial-Assessment renderer — used by BOTH the
+// individual IA print (below) and the Complete IPD File (Narrative theme), so
+// the IA reads identically on both surfaces (like the note builders already do).
+import { buildInitialAssessmentHtml } from "@/Components/print/printables/patientFileThemes/buildInitialAssessmentHtml";
 // R7hr-58 — Structured Clinical Examination card shared with
 // OPDAssessmentPage. Replaces the old Review-of-Systems checklist +
 // free-text Physical Examination textareas with the same rich
@@ -1659,6 +1663,12 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
     // discarded; only on a signed save. A matching copy lives in
     // noteDetails.doctor for the Complete File print (f.ia.doctor.signature).
     signature: status === "signed" ? (signature || undefined) : undefined,
+    // R7hr — stamp signer identity at note top-level too (buildReceipt lifts
+    // these onto f.ia.*), so signed lines always carry Name · Emp ID · sign.
+    signedByName: status === "signed"
+      ? ((section === "nursing" ? nurseName : doctorName) || user?.fullName || undefined)
+      : undefined,
+    signedByEmpId: status === "signed" ? (user?.employeeId || undefined) : undefined,
     // R7fb/R7fc — DoctorNotes schema is strict; the only catch-all field is
     // `noteDetails` (Mixed). Pack the entire role-specific form data here so
     // the new NABH P0 fields persist instead of being silently dropped.
@@ -1778,6 +1788,134 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
      One-click sheet to drop in the patient's physical file alongside
      the digital record. Uses inline HTML so it never blocks on a
      missing template file or framework upgrade. */
+  // Assemble the canonical Initial-Assessment object from the live form
+  // useState vars. This is the SINGLE source the shared prose renderer
+  // (buildInitialAssessmentHtml) consumes — the same renderer the Complete
+  // IPD File uses — so the IA prints identically on both surfaces.
+  const buildIaFromState = () => {
+    const role = isDoctorRole ? "doctor" : "nurse";
+    return {
+      role,
+      doctor: {
+        doctorName,
+        regNo,
+        assessedAt: new Date().toISOString(),
+        chiefComplaints: docCC,
+        ccDuration,
+        hopi,
+        // R7hr-70 — Past Medical Hx is now the Co-morbidities checklist; the
+        // structured PSH/Fam/Soc summaries feed the History section.
+        pastSurgical: pshSummary(pshStruct) || psh,
+        familyHistory: famHxSummary(famHxStruct) || famHx,
+        socialHistory: socHxSummary(socHxStruct) || socHx,
+        comorbidities: comorbid,
+        allergies: { noKnown: noKnownAllergies, list: allergyList },
+        medReconciliation: medRecon,
+        clinicalExamination: (() => {
+          const s = clinExamSummary ? clinExamSummary(clinExam) : null;
+          if (s && (s.general || s.systemic)) {
+            return { general: s.general, systemic: s.systemic };
+          }
+          return { general: genExam, cvs, rs, abdomen, cns, ros };
+        })(),
+        localExam,
+        provisionalDiagnosis: provDx,
+        workingDiagnosis: workingDx,
+        finalDiagnosis: finalDx,
+        icd10,
+        icd10Description,
+        patientStatus,
+        differentialDiagnosis: differentialDx,
+        anthropometry: docAnthropo,
+        // Structured investigations picker (preferred) + legacy free-text.
+        investigations: invests,
+        investigationsText: investigations,
+        treatmentPlan,
+        // Structured Rx (preferred) + legacy rxRows fall-back.
+        prescription: (meds && meds.length)
+          ? meds.map((m) => ({
+              drug: m.name, dose: m.dose, route: m.route, frequency: m.frequency,
+              duration: m.duration, instructions: m.instructions,
+              dilutionVolume: m.dilutionVolume, dilutionFluid: m.dilutionFluid,
+              infuseOverMinutes: m.infuseOverMinutes,
+            }))
+          : (rxRows || []).filter((r) => r.drug),
+        infusions,
+        codeStatus,
+        codeStatusDiscussedWith,
+        codeStatusLimitations,
+        elosDays,
+        goalOfCare,
+        riskAcknowledgement: docRiskAck,
+        referrals,
+        prognosis,
+        consentNeeded,
+        obGyn,
+        immunisation,
+        ecog,
+        spiritual,
+        dietAdvice,
+        activityAdvice,
+        followupNotes,
+        // R7hr(launch-review) — only a genuinely SIGNED assessment prints the
+        // "signed" line; a draft print must never claim a signature.
+        signedBy: lockedSignedAt
+          ? {
+              name: lockedSignedByName || doctorName || user?.fullName,
+              reg: regNo,
+              empId: user?.employeeId,
+              signature: signature || undefined,
+              at: lockedSignedAt,
+            }
+          : undefined,
+      },
+      nursing: {
+        admission: {
+          date: admitDate, time: admitTime, ipdNo, mode: modeOfAdmit,
+          ward, bed: bedNo, consciousness: consciousnessLevel,
+          mobility: mobilityGait?.usesAid || (mobilityGait?.independent ? "Independent" : ""),
+        },
+        identification: idBand,
+        vitals: { bpSys: vitals?.bpSys, bpDia: vitals?.bpDia, pulse: vitals?.pulse, rr: vitals?.rr, temp: vitals?.temp, spo2: vitals?.spo2, weight: vitals?.weight },
+        anthropometry: anthropo,
+        allergies: { noKnown: nurseNoKnownAllergies, list: nurseAllergyList },
+        briefHistory: nurseBriefPmh,
+        homeMeds,
+        pain: { present: painPresent, score: painScore, location: painLocation, character: painCharacter },
+        morse: { total: morseTotal, meta: morseMeta },
+        braden: { total: bradenTotal, meta: bradenMeta },
+        nutrition: { total: nutriTotal, meta: nutriMeta, quick: nrsQuick },
+        vte: { total: vteTotal, meta: vteMeta },
+        psychosocial,
+        barthel,
+        bodyChart,
+        precautions,
+        education: educationNeeds,
+        dischargePlanning: dischargePlan,
+        cognitive,
+        cultural,
+        elimination,
+        sleep,
+        valuables,
+        caregiver,
+        highRisk,
+        mobility: mobilityGait,
+        preAnaesthesia,
+        prom: promPrem,
+        plan: { problems: nursingProblems, goals: nursingGoals, notes: nursingNotes },
+        // R7hr(launch-review) — draft prints must not claim a signature.
+        signedBy: lockedSignedAt
+          ? {
+              name: lockedSignedByName || nurseName || user?.fullName,
+              empId: user?.employeeId,
+              signature: signature || undefined,
+              at: lockedSignedAt,
+            }
+          : undefined,
+      },
+    };
+  };
+
   const handlePrintAssessment = async () => {
     if (!patient) return toast.warn("Load a patient first");
     let hs = {};
@@ -1786,554 +1924,16 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
       hs = r.data?.data || r.data || {};
     } catch (_) {/* non-blocking */}
 
-    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
-      ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
-    const _dt = (d) => d ? new Date(d).toLocaleString("en-IN", { day:"2-digit", month:"short", year:"numeric", hour:"2-digit", minute:"2-digit" }) : "—";
-    const yn = (b) => b ? "Yes" : "No";
-    const dash = (v) => (v == null || v === "") ? "—" : esc(v);
-
-    const kv = (label, value, full = false) => `
-      <div class="kv${full ? ' full' : ''}">
-        <span class="lbl">${esc(label)}</span>
-        <span class="val">${dash(value)}</span>
-      </div>`;
-
-    const block = (title, badge, inner) => `
-      <div class="block">
-        <div class="block-title">
-          <span>${esc(title)}</span>
-          ${badge ? `<span class="badge">${esc(badge)}</span>` : ""}
-        </div>
-        <div class="block-body">${inner}</div>
-      </div>`;
-
-    /* ── NURSING content (collapsed if empty) ─────────────────── */
-    const nursingHtml = `
-      ${block("Admission", "NABH AAC.1", `
-        <div class="grid grid-4">
-          ${kv("Admit Date", admitDate)}
-          ${kv("Admit Time", admitTime)}
-          ${kv("IPD #", ipdNo)}
-          ${kv("Mode", modeOfAdmit)}
-          ${kv("Ward", ward)}
-          ${kv("Bed", bedNo)}
-          ${kv("Consciousness", consciousnessLevel)}
-          ${kv("Mobility", mobilityGait?.usesAid || (mobilityGait?.independent ? "Independent" : "—"))}
-        </div>`)}
-
-      ${block("Patient Identification", "NABH PSQ.1", `
-        <div class="grid grid-2">
-          ${kv("ID Band attached", yn(idBand.bandAttached))}
-          ${kv("Name verified", yn(idBand.nameVerified))}
-          ${kv("UHID verified", yn(idBand.uhidVerified))}
-          ${kv("DOB verified", yn(idBand.dobVerified))}
-          ${kv("Verified by", idBand.verifiedBy, true)}
-        </div>`)}
-
-      ${block("Vitals on Admission", "NABH AAC.1.b", `
-        <div class="grid grid-4">
-          ${kv("BP", vitals?.bpSys && vitals?.bpDia ? `${vitals.bpSys}/${vitals.bpDia} mmHg` : "")}
-          ${kv("Pulse", vitals?.pulse)}
-          ${kv("RR", vitals?.rr)}
-          ${kv("Temp", vitals?.temp)}
-          ${kv("SpO2", vitals?.spo2)}
-          ${kv("Weight", vitals?.weight ? `${vitals.weight} kg` : "")}
-        </div>`)}
-          ${/* R7hu — was kv("BP", vitals.bp) + kv("RBS", vitals.rbs): state holds bpSys/bpDia and has no `bp`/`rbs` key, so BP always printed "—" and RBS was a permanent dead row. Build BP from bpSys/bpDia; show captured Weight instead of the non-existent RBS field. */""}
-
-      ${block("Anthropometry", "Safety", `
-        <div class="grid grid-4">
-          ${kv("Height (cm)", anthropo.heightCm)}
-          ${kv("Weight (kg)", anthropo.weightKg)}
-          ${kv("BMI", anthropo.bmi)}
-        </div>`)}
-
-      ${block("Allergies (Nursing)", "NABH PSQ.4",
-        nurseNoKnownAllergies
-          ? `<div class="empty">NKDA — No Known Drug Allergies declared</div>`
-          : nurseAllergyList?.length === 0
-            ? `<div class="empty">Not captured</div>`
-            : `<table><thead><tr><th>Type</th><th>Agent</th><th>Severity</th><th>Reaction</th></tr></thead>
-                <tbody>${nurseAllergyList.map(a => `<tr><td>${esc(a.type)}</td><td>${esc(a.agent)}</td><td>${esc(a.severity)}</td><td>${esc(a.reaction)}</td></tr>`).join("")}</tbody></table>`
-      )}
-
-      ${block("Brief History & Home Medications", "NABH MOM", `
-        ${kv("Brief PMH", nurseBriefPmh, true)}
-        ${homeMeds.length === 0 ? `<div class="empty">No home meds captured</div>` :
-          `<table><thead><tr><th>Drug</th><th>Dose</th><th>Frequency</th><th>Last taken</th></tr></thead>
-           <tbody>${homeMeds.map(m => `<tr><td>${esc(m.drug)}</td><td>${esc(m.dose)}</td><td>${esc(m.frequency)}</td><td>${esc(m.lastTaken)}</td></tr>`).join("")}</tbody></table>`}`)}
-
-      ${block("Pain Assessment", "NABH IPC", `
-        <div class="grid grid-4">
-          ${kv("Pain present", yn(painPresent))}
-          ${kv("Score (0-10)", painScore)}
-          ${kv("Location", painLocation)}
-          ${kv("Character", painCharacter)}
-        </div>`)}
-
-      ${block("Fall Risk (Morse)", "NABH PSQ.4", `
-        ${kv("Total Score", morseTotal)}
-        ${kv("Risk", morseMeta?.label)}`)}
-
-      ${block("Pressure Ulcer (Braden)", "NABH IPC", `
-        ${kv("Total Score", bradenTotal)}
-        ${kv("Risk", bradenMeta?.label)}`)}
-
-      ${block("Nutrition (NRS-2002)", "NABH AAC.4", `
-        ${kv("Total Score", nutriTotal)}
-        ${kv("Risk", nutriMeta?.label)}
-        <div class="sub-title">Quick screen (R7fg)</div>
-        <div class="grid grid-2">
-          ${kv("BMI < 20.5", yn(nrsQuick.bmiUnder20))}
-          ${kv("Weight loss in 3mo", yn(nrsQuick.weightLossLast3Months))}
-          ${kv("Reduced intake in 1wk", yn(nrsQuick.reducedIntakeLastWeek))}
-          ${kv("Severely ill", yn(nrsQuick.severelyIll))}
-        </div>
-        ${nrsQuick.dietitianReferralTriggered ? `<div class="alert">⚠ Dietitian referral triggered</div>` : ""}`)}
-
-      ${block("Psychosocial", "NABH AAC.1.b", `
-        <div class="grid grid-2">
-          ${kv("Emotional state", psychosocial.emotionalState)}
-          ${kv("Family support", psychosocial.familySupport)}
-          ${kv("Preferred language", psychosocial.languagePreferred)}
-          ${kv("Notes", psychosocial.notes, true)}
-        </div>`)}
-
-      ${block("Functional / Barthel ADL", "NABH AAC.1.b", `
-        <div class="grid grid-2">
-          ${["feeding","bathing","grooming","dressing","bowels","bladder","toilet","transfer","mobility","stairs"].map(k => kv(k.replace(/^./, c=>c.toUpperCase()), barthel[k])).join("")}
-          ${kv("Total", Object.values(barthel).reduce((s,v)=>s+Number(v||0),0) + " / 100", true)}
-        </div>`)}
-
-      ${block("Body Chart", "NABH IPC + AAC.6", `
-        <div class="grid grid-2">
-          ${kv("Head / Neck", bodyChart.headNeck)}
-          ${kv("Chest / Back", bodyChart.chestBack)}
-          ${kv("Abdomen / Groin", bodyChart.abdomenGroin)}
-          ${kv("Upper limbs", bodyChart.upperLimbs)}
-          ${kv("Lower limbs", bodyChart.lowerLimbs)}
-          ${kv("Existing wounds", bodyChart.existingWounds)}
-          ${kv("Bruises / scars", bodyChart.existingBruises, true)}
-        </div>`)}
-
-      ${block("Special Precautions", "NABH IPC + PSQ.4", `
-        <div class="grid grid-2">
-          ${kv("Isolation", precautions.isolation.required ? precautions.isolation.type || "Yes" : "No")}
-          ${kv("Restraints", precautions.restraints.required ? `${precautions.restraints.type || "Yes"} · ${precautions.restraints.reason || ""}` : "No")}
-          ${kv("Suicide", yn(precautions.suicide))}
-          ${kv("Fall precaution", yn(precautions.fallPrecaution))}
-          ${kv("Aspiration", yn(precautions.aspiration))}
-          ${kv("Bleeding", yn(precautions.bleed))}
-          ${kv("Seizure", yn(precautions.seizure))}
-          ${kv("MRI safety", yn(precautions.mri))}
-          ${kv("Latex-free", yn(precautions.latex))}
-        </div>`)}
-
-      ${block("Education Needs", "NABH AAC.6 + PRE.5", `
-        <div class="grid grid-2">
-          ${kv("Preferred language", educationNeeds.preferredLanguage)}
-          ${kv("Learning style", educationNeeds.learningStyle)}
-          ${kv("Target audience", educationNeeds.targetAudience)}
-          ${kv("Can read", yn(educationNeeds.canRead))}
-          ${kv("Can write", yn(educationNeeds.canWrite))}
-          ${kv("Barriers to learning", educationNeeds.barriersToLearning, true)}
-        </div>`)}
-
-      ${block("Discharge Planning — Day 1", "NABH AAC.4", `
-        <div class="grid grid-2">
-          ${kv("Home support", dischargePlan.homeSupport)}
-          ${kv("Primary caregiver", dischargePlan.primaryCaregiver)}
-          ${kv("Transport", dischargePlan.transportNeed)}
-          ${kv("Barriers", dischargePlan.anticipatedBarriers)}
-          ${kv("Equipment needed", dischargePlan.equipmentNeeded.join(", ") || "—", true)}
-        </div>`)}
-
-      ${block("Cognitive & Communication", "NABH AAC.1.b", `
-        <div class="grid grid-2">
-          ${kv("Oriented to Person", yn(cognitive.orientationPerson))}
-          ${kv("Oriented to Place", yn(cognitive.orientationPlace))}
-          ${kv("Oriented to Time", yn(cognitive.orientationTime))}
-          ${kv("Vision deficit", yn(cognitive.visionDeficit))}
-          ${kv("Hearing deficit", yn(cognitive.hearingDeficit))}
-          ${kv("Speech deficit", yn(cognitive.speechDeficit))}
-          ${kv("Aids used", cognitive.aidsUsed)}
-          ${kv("GCS", cognitive.gcs)}
-          ${kv("Notes", cognitive.notes, true)}
-        </div>`)}
-
-      ${block("Cultural & Spiritual", "NABH ROP", `
-        <div class="grid grid-2">
-          ${kv("Religion", cultural.religion)}
-          ${kv("Dietary restrictions", cultural.dietaryRestrictions)}
-          ${kv("Spiritual needs", cultural.spiritualNeeds)}
-          ${kv("Customs", cultural.customs, true)}
-        </div>`)}
-
-      ${block("Bowel / Bladder", "NABH COP.1", `
-        <div class="grid grid-2">
-          ${kv("Bowel continence", elimination.bowelContinence)}
-          ${kv("Last BM", elimination.bowelLastBM)}
-          ${kv("Bowel frequency", elimination.bowelFrequency)}
-          ${kv("Bladder continence", elimination.bladderContinence)}
-          ${kv("Catheterised", yn(elimination.bladderCatheterised))}
-          ${kv("24h Urine output (mL)", elimination.bladderOutput24h)}
-          ${kv("Notes", elimination.notes, true)}
-        </div>`)}
-
-      ${block("Sleep Pattern", "NABH AAC.1.b", `
-        <div class="grid grid-2">
-          ${kv("Hours per night", sleep.hoursPerNight)}
-          ${kv("Quality", sleep.quality)}
-          ${kv("Sleep aids", sleep.sleepAids)}
-          ${kv("Snoring", yn(sleep.snoring))}
-          ${kv("Apnea Dx", yn(sleep.apneaDx))}
-        </div>`)}
-
-      ${block("Valuables & Belongings", "NABH ROP + PSQ", `
-        <div class="grid grid-2">
-          ${kv("Status", valuables.status)}
-          ${kv("Handed to", valuables.handedTo)}
-          ${kv("Items", valuables.items, true)}
-          ${kv("Receipt issued", yn(valuables.receiptIssued))}
-        </div>`)}
-
-      ${block("Family & Caregiver", "NABH AAC.6", `
-        <div class="grid grid-2">
-          ${kv("Primary name", caregiver.primaryName)}
-          ${kv("Primary relation", caregiver.primaryRelation)}
-          ${kv("Primary contact", caregiver.primaryContact)}
-          ${kv("Lives with patient", yn(caregiver.lives_with_patient))}
-          ${kv("Escalation name", caregiver.escalationName)}
-          ${kv("Escalation relation", caregiver.escalationRelation)}
-          ${kv("Escalation contact", caregiver.escalationContact)}
-        </div>`)}
-
-      ${block("High-Risk Flags", "NABH PSQ.4", `
-        <div class="grid grid-4">
-          ${kv("Pediatric", yn(highRisk.pediatric))}
-          ${kv("Geriatric", yn(highRisk.geriatric))}
-          ${kv("Pregnant", yn(highRisk.pregnant))}
-          ${kv("Immunocompromised", yn(highRisk.immunocompromised))}
-          ${kv("Mental Health", yn(highRisk.mentalHealth))}
-          ${kv("Bariatric", yn(highRisk.bariatric))}
-          ${kv("Polytrauma", yn(highRisk.polyTrauma))}
-          ${kv("Severe Malnutrition", yn(highRisk.severeMalnutrition))}
-          ${kv("Notes", highRisk.notes, true)}
-        </div>`)}
-
-      ${block("Mobility & Gait", "—", `
-        <div class="grid grid-2">
-          ${kv("Independent", yn(mobilityGait.independent))}
-          ${kv("Aid used", mobilityGait.usesAid)}
-          ${kv("Gait normal", yn(mobilityGait.gaitNormal))}
-          ${kv("Fall risk observed", yn(mobilityGait.fallRisk))}
-          ${kv("Notes", mobilityGait.notes, true)}
-        </div>`)}
-
-      ${block("Pre-Anaesthesia (if elective surgery)", "—", `
-        <div class="grid grid-2">
-          ${kv("Planned surgery", yn(preAnaesthesia.plannedSurgery))}
-          ${kv("NPO since", preAnaesthesia.npoSince)}
-          ${kv("Loose tooth", yn(preAnaesthesia.looseTooth))}
-          ${kv("Crowns/bridges", yn(preAnaesthesia.crowns))}
-          ${kv("Dentures", yn(preAnaesthesia.dentures))}
-          ${kv("Difficult intubation Hx", yn(preAnaesthesia.difficulIntubationHistory))}
-          ${kv("Previous anaesthesia", preAnaesthesia.anaesthesiaHistory)}
-          ${kv("PAC scheduled", yn(preAnaesthesia.pacScheduled))}
-          ${kv("PAC date", preAnaesthesia.pacDate)}
-        </div>`)}
-
-      ${block("PROM / PREM Triggers", "NABH PSQ", `
-        <div class="grid grid-2">
-          ${kv("PROM planned", yn(promPrem.promPlanned))}
-          ${kv("PROM survey", promPrem.promSurvey)}
-          ${kv("PREM planned", yn(promPrem.premPlanned))}
-          ${kv("PREM survey", promPrem.premSurvey)}
-          ${kv("Notes", promPrem.notes, true)}
-        </div>`)}
-
-      ${block("Nursing Plan", "—", `
-        ${kv("Problems", nursingProblems, true)}
-        ${kv("Goals", nursingGoals, true)}
-        ${kv("Notes", nursingNotes, true)}`)}
-
-      <div class="sign">
-        <div>
-          <div class="sign-line"></div>
-          <div class="sign-label">Nurse signature</div>
-          <div class="sign-meta">${esc(nurseName || user?.fullName || "—")}</div>
-        </div>
-        <div>
-          <div class="sign-line"></div>
-          <div class="sign-label">Date / time</div>
-          <div class="sign-meta">${_dt(new Date())}</div>
-        </div>
-      </div>`;
-
-    /* ── DOCTOR content ───────────────────────────────────────── */
-    const doctorHtml = `
-      ${block("Doctor & Assessment Info", "—", `
-        <div class="grid grid-3">
-          ${kv("Doctor", doctorName)}
-          ${kv("Registration No.", regNo)}
-          ${kv("Assessment date/time", _dt(new Date()))}
-        </div>`)}
-
-      ${block("Chief Complaint", "NABH AAC.1", `
-        ${kv("Chief Complaint", docCC, true)}
-        ${kv("Duration / Onset", ccDuration, true)}`)}
-
-      ${block("History", "NABH AAC.1", (() => {
-        // R7hr-70 — Past Medical Hx removed (Co-morbidities replaces it).
-        // PSH / Family / Social rendered from structured state via helpers
-        // that join ticked labels + free-text "other".
-        const pshOut = pshSummary(pshStruct) || esc(psh) || "—";
-        const famOut = famHxSummary(famHxStruct) || esc(famHx) || "—";
-        const socOut = socHxSummary(socHxStruct) || esc(socHx) || "—";
-        return `
-        ${kv("HPI", hopi, true)}
-        ${kv("Past Surgical Hx", pshOut, true)}
-        <div class="grid grid-2">
-          ${kv("Family Hx", famOut)}
-          ${kv("Social Hx", socOut)}
-        </div>`;
-      })())}
-
-      ${block("Co-morbidities", "NABH AAC.1", `
-        <div class="grid grid-4">
-          ${["diabetes","hypertension","cad","ckd","copd","asthma","liverDx","cancer","stroke","mentalHealth","hypothyroid","hiv","hepB","hepC"]
-            .map(k => {
-              // R7hr-64: append "(since N yr)" when an onset is captured
-              const yrs = comorbid[`${k}Years`];
-              const label = k.replace(/([A-Z])/g, " $1").replace(/^./, c => c.toUpperCase());
-              const val = comorbid[k]
-                ? (yrs ? `Yes (since ${esc(yrs)} yr)` : "Yes")
-                : "No";
-              return kv(label, val);
-            }).join("")}
-          ${kv("Other", comorbid.other, true)}
-        </div>`)}
-
-      ${block("Allergies (Doctor)", "NABH PSQ.4",
-        noKnownAllergies
-          ? `<div class="empty">NKDA — No Known Drug Allergies</div>`
-          : (allergyList?.length === 0
-            ? `<div class="empty">Not captured</div>`
-            : `<table><thead><tr><th>Type</th><th>Agent</th><th>Severity</th><th>Reaction</th></tr></thead>
-                <tbody>${allergyList.map(a => `<tr><td>${esc(a.type)}</td><td>${esc(a.agent)}</td><td>${esc(a.severity)}</td><td>${esc(a.reaction)}</td></tr>`).join("")}</tbody></table>`)
-      )}
-
-      ${block("Medication Reconciliation", "NABH MOM + AAC.4",
-        medRecon.length === 0
-          ? `<div class="empty">No medications on reconciliation list</div>`
-          : `<table><thead><tr><th>Drug</th><th>Dose</th><th>Freq</th><th>Last taken</th><th>Decision</th><th>Source</th></tr></thead>
-              <tbody>${medRecon.map(m => `<tr>
-                <td>${esc(m.drug)}</td><td>${esc(m.dose)}</td><td>${esc(m.frequency)}</td>
-                <td>${esc(m.lastTaken)}</td><td><strong>${esc(m.continueOnAdmit)}</strong></td>
-                <td>${m._fromNursing ? "Nursing" : "Doctor"}</td>
-              </tr>`).join("")}</tbody></table>`)}
-
-      ${block("Clinical Examination", "NABH AAC.1", (() => {
-        // R7hr-58 — Structured Clinical Examination summary. Uses the
-        // shared `clinExamSummary` helper exported by
-        // ClinicalExaminationCard so OPD + IPD prints stay aligned.
-        // Falls back to legacy ros/genExam/cvs/rs/abdomen/cns rendering
-        // if the structured block is empty (e.g. older saved records).
-        const s = clinExamSummary ? clinExamSummary(clinExam) : null;
-        if (s && (s.general || s.systemic)) {
-          return `
-            ${s.general ? kv("General Examination", s.general, true) : ""}
-            ${s.systemic ? kv("Systemic Examination", s.systemic, true) : ""}
-            ${kv("Local examination", localExam, true)}`;
-        }
-        return `
-          <div class="grid grid-2">
-            ${Object.entries(ros).map(([k, v]) => kv(k.replace(/^./, c=>c.toUpperCase()), v)).join("")}
-          </div>
-          ${kv("General", genExam, true)}
-          <div class="grid grid-2">
-            ${kv("CVS", cvs)}
-            ${kv("Respiratory", rs)}
-            ${kv("Abdomen", abdomen)}
-            ${kv("CNS", cns)}
-          </div>
-          ${kv("Local examination", localExam, true)}`;
-      })())}
-
-      ${block("Diagnosis (3-tier)", "NABH AAC.1", `
-        ${kv("Provisional", provDx, true)}
-        ${kv("Working", workingDx, true)}
-        ${kv("Final / Confirmed", finalDx, true)}
-        <div class="grid grid-2">
-          ${kv("ICD-10 Code", icd10)}
-          ${kv("ICD-10 Description", icd10Description)}
-        </div>
-        ${kv("Patient Status", patientStatus)}
-        ${kv("Differentials", differentialDx, true)}`)}
-
-      ${block("Anthropometry (Doctor confirms)", "Drug-dosing safety", `
-        <div class="grid grid-4">
-          ${kv("Height (cm)", docAnthropo.heightCm)}
-          ${kv("Weight (kg)", docAnthropo.weightKg)}
-          ${kv("BMI", docAnthropo.bmi)}
-          ${kv("IBW (Devine)", docAnthropo.idealBodyWeightKg)}
-        </div>`)}
-
-      ${block("Investigations Ordered", "—", invests.length > 0
-        ? `<ul style="margin:0;padding-left:18px">${invests.map(i => `<li>${esc(i.name)}${i.urgency && i.urgency!=="ROUTINE" ? ` <span style="color:#b91c1c;font-weight:700">[${esc(i.urgency)}]</span>` : ""}${i.instructions ? ` — ${esc(i.instructions)}` : ""}</li>`).join("")}</ul>`
-        : kv("Tests ordered", investigations, true))}
-
-      ${block("Treatment Plan", "NABH COP.1", kv("Plan", treatmentPlan, true))}
-
-      ${block("Prescription",
-        `${meds.length || rxRows.filter(r=>r.drug).length} drug(s)`,
-        meds.length > 0
-          ? `<table><thead><tr><th>Drug</th><th>Dose</th><th>Route</th><th>Frequency</th><th>Duration</th></tr></thead><tbody>${meds.map(m => {
-              // R7hr-128-FIX — Mirror buildDoctorNoteCardHtml: surface
-              // dilution sub-label under the drug name on the IA print
-              // so the printed copy carries the parenteral dilution that
-              // the doctor entered + PrescriptionPanel saved + the MAR
-              // fan-out is already using. Smallest-diff (no extra column).
-              const dv = Number(m.dilutionVolume);
-              const ov = Number(m.infuseOverMinutes);
-              const dil = (Number.isFinite(dv) && dv > 0)
-                ? `<div style="font-size:10px;color:#0369a1;font-weight:600;margin-top:2px">💧 in ${dv} mL ${esc(m.dilutionFluid || "NS 0.9%")}${(Number.isFinite(ov) && ov > 0) ? ` over ${ov} min` : ""}</div>`
-                : "";
-              return `<tr><td>${esc(m.name)}${dil}</td><td>${esc(m.dose||"")}</td><td>${esc(m.route||"")}</td><td>${esc(m.frequency||"")}</td><td>${esc(m.duration||"")}</td></tr>`;
-            }).join("")}</tbody></table>`
-          : (rxRows.filter(r=>r.drug).length === 0
-              ? `<div class="empty">No medications prescribed</div>`
-              : `<table><thead><tr><th>Drug</th><th>Dose</th><th>Route</th><th>Frequency</th><th>Duration</th><th>Instructions</th></tr></thead>
-                  <tbody>${rxRows.filter(r=>r.drug).map(r => `<tr>
-                    <td>${esc(r.drug)}</td><td>${esc(r.dose)}</td><td>${esc(r.route)}</td>
-                    <td>${esc(r.frequency)}</td><td>${esc(r.duration)}</td><td>${esc(r.instructions)}</td>
-                  </tr>`).join("")}</tbody></table>`))}
-
-      ${infusions.length > 0 ? block("Infusion / IV Fluids", "—",
-        `<table><thead><tr><th>Fluid</th><th>Volume</th><th>Rate</th><th>Additives</th></tr></thead><tbody>${infusions.map(f => `<tr><td>${esc(f.name)}</td><td>${esc(f.totalVolume||"")}</td><td>${esc(f.rate||"")}</td><td>${esc(f.additives||"")}</td></tr>`).join("")}</tbody></table>`
-      ) : ""}
-
-      ${block("Care Decisions", "NABH AAC.4 + ROP.1", `
-        <div class="grid grid-2">
-          ${kv("Code status", codeStatus.replace(/_/g, " "))}
-          ${kv("Discussed with", codeStatusDiscussedWith)}
-          ${kv("Limitations", codeStatusLimitations, true)}
-          ${kv("ELOS (days)", elosDays)}
-          ${kv("Goal of care", goalOfCare)}
-        </div>
-        <div class="sub-title">Risk Acknowledgement</div>
-        <table><thead><tr><th>Risk</th><th>Acknowledged</th><th>Plan</th></tr></thead>
-          <tbody>
-            ${["fall","dvt","ulcer","pain"].map(k => `<tr>
-              <td>${esc(k.replace(/^./, c=>c.toUpperCase()))}</td>
-              <td>${yn(docRiskAck[k]?.acknowledged)}</td>
-              <td>${esc(docRiskAck[k]?.plan || "—")}${k === "dvt" && docRiskAck.dvt?.score ? ` <em>(Caprini ${esc(docRiskAck.dvt.score)})</em>` : ""}</td>
-            </tr>`).join("")}
-          </tbody></table>`)}
-
-      ${block("Cross-Consultation / Referrals", "NABH COP",
-        referrals.length === 0
-          ? `<div class="empty">No referrals requested</div>`
-          : `<table><thead><tr><th>Specialty</th><th>Reason</th><th>Urgency</th><th>Status</th></tr></thead>
-              <tbody>${referrals.map(r => `<tr><td>${esc(r.specialty)}</td><td>${esc(r.reason)}</td><td>${esc(r.urgency)}</td><td>${esc(r.status)}</td></tr>`).join("")}</tbody></table>`)}
-
-      ${block("Prognosis Discussion", "NABH PRE.4", `
-        <div class="grid grid-2">
-          ${kv("Discussed with", prognosis.discussedWith)}
-          ${kv("Language used", prognosis.languageUsed)}
-          ${kv("Summary", prognosis.summary, true)}
-          ${kv("Q&A", prognosis.questionsAddressed, true)}
-        </div>`)}
-
-      ${block("Consents Required", "NABH PRE.3 + PRE.4", `
-        <div class="grid grid-4">
-          ${Object.entries(consentNeeded).map(([k, v]) => kv(k.replace(/^./, c=>c.toUpperCase()), yn(v))).join("")}
-        </div>`)}
-
-      ${obGyn.isApplicable ? block("Menstrual / Obstetric", "—", `
-        <div class="grid grid-4">
-          ${kv("LMP", obGyn.lmp)}
-          ${kv("Cycle days", obGyn.cycleDays)}
-          ${kv("Regular?", yn(obGyn.cycleRegular))}
-          ${kv("G P A L", `${obGyn.gravida || "—"} / ${obGyn.para || "—"} / ${obGyn.abortions || "—"} / ${obGyn.livingChildren || "—"}`)}
-          ${kv("Contraception", obGyn.contraception)}
-          ${kv("Last pregnancy", obGyn.lastPregnancyOutcome)}
-          ${kv("β-hCG", obGyn.pregnancyTestResult)}
-          ${kv("Notes", obGyn.notes, true)}
-        </div>`) : ""}
-
-      ${block("Immunisation", "—", `
-        ${kv("Up-to-date for age", yn(immunisation.upToDateForAge))}
-        <table><thead><tr><th>Vaccine</th><th>Status</th><th>Last date</th></tr></thead>
-          <tbody>
-            ${["tetanus","hepB","covid","influenza","pneumococcal"].map(k => `<tr>
-              <td>${esc(k.replace(/^./, c=>c.toUpperCase()))}</td>
-              <td>${yn(immunisation[k]?.vaccinated)}</td>
-              <td>${esc(immunisation[k]?.lastDate || "—")}${k === "covid" && immunisation.covid?.doses ? ` · ${esc(immunisation.covid.doses)} doses` : ""}</td>
-            </tr>`).join("")}
-          </tbody></table>
-        ${immunisation.other ? kv("Other", immunisation.other, true) : ""}`)}
-
-      ${block("Functional / ECOG", "—", `
-        ${kv("ECOG score", ecog.score)}
-        ${kv("Disabilities", ecog.disabilities)}
-        ${kv("Aids required", ecog.aidsRequired)}`)}
-
-      ${block("Spiritual / Existential", "NABH ROP", `
-        ${kv("Distress noted", yn(spiritual.distressNoted))}
-        ${kv("Concerns", spiritual.concerns, true)}
-        ${kv("Chaplain referral", yn(spiritual.chaplainReferralRequested))}`)}
-
-      ${block("Diet, Activity & Follow-up", "—", `
-        ${kv("Diet advice", dietAdvice, true)}
-        ${kv("Activity advice", activityAdvice, true)}
-        ${kv("Follow-up", followupNotes, true)}`)}
-
-      <div class="sign">
-        <div>
-          <div class="sign-line"></div>
-          <div class="sign-label">Doctor signature</div>
-          <div class="sign-meta">${esc(doctorName || user?.fullName || "—")}${regNo ? ` · ${esc(regNo)}` : ""}</div>
-        </div>
-        <div>
-          <div class="sign-line"></div>
-          <div class="sign-label">Date / time</div>
-          <div class="sign-meta">${_dt(new Date())}</div>
-        </div>
-      </div>`;
-
+    /* R7-shared — the whole nursing/doctor content is now produced by the
+       shared PROSE renderer (buildInitialAssessmentHtml) below, so the old
+       hand-built kv/block grid HTML + esc/_dt/yn/dash helpers were removed.
+       Everything else in handlePrintAssessment (patient strip, signatures,
+       print-shell wrapper, window.open) is unchanged. */
     const roleTitle = isDoctorRole ? "Doctor Initial Assessment" : "Nursing Initial Assessment";
-    const contentHtml = isDoctorRole ? doctorHtml : nursingHtml;
-
-    // R7fr Track C — section-block CSS only (kept inline within
-    // bodyHtml so the shell's <head> stays generic). PrintShell embeds
-    // its own header / patient-strip / footer CSS via ?inline import.
-    const bodyCss = `
-      <style>
-        .block{margin-top:10px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden}
-        .block-title{display:flex;justify-content:space-between;align-items:center;background:#e0e7ff;padding:6px 12px;font-size:12px;font-weight:800;color:#3730a3;border-left:4px solid #4f46e5}
-        .badge{background:#fff;color:#4f46e5;border:1px solid #c7d2fe;padding:1px 7px;border-radius:4px;font-size:9px;font-weight:700;letter-spacing:.3px}
-        .block-body{padding:8px 12px}
-        .grid{display:grid;gap:4px 12px}
-        .grid-2{grid-template-columns:1fr 1fr}
-        .grid-3{grid-template-columns:repeat(3,1fr)}
-        .grid-4{grid-template-columns:repeat(4,1fr)}
-        .kv{display:flex;justify-content:space-between;gap:8px;padding:3px 0;border-bottom:1px dotted #e2e8f0;font-size:10.5px}
-        .kv.full{grid-column:1 / -1}
-        .kv .lbl{color:#64748b;font-weight:600;flex:0 0 auto}
-        .kv .val{color:#0f172a;text-align:right;flex:1;word-break:break-word}
-        .empty{padding:8px;text-align:center;color:#94a3b8;font-style:italic}
-        .alert{margin-top:6px;padding:4px 8px;background:#fef3c7;border:1px solid #fbbf24;border-radius:4px;color:#92400e;font-size:10.5px}
-        .sub-title{font-size:10.5px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.4px;margin:8px 0 4px}
-        .block table{width:100%;border-collapse:collapse;margin:4px 0;font-size:10.5px}
-        .block th,.block td{padding:4px 6px;border-bottom:1px solid #e2e8f0;text-align:left;vertical-align:top}
-        .block th{background:#f1f5f9;font-weight:700;font-size:9.5px;text-transform:uppercase;letter-spacing:.3px;color:#475569}
-        .sign{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:18px;padding-top:10px;border-top:1.5px solid #cbd5e1}
-        .sign-line{border-bottom:1.5px solid #0f172a;height:30px}
-        .sign-label{font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;margin-top:4px}
-        .sign-meta{font-size:10.5px;color:#0f172a;font-weight:600;margin-top:1px}
-        @media print { .block{page-break-inside:avoid} }
-      </style>`;
+    // Render via the shared comprehensive PROSE renderer — the SAME renderer the
+    // Complete IPD File uses — so the IA looks identical on both surfaces. The
+    // builder carries its own self-contained <style>, so no separate bodyCss.
+    const contentHtml = buildInitialAssessmentHtml(buildIaFromState(), { prose: true });
 
     const html = buildPrintShellHtml({
       hospital: hs,
@@ -2371,7 +1971,7 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
         docNumber: (`IA-${ipdNo || ""}`).replace(/[^A-Z0-9\-]/gi, "") || `IA-${Date.now()}`,
         pageOf: "1 of 2",
       },
-      bodyHtml: bodyCss + contentHtml,
+      bodyHtml: contentHtml,
     });
 
     const w = window.open("", "_blank");
@@ -2494,6 +2094,10 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
                  }`,
             tags: ["initial-assessment", "nabh-aac1", "nabh-cop2"],
             signedByName: sign ? (nurseName || user?.fullName || "") : undefined,
+            // R7hr — stamp employee code + e-sign image on the mirrored nurse
+            // note too, so every signed line shows Name · Emp ID · signature.
+            signedByEmpId: sign ? (user?.employeeId || undefined) : undefined,
+            signature: sign ? (signature || undefined) : undefined,
             // Mixed catch-all — full role-specific payload so any downstream
             // reader (timeline expansion, print, audit) has the whole record.
             noteData: payload.noteDetails?.nursing && {

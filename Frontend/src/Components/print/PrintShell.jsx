@@ -12,17 +12,8 @@
 import React from "react";
 import "./print.css";
 import PrintWatermark from "./PrintWatermark";
-import { absoluteLogoUrl } from "../../utils/printUtils";
+import Letterhead from "./Letterhead";
 import { buildPrintIssuer } from "./printIssuer";
-
-const fmtAddress = (s) => {
-  const bits = [
-    s.addressLine1, s.addressLine2,
-    [s.city, s.state, s.pincode].filter(Boolean).join(", "),
-    s.country,
-  ].filter(Boolean);
-  return bits.join(", ");
-};
 
 const PrintShell = ({
   settings = {},
@@ -79,70 +70,16 @@ const PrintShell = ({
         recipient={watermarkRecipient}
       />
 
-      {/* ── Header ── */}
-      <div className="pr-header">
-        {settings.showLogoInPrint ? (
-          <img
-            className="pr-header__logo"
-            /* R7bf-F / A4-MED-2: rewrite relative logo to absolute URL
-               so staging deploys don't 404 the asset. R7hr-328: fall back to
-               the baked BIMS logo when no logo is uploaded. */
-            src={absoluteLogoUrl(settings.logo || "/bims-logo.png")}
-            alt="logo"
-            style={{ width: settings.logoWidth || 120, maxWidth: "30%" }}
-          />
-        ) : null}
-        <div className="pr-header__body">
-          <h1 className="pr-header__name">{settings.hospitalName}</h1>
-          {settings.showTaglineInPrint && settings.tagline ? (
-            <div className="pr-header__tagline">{settings.tagline}</div>
-          ) : null}
-          <div className="pr-header__addr">
-            {fmtAddress(settings) || "—"}
-          </div>
-          <div className="pr-header__addr" style={{ marginTop: 3 }}>
-            {settings.phone1 && <>📞 {settings.phone1}</>}
-            {settings.phone2 && <> · {settings.phone2}</>}
-            {settings.email   && <> · ✉ {settings.email}</>}
-            {settings.website && <> · 🌐 {settings.website}</>}
-          </div>
-        </div>
-        <div className="pr-header__meta">
-          {settings.gstin          && <div><strong>GSTIN:</strong> {settings.gstin}</div>}
-          {settings.registrationNo && <div><strong>Reg No:</strong> {settings.registrationNo}</div>}
-          {settings.panNumber      && <div><strong>PAN:</strong> {settings.panNumber}</div>}
-          {settings.rohiniId       && <div><strong>ROHINI:</strong> {settings.rohiniId}</div>}
-          {/* R7cg: NABH pill on the print header now gates on
-              `nabhCertNumber` instead of the legacy `nabh` boolean
-              (which defaults true in the schema and was misleading on
-              fresh installs). Once admin enters the cert# in
-              Hospital Configuration → NABH tab, the pill renders and
-              carries the actual cert# in a tooltip for surveyor visits.
-              NABL stays on its boolean — that one defaults false, so
-              it only surfaces when admin explicitly turns it on. */}
-          {(() => {
-            const _cert = String(settings.nabhCertNumber || "").trim();
-            const _showNabh = !!_cert;
-            return (
-              <div style={{ marginTop: 4 }}>
-                {_showNabh && (
-                  <span
-                    className="pr-accred pr-accred--nabh"
-                    title={`NABH Accredited · Cert ${_cert}`}
-                  >NABH</span>
-                )}
-                {settings.nabl && <span className="pr-accred pr-accred--nabl">NABL</span>}
-              </div>
-            );
-          })()}
-        </div>
-      </div>
-
-      {/* ── Title bar ── */}
-      <div className="pr-title-bar">
-        <span className="pr-title-bar__title">{documentTitle}</span>
-        {serialNo && <span className="pr-title-bar__no">{serialNo}</span>}
-      </div>
+      {/* ── Canonical letterhead (identity band + document title bar) ──
+          R7hr — unified: the header + title bar now come from the ONE shared
+          <Letterhead> so every print & on-screen surface carries an identical
+          hospital identity (logo · name · address · GSTIN · Reg No · PAN ·
+          ROHINI · NABH). Formerly inlined here as .pr-header / .pr-title-bar. */}
+      <Letterhead
+        settings={settings}
+        documentTitle={documentTitle}
+        serialNo={serialNo}
+      />
 
       {/* ── Info strip ──
            OPD-PRINT-AUDIT Item 20: when `headerExtra` is passed (QR code

@@ -1,0 +1,123 @@
+/* ═══════════════════════════════════════════════════════════════════
+   letterhead.css — THE ONE canonical hospital letterhead for the HIS.
+
+   Rendered by <Letterhead> (Components/print/Letterhead.jsx) and used by
+   EVERY print surface + every on-screen preview:
+     • Components/print/PrintShell.jsx   (pr- shell — bills, lab, receipts…)
+     • templates/PrintShell.jsx          (pf- shell — discharge, patient-file
+                                          themes, ~40 operational printables)
+     • on-screen mirrors (Complete Patient File, discharge preview, …)
+
+   Self-contained under the `.lh-*` namespace so it renders identically in:
+     (a) the SPA  — imported by Letterhead.jsx, and
+     (b) window.open() popups — embedded via `letterhead.css?inline`
+         (the pf- HTML helper injects it into the popup <head>).
+
+   Ported from the former canonical `.pr-header` so existing pr- prints
+   stay pixel-stable. Colours are driven by two CSS vars set from
+   HospitalSettings (printHeaderColor / printAccentColor) so a single admin
+   change re-skins every document.
+   ═══════════════════════════════════════════════════════════════════ */
+
+.lh {
+  --lh-header-color: #1e293b;
+  --lh-accent-color: #4f46e5;
+}
+
+/* ── Identity band ─────────────────────────────────────────────────── */
+.lh-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding-bottom: 10px;
+  border-bottom: 2px solid var(--lh-header-color, #1e293b);
+  margin-bottom: 14px;
+}
+.lh-logo {
+  height: 60px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.lh-body { flex: 1; min-width: 0; }
+.lh-name {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: .3px;
+  color: var(--lh-header-color, #0f172a);
+  margin: 0 0 2px 0;
+}
+.lh-tagline {
+  font-size: 11px;
+  color: #475569;
+  font-style: italic;
+  margin: 0 0 6px 0;
+}
+.lh-addr {
+  font-size: 11px;
+  color: #334155;
+  line-height: 1.4;
+}
+.lh-meta {
+  text-align: right;
+  font-size: 10.5px;
+  color: #475569;
+  line-height: 1.5;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.lh-meta strong { color: #0f172a; }
+.lh-accred {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 4px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: .5px;
+  border: 1.5px solid currentColor;
+  text-transform: uppercase;
+  margin-left: 4px;
+}
+.lh-accred--nabh { color: #0e7490; }
+.lh-accred--nabl { color: #7c3aed; }
+
+/* ── Document title bar (optional, under the identity band) ─────────── */
+.lh-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 6px 0 12px;
+  padding: 8px 14px;
+  background: var(--lh-accent-color, #4f46e5);
+  color: #fff;
+  border-radius: 6px;
+}
+.lh-titlebar__title {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: .4px;
+  text-transform: uppercase;
+}
+.lh-titlebar__sub {
+  font-size: 10.5px;
+  font-weight: 600;
+  opacity: .85;
+  margin-top: 1px;
+}
+.lh-titlebar__no {
+  font-size: 11px;
+  font-weight: 700;
+  background: rgba(255, 255, 255, .18);
+  padding: 3px 10px;
+  border-radius: 4px;
+  letter-spacing: .3px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* ── On-screen variant ──────────────────────────────────────────────
+   When embedded in an app view (not a print sheet) the band sits inside
+   a card, so it drops the heavy bottom rule's outer margin a touch. */
+.lh--screen .lh-header { margin-bottom: 10px; }

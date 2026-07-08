@@ -26,6 +26,7 @@ import { toast } from "react-toastify";
 import { useHospitalSettings } from "../../context/HospitalSettingsContext";
 import { clearHospitalSettingsCache } from "../../Components/print/useHospitalSettings";
 import { API_BASE_URL as API_URL } from "../../config/api";
+import Letterhead from "../../Components/print/Letterhead";
 import "./HospitalConfigWizard.css";
 
 /* Cross-tab + cross-cache broadcast helper.
@@ -435,29 +436,11 @@ function BrandingTab({ form, upd, updRaw }) {
 
       <Section title="Live preview" icon="pi-eye" color="blue">
         <div className="hcw-preview" style={{ "--hcw-pv-bg": form.printHeaderColor || "#1e293b", "--hcw-pv-accent": form.printAccentColor || "#4f46e5" }}>
-          <div className="hcw-preview__head">
-            {form.logo
-              ? (
-                /* R7cd: respect logoWidth so the preview shows actual print
-                   size; height auto-scales from the image's intrinsic
-                   aspect ratio. */
-                <img
-                  src={form.logo}
-                  alt="logo"
-                  className="hcw-preview__logo"
-                  style={{ width: `${Math.min(Math.max(Number(form.logoWidth) || 120, 60), 200)}px` }}
-                />
-              )
-              : <div className="hcw-preview__logo hcw-preview__logo--placeholder">LOGO</div>}
-            <div>
-              <div className="hcw-preview__name">{form.hospitalName || "Hospital Name"}</div>
-              <div className="hcw-preview__tag">{form.tagline || "Tagline"}</div>
-              <div className="hcw-preview__addr">
-                {[form.addressLine1, form.city, form.state].filter(Boolean).join(" · ") || "Address line"}
-              </div>
-            </div>
-          </div>
-          <div className="hcw-preview__rule" />
+          {/* R7hr — true WYSIWYG: the live preview renders the SAME shared
+              <Letterhead> every print + on-screen surface uses, driven by the
+              in-progress form so admin sees exactly what documents will show
+              (logo · name · address · GSTIN · Hospital Reg. No. · ROHINI …). */}
+          <Letterhead settings={form} documentTitle="Sample Document" screen />
           <div className="hcw-preview__sample">
             Sample document body — heading, paragraph, signature block. The accent rule above uses the accent colour.
           </div>
