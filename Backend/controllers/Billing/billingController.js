@@ -1815,6 +1815,52 @@ exports.cancelBill = async (req, res, next) => {
       return { bill: b, _priorBillStatus: priorBillStatus, _priorTpaStatus: priorTpaStatus };
     }, { label: "cancelBill" });
 
+    // R7hr(NABH-P3.3) — a NUMBERED invoice cancelled post-issue needs a §34
+    // credit note: the register now keeps the invoice visible (numbered
+    // CANCELLED bills match its filter) and this CN reverses its value in
+    // the CDNR section — net zero WITH a paper trail, instead of the
+    // invoice silently vanishing. Zero-payment is guaranteed here (the
+    // paid/advancePaid guards above force refund-first when money landed —
+    // and the refund path raises its own CN), so refundAmount is 0: the
+    // CN reverses the receivable, not a payout. Outside the retry block
+    // (no double-create on VersionError replay); idempotent via the
+    // original-bill lookup; best-effort — a CN hiccup never blocks the
+    // cancel (accountant re-raises from the register).
+    try {
+      if (bill.billNumber) {
+        const CreditNote = require("../../models/Billing/CreditNote");
+        const already = await CreditNote.findOne({ billId: bill._id, reasonCode: "07" }).select("_id").lean();
+        if (!already) {
+          const { toNum } = require("../../utils/money");
+          // status stays the schema default (APPROVED — subtracts from the
+          // register immediately): unlike refund CNs, no money moves here
+          // (the invoice was provably unpaid), the reversal is
+          // deterministic full-value, and the cancel itself is already
+          // role-gated (billing.refund) + reason-mandatory + audited — the
+          // R7bb maker-checker exists for discretionary payouts, not this.
+          await CreditNote.create({
+            UHID:               bill.UHID,
+            patientId:          bill.patient,
+            billId:             bill._id,
+            originalBillNumber: bill.billNumber,
+            creditNoteDate:     new Date(),
+            reasonCode:         "07",
+            reasonText:         `Invoice cancelled: ${reason}`,
+            taxableValue:       Math.max(0, toNum(bill.netAmount) - toNum(bill.taxAmount)),
+            taxAmount:          toNum(bill.taxAmount),
+            cgstAmount:         toNum(bill.cgstAmount),
+            sgstAmount:         toNum(bill.sgstAmount),
+            igstAmount:         toNum(bill.igstAmount),
+            refundAmount:       0,
+            issuedBy:           cancelledBy,
+            issuedByRole:       req.user?.role || "",
+          });
+        }
+      }
+    } catch (cnErr) {
+      console.error(`[cancelBill] credit-note for cancelled invoice ${bill.billNumber} failed:`, cnErr.message);
+    }
+
     // R7ap-F15: cancel-bill audit — outside the retry block so it doesn't
     // double-emit on a VersionError replay.
     try {
@@ -2892,7 +2938,15 @@ exports.getHospitalGstRegister = async (req, res, next) => {
     // CreditNote + 1 find on snapshots — Promise.all-parallelizable.
     const billsAggP = PatientBill.aggregate([
       { $match: {
-          billStatus:      { $nin: ["DRAFT", "CANCELLED"] },
+          // R7hr(NABH-P3.3) — numbered CANCELLED invoices STAY in the
+          // register. billGeneratedAt exists only once a bill was issued a
+          // number (DRAFT→GENERATED), so a cancelled-after-issue tax
+          // invoice matches here and its full-value CreditNote (raised by
+          // cancelBill) reverses it in the CDNR section — invoice + CN net
+          // to zero with a §34 paper trail, instead of the invoice
+          // silently vanishing retroactively. Never-generated cancelled
+          // DRAFTs carry no billGeneratedAt and stay out as before.
+          billStatus:      { $ne: "DRAFT" },
           billGeneratedAt: { $gte: from, $lte: to },
       }},
       { $unwind: "$billItems" },

@@ -315,7 +315,11 @@ const _cancelGstSnapshot = scheduleDaily("gst-monthly-snapshot", 2, 0, async () 
   const hospitalBillsCountAgg = await PatientBillModel.aggregate([
     { $match: {
         billGeneratedAt: { $gte: periodStart, $lt: periodEnd },
-        billStatus:      { $nin: ["DRAFT", "CANCELLED"] },
+        // R7hr(NABH-P3.3) — mirror of the live register: numbered CANCELLED
+        // invoices count in GSTR-1 4A (their cancelBill CreditNote reverses
+        // the value in CDNR). billGeneratedAt presence == was a numbered
+        // invoice; never-generated cancelled DRAFTs have none.
+        billStatus:      { $ne: "DRAFT" },
     } },
     { $count: "n" },
   ]);
