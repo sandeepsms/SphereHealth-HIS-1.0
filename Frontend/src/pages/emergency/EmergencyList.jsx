@@ -559,6 +559,17 @@ function ErRow({ e, navigate, onVitals, onDispo }) {
           <span className={`rx-triage rx-triage--${triageClass}`}>{e.triageCategory || "Urgent"}</span>
           {e.isMLC && <span className="rx-card-stage rx-card-stage--denied">⚖ MLC</span>}
           {e.status && <span className="rx-card-stage rx-card-stage--booked">{e.status}</span>}
+          {/* R7hr(ER-P1.4) — observation review clock. Overdue = red pulse;
+              otherwise show when the next re-assessment (vitals entry) is due. */}
+          {e.status === "Under Observation" && e.nextReviewDue && (
+            new Date(e.nextReviewDue) < new Date()
+              ? <span className="rx-card-stage rx-card-stage--denied" style={{ fontWeight: 800 }}>
+                  ⏰ Review OVERDUE ({new Date(e.nextReviewDue).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })})
+                </span>
+              : <span className="rx-card-stage" style={{ background: "#fef3c7", color: "#92400e" }}>
+                  ⏱ Review by {new Date(e.nextReviewDue).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
+                </span>
+          )}
           {isAdmission && <span className="rx-mono-tag rx-mono-tag--subtle">via Admission</span>}
         </div>
         <div className="rx-card-meta">

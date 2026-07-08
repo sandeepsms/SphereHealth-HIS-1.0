@@ -253,6 +253,14 @@ class EmergencyService {
     for (const k of ["temperature", "bloodPressure", "pulse", "respiratoryRate", "oxygenSaturation", "painScore", "glasgowComaScale"]) {
       if (row[k] !== undefined) snapSet[`vitals.${k}`] = row[k];
     }
+    // R7hr(ER-P1.4) — recording vitals IS the observation re-assessment:
+    // reset the review clock for Under-Observation patients. Harmless for
+    // others (nextReviewDue only renders on observation cards).
+    const existing = await Emergency.findOne({ emergencyNumber }).select("status").lean();
+    if (existing?.status === "Under Observation") {
+      const hrs = Number(process.env.ER_OBS_REVIEW_HOURS) || 2;
+      snapSet.nextReviewDue = new Date(Date.now() + hrs * 3600 * 1000);
+    }
     const updated = await Emergency.findOneAndUpdate(
       { emergencyNumber },
       { $push: { vitalsLog: row }, $set: snapSet },
@@ -595,6 +603,14 @@ class EmergencyService {
              dispositionData.actor || "ER");
       } else if (newDisp === "Observation") {
         visit.status = "Under Observation";
+        // R7hr(ER-P1.4) — start the review clock. Re-assessment cadence is
+        // ER_OBS_REVIEW_HOURS (default 2h); each vitalsLog entry resets it
+        // (recording vitals IS the re-assessment). Board flags overdue.
+        const hrs = Number(process.env.ER_OBS_REVIEW_HOURS) || 2;
+        if (!visit.observationStartedAt) visit.observationStartedAt = now;
+        visit.nextReviewDue = new Date(now.getTime() + hrs * 3600 * 1000);
+        note(`Under Observation — next review due in ${hrs}h (${visit.nextReviewDue.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}).`,
+             dispositionData.actor || "ER");
       } else {
         visit.status = dispositionData.status || visit.status;
       }

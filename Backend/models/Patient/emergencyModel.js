@@ -321,6 +321,11 @@ const EmergencySchema = new mongoose.Schema(
       ],
       default: "Active",
     },
+    // R7hr(ER-P1.4) — Observation loop. Set when disposition=Observation;
+    // every vitalsLog entry resets nextReviewDue (+ER_OBS_REVIEW_HOURS,
+    // default 2h). The board flags "Review overdue" past the due time.
+    observationStartedAt: { type: Date, default: null },
+    nextReviewDue:        { type: Date, default: null },
   },
   {
     timestamps: true,
