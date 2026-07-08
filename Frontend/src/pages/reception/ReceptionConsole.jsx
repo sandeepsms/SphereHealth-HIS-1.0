@@ -128,6 +128,10 @@ const emptyIPD = {
   expectedDischargeDate: "",
   specialInstructions: "",
   advancePayment: 0,
+  // NABH PRE.4 — indicative treatment-cost estimate counselled to the
+  // patient at admission. Persisted on admission.estimatedCost and printed
+  // as the Cost Estimate document (patient-acknowledgement copy).
+  estimatedCost: 0,
 };
 
 const emptyDayCare = {
@@ -884,6 +888,9 @@ export default function ReceptionConsole() {
           // Admission model field is `advancePaid` — sending under the old
           // name silently dropped every IPD advance the receptionist took.
           advancePaid:    isDC || isER ? 0 : (Number(ipd.advancePayment) || 0),
+          // NABH PRE.4 — indicative cost estimate counselled at admission.
+          // admissionService persists this scalar (admission.estimatedCost).
+          estimatedCost:  isDC || isER ? 0 : (Number(ipd.estimatedCost) || 0),
           // bed
           bedId:        bedData.bedId,
           bedNumber:    bedData.bedNumber,
@@ -902,6 +909,40 @@ export default function ReceptionConsole() {
         const admResp = await admissionService.createAdmission(admissionPayload);
         // Service wraps axios — response is the raw body (no extra .data wrap).
         const createdAdm = admResp?.data || admResp || null;
+
+        // ── NABH PRE.4 — Cost Estimate print ───────────────────────
+        // When the receptionist entered an indicative estimate on the IPD
+        // form, print the patient-acknowledgement Cost Estimate document
+        // right at admission (before any money changes hands). One estimate
+        // per admission — EST-<admissionNumber> keeps it referenceable
+        // without a separate counter. The CostEstimate printable derives
+        // the ±(10/15)% likely range itself. Fired before the advance
+        // receipt so the counselling doc precedes the payment doc.
+        const estAmt = Number(ipd.estimatedCost) || 0;
+        if (visitType === "IPD" && estAmt > 0 && createdAdm?._id) {
+          try {
+            openPrint("cost-estimate", {
+              estimateNo:    `EST-${createdAdm.admissionNumber || createdAdm._id}`,
+              patientName:   patient.fullName,
+              uhid:          patientUHID,
+              age:           patient.age,
+              gender:        patient.gender,
+              procedure:     ipd.reasonForAdmission || ipd.provisionalDiagnosis || "IPD treatment",
+              wardClass:     bedData.wardName || createdAdm.wardName || "",
+              consultantName: docLabelFor(docIdFor) || "",
+              estimatedDays: Number(ipd.expectedStayDays) || undefined,
+              items: [{
+                name:     `Estimated IPD treatment — ${ipd.reasonForAdmission || ipd.provisionalDiagnosis || "as advised"}`,
+                category: deptLabelFor(ipd.department) || undefined,
+                qty:      1,
+                rate:     estAmt,
+                amount:   estAmt,
+              }],
+            });
+          } catch (e) {
+            console.error("Cost-estimate print failed:", e);
+          }
+        }
 
         // ── IPD initial advance → PatientAdvance row + receipt ─────
         // Receptionist enters the advance amount on the IPD form. Previously
@@ -967,6 +1008,10 @@ export default function ReceptionConsole() {
               method:        adv.paymentMode || "CASH",
               refNo:         adv.transactionId || null,
               depositPurpose: "hospitalization advance",
+              // NABH PRE.4 — feed the receipt's estimated-cost block (shows
+              // estimate + "balance after this deposit" context). The block
+              // renders only when this is non-null, so 0/absent hides it.
+              estimatedCost: estAmt > 0 ? estAmt : null,
             };
             // R7hr-172 / sprint review: use the shared openPrint helper — it
             // stashes advPayload under printPayload-advance-receipt, opens the
@@ -1694,6 +1739,16 @@ export default function ReceptionConsole() {
                     <label className="his-label">Advance Payment (₹)</label>
                     <input className="his-field" type="number" value={ipd.advancePayment}
                       onChange={e => setIpd(p => ({ ...p, advancePayment: e.target.value }))} placeholder="0" />
+                  </div>
+                  <div className="his-field-group">
+                    <label className="his-label">
+                      Estimated Cost (₹)
+                      <span className="rc-section-sublabel">
+                        (NABH PRE.4 — counselled to patient; prints estimate)
+                      </span>
+                    </label>
+                    <input className="his-field" type="number" value={ipd.estimatedCost}
+                      onChange={e => setIpd(p => ({ ...p, estimatedCost: e.target.value }))} placeholder="0" />
                   </div>
                 </div>
                 <div className="his-field-group">
