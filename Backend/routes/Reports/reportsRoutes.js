@@ -52,6 +52,9 @@ router.get("/inventory/abc-analysis",  requireAction("reports.financial"), dash.
 router.get("/patient-census",          requireAction("reports.clinical"),  dash.getPatientCensus);
 router.get("/bed-occupancy",           requireAction("reports.clinical"),  dash.getBedOccupancy);
 router.get("/lab-tat",                 requireAction("reports.clinical"),  dash.getLabTat);
+// R7hr(NABH-P2.5) — IPD discharge TAT (doctor-approve → bill-clear →
+// gate-pass), the NABH CQI discharge-process indicator. FY/date-ranged.
+router.get("/discharge-tat",           requireAction("reports.clinical"),  dash.getDischargeTat);
 router.get("/diagnosis-frequency",     requireAction("reports.clinical"),  dash.getDiagnosisFrequency);
 
 module.exports = router;
