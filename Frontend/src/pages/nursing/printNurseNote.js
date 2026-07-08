@@ -1085,12 +1085,7 @@ export function printNurseNote(note, hospitalSettings = {}) {
     ? '<div style="padding:4px 10px;border-radius:5px;font-size:11px;font-weight:700;background:#fef2f2;color:#dc2626">⚠ CRITICAL EVENT</div>'
     : "";
 
-  // Late-entry banner (NABH HIC.6)
-  const lateBanner = note.lateEntry
-    ? `<div style="margin:8px 0 14px;padding:8px 12px;border:1px solid #fcd34d;background:#fffbeb;border-radius:6px;font-size:11px;color:#92400e;display:flex;gap:8px;align-items:flex-start">
-  <strong style="white-space:nowrap">⚠ LATE ENTRY</strong>
-  <div style="flex:1">${escapeHtml(note.lateEntryReason || "Retrospective entry — NABH HIC.6 backdated-documentation justification on file")}${note.lateEntryAt ? ` · Recorded: ${fmtDate(note.lateEntryAt)}` : ""}</div>
-</div>` : "";
+  // (Late-entry banner comes from the prose builder output — see below.)
 
   // R7hr — the single-note print body now comes from the SAME shared
   // buildNurseNoteCardHtml() in the SAME prose mode the Complete IPD File uses
@@ -1098,46 +1093,19 @@ export function printNurseNote(note, hospitalSettings = {}) {
   // byte-identical to how it renders inside the full file. (Was calling the
   // per-type buildBuilder() directly in card mode — a style divergence.)
 
-  // Free-form remarks footer (if any in addition to structured body)
-  const remarks = (note.remarks && note.noteType !== "general")
-    ? `<div style="margin-top:8px;padding:6px 10px;background:#f8fafc;border-left:3px solid #94a3b8;font-size:11.5px;white-space:pre-wrap">${escapeHtml(note.remarks)}</div>` : "";
-
-  // Signature footer
-  // R7go — Surface employee ID alongside name on the standalone nurse-note
-  // print too (same field precedence as buildNurseNoteCardHtml).
-  // R7gu — Embed signature image on the standalone print as well.
-  const nurseEmpIdShownStandalone = note.signedByEmpId || note.nurseEmployeeId || "";
-  const nSigSrcStandalone = note.signature || note.signatureImage || "";
-  const nSigImgStandalone = (isSigned && nSigSrcStandalone && typeof nSigSrcStandalone === "string"
-                             && (nSigSrcStandalone.startsWith("data:image/")
-                                 || nSigSrcStandalone.startsWith("/uploads/")
-                                 || /^https?:\/\//.test(nSigSrcStandalone)))
-    ? `<br/><img src="${escapeHtml(nSigSrcStandalone)}" alt="Signature" style="max-height:42px;max-width:220px;margin-top:6px;border:1px solid #e2e8f0;background:#fff;padding:2px;border-radius:3px"/>`
-    : "";
-  const sigHtml = isSigned
-    ? `<div style="margin-top:20px;padding:10px 14px;border:1px solid #bbf7d0;border-radius:8px;background:#f0fdf4">
-  <strong style="color:#15803d;font-size:12px">✓ SIGNED & SUBMITTED</strong><br/>
-  <span style="font-size:11px;color:#166534">By: ${escapeHtml(note.nurseName || note.signedByName || "Nurse")}${nurseEmpIdShownStandalone ? ` · Emp ID: ${escapeHtml(nurseEmpIdShownStandalone)}` : ""}${note.signedAt ? ` · ${fmtDate(note.signedAt)}` : ` · ${noteDate}`}${nSigImgStandalone}</span>
-</div>`
-    : `<div style="margin-top:20px;padding:8px 12px;border:1px solid #fde68a;border-radius:8px;background:#fffbeb">
-  <strong style="color:#d97706;font-size:12px">DRAFT — Not yet signed</strong>
-</div>`;
-
   // Assembly
-  // The type title, structured body and signed line all come from the shared
-  // builder (below); the print adds only a status strip (no type pill — the
-  // builder + the shell's "Nursing Note — …" title already name the type),
-  // the late-entry banner, free-form remarks and the rich signature block.
+  // R7hr(launch-review) — the prose builder output ALREADY carries the
+  // late-entry banner, the remarks line and the "✓ … signed · By … · Emp … ·
+  // <signature image>" line, so the page adds ONLY the status strip. The old
+  // page-level remarks / sigHtml / lateBanner blocks printed every one of
+  // those TWICE on the standalone sheet.
   const bodyHtml = `
   <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-bottom:10px;border-bottom:1px solid #e2e8f0">
     ${statusBadge}
     ${critical}
     <div style="margin-left:auto;font-size:12px;color:#64748b">Shift: <strong style="text-transform:capitalize">${escapeHtml(shift)}</strong> · Recorded: ${noteDate}</div>
   </div>
-  ${lateBanner}
-  ${buildNurseNoteCardHtml(note, { prose: true })}
-  ${remarks}
-  ${sigHtml}`;
+  ${buildNurseNoteCardHtml(note, { prose: true })}`;
 
   // PrintShell hospital metadata
   const hs = {

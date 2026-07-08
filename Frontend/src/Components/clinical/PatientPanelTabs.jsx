@@ -310,10 +310,15 @@ function adaptNursing(note, admIA) {
    inlining any /uploads signature images through the authenticated pipe just
    like NoteCardEmbed. */
 function IAEmbed({ note, role, admissionIA }) {
-  const ia = role === "nurse"
-    ? { role: "nurse", nursing: adaptNursing(note, admissionIA) }
-    : { role: "doctor", doctor: adaptDoctor(note) };
-  const rawHtml = buildInitialAssessmentHtml(ia, { prose: true });
+  // R7hr(launch) — memoize: the adapter + renderer build a multi-KB HTML
+  // string; without this it re-ran on every parent re-render (tab state,
+  // polling) even though the note/admission records hadn't changed.
+  const rawHtml = useMemo(() => {
+    const ia = role === "nurse"
+      ? { role: "nurse", nursing: adaptNursing(note, admissionIA) }
+      : { role: "doctor", doctor: adaptDoctor(note) };
+    return buildInitialAssessmentHtml(ia, { prose: true });
+  }, [note, role, admissionIA]);
   const html = useInlinedUploadsHtml(rawHtml);
   if (!html) return null;
   return (

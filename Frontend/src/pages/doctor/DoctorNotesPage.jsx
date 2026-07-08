@@ -1058,15 +1058,10 @@ function DoctorNotesContent({ selectedPatient }) {
     // Pre-R7cb hardcoded "SphereHealth HIS" / "NABH Accredited Clinical
     // Documentation System" — now those come from /hospital-settings.
     const hs = await fetchHospitalSettings();
-    const escapeHtml = (s) => String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 
-    // R7fx — late-entry banner (NABH HIC.6). Every Badal seeded note has
-    // lateEntry:true; the rationale was being buried inside the kv dump.
-    const lateEntryBanner = note.lateEntry
-      ? `<div style="margin:8px 0 14px;padding:8px 12px;border:1px solid #fcd34d;background:#fffbeb;border-radius:6px;font-size:11px;color:#92400e;display:flex;gap:8px;align-items:flex-start">
-  <strong style="white-space:nowrap">⚠ LATE ENTRY</strong>
-  <div style="flex:1">${escapeHtml(note.lateEntryReason || "Retrospective entry — NABH HIC.6 backdated-documentation justification on file")}${note.lateEntryAt ? ` · Recorded: ${new Date(note.lateEntryAt).toLocaleString("en-IN")}` : ""}</div>
-</div>` : "";
+    // R7hr(launch-review) — the page-level late-entry banner was removed:
+    // the shared prose builder below already emits it, so late-entry notes
+    // printed the banner twice.
 
     // R7fq Track C — body block (status pill row + clinical sections).
     // R7fx — per-type compact builder takes precedence over the generic
@@ -1084,7 +1079,6 @@ function DoctorNotesContent({ selectedPatient }) {
     ${note.isCritical ? '<div style="padding:4px 10px;border-radius:5px;font-size:11px;font-weight:700;background:#fef2f2;color:#dc2626">⚠ CRITICAL EVENT</div>' : ""}
     <div style="margin-left:auto;font-size:12px;color:#64748b">Shift: <strong style="text-transform:capitalize">${shift}</strong> · Recorded: ${noteDate}</div>
   </div>
-  ${lateEntryBanner}
   ${buildDoctorNoteCardHtml(note, { prose: true })}`;
 
     // Consultant / Resident split for the signature zone:

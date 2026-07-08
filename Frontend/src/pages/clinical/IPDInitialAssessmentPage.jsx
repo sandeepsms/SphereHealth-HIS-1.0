@@ -1857,13 +1857,17 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
         dietAdvice,
         activityAdvice,
         followupNotes,
-        signedBy: {
-          name: doctorName || user?.fullName,
-          reg: regNo,
-          empId: user?.employeeId,
-          signature: signature || undefined,
-          at: new Date().toISOString(),
-        },
+        // R7hr(launch-review) — only a genuinely SIGNED assessment prints the
+        // "signed" line; a draft print must never claim a signature.
+        signedBy: lockedSignedAt
+          ? {
+              name: lockedSignedByName || doctorName || user?.fullName,
+              reg: regNo,
+              empId: user?.employeeId,
+              signature: signature || undefined,
+              at: lockedSignedAt,
+            }
+          : undefined,
       },
       nursing: {
         admission: {
@@ -1899,12 +1903,15 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
         preAnaesthesia,
         prom: promPrem,
         plan: { problems: nursingProblems, goals: nursingGoals, notes: nursingNotes },
-        signedBy: {
-          name: nurseName || user?.fullName,
-          empId: user?.employeeId,
-          signature: signature || undefined,
-          at: new Date().toISOString(),
-        },
+        // R7hr(launch-review) — draft prints must not claim a signature.
+        signedBy: lockedSignedAt
+          ? {
+              name: lockedSignedByName || nurseName || user?.fullName,
+              empId: user?.employeeId,
+              signature: signature || undefined,
+              at: lockedSignedAt,
+            }
+          : undefined,
       },
     };
   };

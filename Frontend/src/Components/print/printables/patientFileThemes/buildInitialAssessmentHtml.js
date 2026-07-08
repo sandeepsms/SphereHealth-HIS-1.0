@@ -137,7 +137,19 @@ const objLines = (obj, skip = []) => {
       if (skip.includes(k) || v == null || v === false) return "";
       if (v === true) return line(humanize(k), "Yes");
       if (Array.isArray(v)) {
-        return line(humanize(k), v.filter((x) => x != null && String(x).trim()).join(", "));
+        // R7hr(launch-review) — array elements may be OBJECTS (e.g.
+        // wounds:[{site,stage}]); flatten each instead of "[object Object]".
+        const items = v
+          .filter((x) => x != null && x !== false)
+          .map((x) => {
+            if (typeof x !== "object") return String(x).trim();
+            return Object.entries(x)
+              .filter(([, iv]) => iv != null && iv !== false && typeof iv !== "object" && String(iv).trim() !== "")
+              .map(([ik, iv]) => `${humanize(ik)}: ${iv === true ? "Yes" : iv}`)
+              .join(", ");
+          })
+          .filter(Boolean);
+        return items.length ? line(humanize(k), items.join("; ")) : "";
       }
       if (typeof v === "object") {
         const inner = Object.entries(v)
@@ -612,7 +624,14 @@ function renderNursing(n) {
   pushScore("Pressure ulcer (Braden)", n.braden);
   pushScore("Nutrition (NRS-2002)", n.nutrition);
   pushScore("Pain (0-10)", pain.score != null || pain.risk ? { total: pain.score, risk: pain.risk } : null);
-  pushScore("DVT / VTE (Caprini)", n.vte || n.dvt);
+  // R7hr(launch-review) — when BOTH a VTE and a separate DVT score exist,
+  // print both rows (the combined row silently dropped the DVT score).
+  if (n.vte && n.dvt) {
+    pushScore("VTE (Padua)", n.vte);
+    pushScore("DVT (Caprini)", n.dvt);
+  } else {
+    pushScore("DVT / VTE (Caprini)", n.vte || n.dvt);
+  }
   pushScore("Glasgow Coma Scale", n.gcs);
   out.push(section("Risk Scores", scoreRows.length ? table(["Assessment", "Score", "Risk / band"], scoreRows) : ""));
 

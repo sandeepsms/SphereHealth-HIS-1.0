@@ -71,6 +71,12 @@ const norm = (s = {}) => ({
   rohiniId: s.rohiniId || "",
   nabhCertNumber: s.nabhCertNumber || "",
   nabl: !!s.nabl,
+  // Legacy accreditation-display fields the old pf- header rendered (all in
+  // the HospitalSettings schema): keep the unified band a strict superset.
+  nabhLogo: s.nabhLogo || "",
+  nabhSinceDate: s.nabhSinceDate || "",
+  taglineLeft: s.taglineLeft || "",
+  taglineRight: s.taglineRight || "",
   printHeaderColor: s.printHeaderColor || "#1e293b",
   printAccentColor: s.printAccentColor || "#4f46e5",
 });
@@ -118,17 +124,22 @@ export default function Letterhead({
     >
       <div className="lh-header">
         {s.showLogoInPrint ? (
-          <img
-            className="lh-logo"
-            /* An UPLOADED logo is a backend /uploads path → absolutise it.
-               The baked fallback lives in the FRONTEND /public, so keep it a
-               plain relative URL (absoluteLogoUrl would wrongly point it at the
-               API host and 404). */
-            src={s.logo ? absoluteLogoUrl(s.logo) : "/bims-logo.png"}
-            alt=""
-            style={s.logoWidth ? { width: s.logoWidth, maxWidth: "30%", height: "auto" } : undefined}
-            onError={(e) => { e.currentTarget.style.display = "none"; }}
-          />
+          <div style={{ flexShrink: 0, textAlign: "center" }}>
+            <img
+              className="lh-logo"
+              /* An UPLOADED logo is a backend /uploads path → absolutise it.
+                 The baked fallback lives in the FRONTEND /public, so keep it a
+                 plain relative URL (absoluteLogoUrl would wrongly point it at the
+                 API host and 404). */
+              src={s.logo ? absoluteLogoUrl(s.logo) : "/bims-logo.png"}
+              alt=""
+              style={s.logoWidth ? { width: s.logoWidth, maxWidth: "30%", height: "auto" } : undefined}
+              onError={(e) => { e.currentTarget.style.display = "none"; }}
+            />
+            {s.taglineLeft ? (
+              <div style={{ fontSize: 9, color: "#64748b", marginTop: 2 }}>{s.taglineLeft}</div>
+            ) : null}
+          </div>
         ) : null}
         <div className="lh-body">
           <h1 className="lh-name">{s.hospitalName}</h1>
@@ -157,6 +168,22 @@ export default function Letterhead({
               ) : null}
               {s.nabl ? <span className="lh-accred lh-accred--nabl">NABL</span> : null}
             </div>
+          ) : null}
+          {s.nabhLogo ? (
+            <div style={{ marginTop: 4 }}>
+              <img
+                src={absoluteLogoUrl(s.nabhLogo)}
+                alt=""
+                style={{ height: 34, objectFit: "contain" }}
+                onError={(e) => { e.currentTarget.style.display = "none"; }}
+              />
+            </div>
+          ) : null}
+          {s.nabhSinceDate ? (
+            <div style={{ fontSize: 8.5, letterSpacing: ".3px", marginTop: 2 }}>ACCREDITED {s.nabhSinceDate}</div>
+          ) : null}
+          {s.taglineRight ? (
+            <div style={{ fontSize: 8.5, marginTop: 2 }}>{s.taglineRight}</div>
           ) : null}
         </div>
       </div>
@@ -194,9 +221,12 @@ export function buildLetterheadHtml({
   const _origin = (typeof window !== "undefined" && window.location) ? window.location.origin : "";
   const logoSrc = s.logo ? absoluteLogoUrl(s.logo) : `${_origin}/bims-logo.png`;
   const logoHtml = s.showLogoInPrint
-    ? `<img class="lh-logo" src="${esc(logoSrc)}" alt="" onerror="this.style.display='none'"${
-        s.logoWidth ? ` style="width:${esc(s.logoWidth)}px;max-width:30%;height:auto;"` : ""
-      } />`
+    ? `<div style="flex-shrink:0;text-align:center;">
+        <img class="lh-logo" src="${esc(logoSrc)}" alt="" onerror="this.style.display='none'"${
+          s.logoWidth ? ` style="width:${esc(s.logoWidth)}px;max-width:30%;height:auto;"` : ""
+        } />
+        ${s.taglineLeft ? `<div style="font-size:9px;color:#64748b;margin-top:2px;">${esc(s.taglineLeft)}</div>` : ""}
+      </div>`
     : "";
 
   const metaRows = [
@@ -209,6 +239,11 @@ export function buildLetterheadHtml({
           showNabh ? `<span class="lh-accred lh-accred--nabh" title="NABH Accredited · Cert ${esc(s.nabhCertNumber)}">NABH</span>` : ""
         }${s.nabl ? `<span class="lh-accred lh-accred--nabl">NABL</span>` : ""}</div>`
       : "",
+    s.nabhLogo
+      ? `<div style="margin-top:4px;"><img src="${esc(absoluteLogoUrl(s.nabhLogo))}" alt="" style="height:34px;object-fit:contain;" onerror="this.style.display='none'" /></div>`
+      : "",
+    s.nabhSinceDate ? `<div style="font-size:8.5px;letter-spacing:.3px;margin-top:2px;">ACCREDITED ${esc(s.nabhSinceDate)}</div>` : "",
+    s.taglineRight ? `<div style="font-size:8.5px;margin-top:2px;">${esc(s.taglineRight)}</div>` : "",
   ].join("");
 
   const titleBar = documentTitle
