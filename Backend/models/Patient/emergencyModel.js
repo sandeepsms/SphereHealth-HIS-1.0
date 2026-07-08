@@ -78,6 +78,26 @@ const EmergencySchema = new mongoose.Schema(
       },
       glasgowComaScale: Number,
     },
+    // R7hr(ER-P1.1) — SERIAL vitals. `vitals` above is the arrival/triage
+    // snapshot (kept as-is — every existing UI reads it); an ER stay of
+    // hours (especially disposition="Observation") needs repeat readings.
+    // Each POST /:emergencyNumber/vitals pushes a row here AND refreshes
+    // the snapshot to the latest values, so old consumers stay current.
+    vitalsLog: [
+      {
+        recordedAt: { type: Date, default: Date.now },
+        recordedBy: String,
+        recordedByRole: String,
+        temperature: Number,
+        bloodPressure: String,
+        pulse: Number,
+        respiratoryRate: Number,
+        oxygenSaturation: Number,
+        painScore: { type: Number, min: 0, max: 10 },
+        glasgowComaScale: Number,
+        note: String,
+      },
+    ],
     generalExamination: {
       levelOfConsciousness: String,
       nutritionalStatus: String,

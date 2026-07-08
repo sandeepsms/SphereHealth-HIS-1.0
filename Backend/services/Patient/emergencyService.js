@@ -220,6 +220,52 @@ class EmergencyService {
     );
   }
 
+  // R7hr(ER-P1.1) — serial vitals entry. Pushes a timestamped row onto
+  // vitalsLog AND refreshes the arrival-snapshot `vitals` to the latest
+  // reading (only the fields supplied — an entry without GCS must not
+  // blank the snapshot's GCS), so every existing consumer of `vitals`
+  // (reception board, assessment page, prints) shows current values
+  // without changes. Numeric fields sanitised; empty entries rejected.
+  async addVitalsEntry(emergencyNumber, entry = {}, { recordedBy, recordedByRole } = {}) {
+    const num = (v) => (v === "" || v == null || Number.isNaN(Number(v)) ? undefined : Number(v));
+    const row = {
+      recordedAt:       new Date(),
+      recordedBy:       recordedBy || "Staff",
+      recordedByRole:   recordedByRole || "",
+      temperature:      num(entry.temperature),
+      bloodPressure:    entry.bloodPressure ? String(entry.bloodPressure).trim() : undefined,
+      pulse:            num(entry.pulse),
+      respiratoryRate:  num(entry.respiratoryRate),
+      oxygenSaturation: num(entry.oxygenSaturation),
+      painScore:        num(entry.painScore),
+      glasgowComaScale: num(entry.glasgowComaScale),
+      note:             entry.note ? String(entry.note).trim() : undefined,
+    };
+    const hasClinicalValue = ["temperature", "bloodPressure", "pulse", "respiratoryRate", "oxygenSaturation", "painScore", "glasgowComaScale"]
+      .some((k) => row[k] !== undefined);
+    if (!hasClinicalValue) {
+      const err = new Error("At least one vital reading is required");
+      err.status = 400;
+      throw err;
+    }
+    // Snapshot refresh — only supplied fields.
+    const snapSet = {};
+    for (const k of ["temperature", "bloodPressure", "pulse", "respiratoryRate", "oxygenSaturation", "painScore", "glasgowComaScale"]) {
+      if (row[k] !== undefined) snapSet[`vitals.${k}`] = row[k];
+    }
+    const updated = await Emergency.findOneAndUpdate(
+      { emergencyNumber },
+      { $push: { vitalsLog: row }, $set: snapSet },
+      { new: true, runValidators: true },
+    );
+    if (!updated) {
+      const err = new Error("Emergency visit not found");
+      err.status = 404;
+      throw err;
+    }
+    return updated;
+  }
+
   /**
    * R7z: ER disposition is the legal exit point of an ER stay. Every
    * branch has NABH-mandated attestation that this method now enforces

@@ -60,6 +60,13 @@ router.post(
   requireAction("vitals.write"),
   emergencyController.addNursingNote
 );
+// R7hr(ER-P1.1) — serial vitals during the ER stay (the Observation loop
+// rides this). Same vitals.write tier as nursing notes: nurse-recordable.
+router.post(
+  "/:emergencyNumber/vitals",
+  requireAction("vitals.write"),
+  emergencyController.addVitals
+);
 // Disposition can be set by Doctor (clinical decision) or Receptionist
 // (operational — discharge home / refer out). The service-side state
 // machine enforces the per-branch attestation (R7z).

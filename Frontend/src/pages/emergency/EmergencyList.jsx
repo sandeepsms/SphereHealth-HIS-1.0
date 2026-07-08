@@ -83,6 +83,8 @@ export default function EmergencyList() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [triageFilter, setTriageFilter] = useState("");
+  // R7hr(ER-P1.1) — serial-vitals modal target (the visit being recorded).
+  const [vitalsFor, setVitalsFor] = useState(null);
   const inputRef = useRef(null);
 
   const load = useCallback(async () => {
@@ -233,14 +235,108 @@ export default function EmergencyList() {
             </div>
           )}
         </div>
-      ) : filtered.map(e => <ErRow key={`${e._id}-${e._source || "er"}`} e={e} navigate={navigate} />)}
+      ) : filtered.map(e => <ErRow key={`${e._id}-${e._source || "er"}`} e={e} navigate={navigate} onVitals={setVitalsFor} />)}
+
+      {vitalsFor && (
+        <VitalsModal
+          visit={vitalsFor}
+          onClose={() => setVitalsFor(null)}
+          onSaved={() => { setVitalsFor(null); load(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+/* R7hr(ER-P1.1) — serial-vitals quick entry. ER stays run hours (especially
+   Observation); the arrival snapshot alone hides deterioration. This modal
+   POSTs a timestamped vitalsLog row (backend refreshes the snapshot to the
+   latest values) and shows the trail so the nurse sees the trend while
+   recording. Inline-styled overlay — no page-CSS dependency. */
+function VitalsModal({ visit, onClose, onSaved }) {
+  const [f, setF] = useState({ bloodPressure: "", pulse: "", respiratoryRate: "", oxygenSaturation: "", temperature: "", painScore: "", glasgowComaScale: "", note: "" });
+  const [saving, setSaving] = useState(false);
+  const set = (k) => (ev) => setF((p) => ({ ...p, [k]: ev.target.value }));
+  const log = Array.isArray(visit.vitalsLog) ? [...visit.vitalsLog].slice(-5).reverse() : [];
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      await axios.post(`${API_ENDPOINTS.EMERGENCY}/${encodeURIComponent(visit.emergencyNumber)}/vitals`, f);
+      toast.success("Vitals recorded");
+      onSaved();
+    } catch (err) {
+      toast.error(err?.response?.data?.message || "Vitals save failed");
+      setSaving(false);
+    }
+  };
+
+  const F = ({ label, k, ph, w = 110 }) => (
+    <div style={{ display: "flex", flexDirection: "column", gap: 3, width: w }}>
+      <label style={{ fontSize: 10.5, fontWeight: 700, color: "#64748b" }}>{label}</label>
+      <input value={f[k]} onChange={set(k)} placeholder={ph}
+        style={{ padding: "7px 9px", border: "1px solid #cbd5e1", borderRadius: 7, fontSize: 13, fontFamily: "inherit" }} />
+    </div>
+  );
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div onClick={(ev) => ev.stopPropagation()} style={{ background: "#fff", borderRadius: 14, padding: 18, width: "min(560px, 96vw)", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 50px rgba(0,0,0,.25)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+          <div style={{ fontWeight: 800, fontSize: 15 }}>
+            ➕ Record Vitals — {visit.patientId?.fullName || visit.patientName || visit.emergencyNumber}
+            <div style={{ fontSize: 11, color: "#64748b", fontWeight: 600 }}>ER #{visit.emergencyNumber}</div>
+          </div>
+          <button onClick={onClose} style={{ border: "none", background: "transparent", fontSize: 18, cursor: "pointer", color: "#64748b" }}>✕</button>
+        </div>
+
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 10 }}>
+          <F label="BP (mmHg)" k="bloodPressure" ph="120/80" />
+          <F label="Pulse /min" k="pulse" ph="80" w={80} />
+          <F label="RR /min" k="respiratoryRate" ph="16" w={80} />
+          <F label="SpO₂ %" k="oxygenSaturation" ph="98" w={80} />
+          <F label="Temp °F" k="temperature" ph="98.6" w={80} />
+          <F label="Pain 0-10" k="painScore" ph="0" w={80} />
+          <F label="GCS 3-15" k="glasgowComaScale" ph="15" w={80} />
+        </div>
+        <div style={{ marginBottom: 12 }}>
+          <label style={{ fontSize: 10.5, fontWeight: 700, color: "#64748b" }}>Note (optional)</label>
+          <input value={f.note} onChange={set("note")} placeholder="e.g. post-nebulisation, patient comfortable"
+            style={{ width: "100%", padding: "7px 9px", border: "1px solid #cbd5e1", borderRadius: 7, fontSize: 13, fontFamily: "inherit", boxSizing: "border-box" }} />
+        </div>
+
+        <button onClick={save} disabled={saving}
+          style={{ width: "100%", padding: "10px 0", background: "#dc2626", color: "#fff", border: "none", borderRadius: 9, fontWeight: 800, fontSize: 13.5, cursor: saving ? "wait" : "pointer", fontFamily: "inherit" }}>
+          {saving ? "Saving…" : "Save Vitals"}
+        </button>
+
+        {log.length > 0 && (
+          <div style={{ marginTop: 14 }}>
+            <div style={{ fontSize: 11, fontWeight: 800, color: "#64748b", textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 6 }}>
+              Recent readings (latest first)
+            </div>
+            {log.map((r, i) => (
+              <div key={i} style={{ fontSize: 12, padding: "6px 8px", borderLeft: "3px solid #fca5a5", background: "#fef2f2", borderRadius: 6, marginBottom: 5 }}>
+                <strong>{r.recordedAt ? new Date(r.recordedAt).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" }) : "—"}</strong>
+                {" · "}
+                {[r.bloodPressure && `BP ${r.bloodPressure}`, r.pulse && `P ${r.pulse}`, r.respiratoryRate && `RR ${r.respiratoryRate}`,
+                  r.oxygenSaturation && `SpO₂ ${r.oxygenSaturation}%`, r.temperature && `T ${r.temperature}°F`,
+                  r.painScore != null && r.painScore !== "" && `Pain ${r.painScore}`, r.glasgowComaScale && `GCS ${r.glasgowComaScale}`]
+                  .filter(Boolean).join(" · ")}
+                {r.note && <span style={{ color: "#64748b" }}> — {r.note}</span>}
+                {r.recordedBy && <span style={{ color: "#94a3b8" }}> ({r.recordedBy})</span>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
 /* ───────────────────────────────────────────────────────────── */
 
-function ErRow({ e, navigate }) {
+function ErRow({ e, navigate, onVitals }) {
   const name   = e.patientId?.fullName     || e.patientName || "Unknown Patient";
   const uhid   = e.patientId?.UHID         || e.UHID;
   const age    = e.patientId?.age          ?? e.age;
@@ -302,6 +398,15 @@ function ErRow({ e, navigate }) {
                   onClick={(ev) => { ev.stopPropagation(); navigate(`/emergency-assessment/${uhid || ""}`); }}
                   title="Assessment">
             <i className="pi pi-file-edit" />
+          </button>
+        )}
+        {/* R7hr(ER-P1.1) — serial vitals during the stay; hidden on closed
+            cases and admission-sourced cards (those chart on the ward). */}
+        {!isAdmission && !["Discharged", "Completed"].includes(e.status) && (
+          <button className="rx-action-btn"
+                  onClick={(ev) => { ev.stopPropagation(); onVitals?.(e); }}
+                  title="Record vitals">
+            <i className="pi pi-heart" />
           </button>
         )}
         {uhid && (

@@ -360,6 +360,25 @@ class EmergencyController {
     }
   }
 
+  // R7hr(ER-P1.1) — serial vitals. Actor from req.user (forge-proof);
+  // body carries only the readings. Service validates + refreshes the
+  // arrival snapshot to the latest values.
+  async addVitals(req, res) {
+    try {
+      const visit = await emergencyService.addVitalsEntry(
+        req.params.emergencyNumber,
+        req.body || {},
+        {
+          recordedBy:     req.user?.fullName || req.user?.employeeId || "Staff",
+          recordedByRole: req.user?.role || "",
+        },
+      );
+      res.status(200).json({ success: true, message: "Vitals recorded", data: visit });
+    } catch (error) {
+      res.status(error.status || 400).json({ success: false, message: error.message });
+    }
+  }
+
   async updateDisposition(req, res) {
     try {
       // Pass through req.user as the implicit actor for nursing-note
