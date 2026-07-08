@@ -3,18 +3,18 @@
 > **Ye file kya hai:** Har session ka running task log. Naya session shuru karo toh **sirf ye file padho** — 2 minute me pata chal jayega kya chal raha tha, kaha se pick karna hai, aage kya karna hai.
 > **Rule:** Har work-session ke END pe ye file update karke commit karni hai.
 
-**Last updated:** 2026-07-08 (evening) · **Branch:** `claude/multi-hospital-deploy` · **Tree:** clean ✅ · **npm audit:** 0/0 dono ✅ · **Build:** green ✅
+**Last updated:** 2026-07-08 (late evening) · **Branch:** `claude/multi-hospital-deploy` · **Tree:** clean ✅ · **npm audit:** 0/0 dono ✅ · **Build:** green ✅
 
 ---
 
 ## 🎯 ABHI YAHA HAI (resume point)
 
-**Chal raha tha:** NABH-standards billing re-audit → **P1 (4 fixes) DONE → P2 (5 fixes) DONE**. Billing ab P1+P2 tiers pe NABH-solid hai.
+**Chal raha tha:** NABH-standards billing re-audit → **P1 (4) + P2 (5) + P3 (6 commits) SAB DONE**. Billing audit poora band — teeno tiers NABH-solid.
 
 **Sabse pehle karne layak (koi bhi ek):**
-1. **`git push`** — **17 commits unpushed hain** (`bac0bc73..b87b15e1`, poora billing-audit arc). Push karke PR-compare link owner ko dena. *(gh CLI authed nahi hai — push ke baad `https://github.com/<owner>/<repo>/pull/new/claude/multi-hospital-deploy` URL use karo.)*
-2. **NABH P3 polish** (chhote items, list neeche) — user "do p3" bole toh.
-3. **VPS Docker dry-run** — user ke server ki zaroorat, unke bolne pe.
+1. **`git push`** — **~24 commits unpushed hain** (`bac0bc73..e0c5ca48`, poora billing arc + TASK-LOG). Push karke PR-compare link owner ko dena. *(gh CLI authed nahi — `https://github.com/<owner>/<repo>/pull/new/claude/multi-hospital-deploy` URL.)*
+2. **VPS Docker dry-run** — user ke server ki zaroorat, unke bolne pe.
+3. **Task #43** — clinical prints unification verify+close (audit bola mostly done).
 
 ---
 
@@ -53,17 +53,21 @@
 
 ---
 
+### Round 4 — NABH P3 polish (2026-07-08 late) — SAB DONE ✅
+| Commit | Kya fix hua |
+|---|---|
+| `50c293de` | **Round-off** (patient share nearest-rupee + `roundOffAmount` + print line) **+ per-line Disc column** on FinalBill (+ raw-billItems `netAmount` fallback — DischargeQueue path ₹0 bug fix) |
+| `5412d7d7` | Numbered-invoice cancel → **§34 credit note pair** (register me invoice rehta hai, CN reverse karta hai — net zero WITH trail); snapshot cron mirror |
+| `d7869061` | **REC-YY-N payment receipt serials** — recordPayment + bulk legs + discharge waterfall; sequence-audit me `receipts` series; PaymentReceipt print prefers real serial |
+| `63f72465` | **CN_CREATE_FAILED** timeline marker + bill remarks; **tpaPreAuthNumber/tpaPreAuthAmount** structured fields; **refundedToName/Relation** (Death → next-of-kin) |
+| `e0c5ca48` | **Patient-facing Tariff List printable** + Print Tariff button on /chargeable-services (PRE.4) |
+
 ## 📌 AAGE KYA KARNA HAI
 
-### NABH P3 (polish — "do p3" pe karna)
-- [ ] Round-off field/line (tax invoice pe fractional paise aate hain)
-- [ ] Zero-payment numbered-invoice cancel → credit note nahi banta + GST register se excluded
-- [ ] Per-line discount FinalBill print pe nahi dikhta (capture hota hai)
-- [ ] Patient-facing tariff list (abhi staff-only `billing.read`)
-- [ ] Bill payments ka per-payment receipt serial (bulk legs `BULK-<ts>` — gap-less nahi)
-- [ ] CN creation best-effort hai (CN fail ho toh refund phir bhi succeed — hard-link karna hai ya nahi, product call)
-- [ ] TPA structured `preAuthNumber`/`authAmount` fields (abhi tpaClaimNumber reuse)
-- [ ] Death-case dedicated refund-to-next-of-kin flow (P2.3 ka note partial coverage deta hai)
+### Billing — bacha hua (sirf design/product calls, koi statutory gap nahi)
+- [ ] CN hard-link decision (abhi: fail → CN_CREATE_FAILED marker + remarks; block karna hai ya nahi — owner call)
+- [ ] Frontend: TPA pre-auth form me naye `preAuthNumber` field ka input + refund modal me "Refunded To/Relation" inputs (backend ready, UI optional)
+- [ ] `migrateNumberShortFormat.js` dev DB pe chalana (16 legacy-format bills — sequence-audit `legacyFormat` me visible)
 
 ### Non-billing backlog (purane arcs se)
 - [ ] **Task #43** — saare clinical prints (treatment chart, vital chart) Complete-File shared renderers pe unify (audit bola mostly already unified — verify + close)
@@ -71,7 +75,6 @@
 - [ ] 6 standalone formal docs unification — owner decision
 - [ ] **VPS Docker dry-run** — deploy/ + Dockerfiles ready hain (Option A: per-hospital deploy); user ka server chahiye
 - [ ] Frontend dashboard tile for discharge-TAT / lab-TAT (endpoints ready, UI consumer koi nahi — optional)
-- [ ] `migrateNumberShortFormat.js` dev DB pe chalana (16 legacy-format bills mixed hain — sequence-audit `legacyFormat` me dikhte hain)
 
 ### Standing discipline (har kaam pe lagoo)
 - Tree hamesha clean, security issues turant fix, npm audit 0/0, commit-per-fix, har fix live verify
