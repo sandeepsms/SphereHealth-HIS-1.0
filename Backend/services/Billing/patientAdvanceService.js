@@ -402,7 +402,7 @@ class PatientAdvanceService {
   // (refundedById, refundedByRole). Pre-R7bb body's refundedBy was
   // accepted directly so a forged body could attribute the refund
   // to any operator (a critical money out-flow).
-  async refundAdvance(advanceId, { refundedBy, refundedById, refundedByRole, refundReason, mode, transactionId, approverOverride }) {
+  async refundAdvance(advanceId, { refundedBy, refundedById, refundedByRole, refundReason, mode, transactionId, approverOverride, refundedToName, refundedToRelation }) {
     if (!advanceId) throw new Error("advanceId required");
     if (!refundedBy)   throw new Error("refundedBy name required for audit");
     if (!refundReason) throw new Error("refundReason required for audit");
@@ -460,6 +460,12 @@ class PatientAdvanceService {
           refundReason,
           refundMode,
           refundTransactionId: transactionId || null,
+          // R7hr(NABH-P3.5) — who physically RECEIVED the refund. On Death
+          // discharges the money goes to the next of kin, not the patient;
+          // the receipt + audit must name them (P2.3's unspent-advance note
+          // points the cashier here). Optional on routine refunds.
+          ...(refundedToName ? { refundedToName: String(refundedToName).trim() } : {}),
+          ...(refundedToRelation ? { refundedToRelation: String(refundedToRelation).trim() } : {}),
           // R7bb-FIX-E-3: Admin override audit anchor.
           ...(approverOverride && refundedById ? {
             approvedById: refundedById,

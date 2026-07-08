@@ -120,6 +120,10 @@ const BillingAuditSchema = new mongoose.Schema(
         // cleared. The refund itself remains the SoD-gated manual flow;
         // this row makes the stranded deposit visible on the timeline.
         "ADVANCE_UNSPENT_AT_DISCHARGE", // clearFinalBill detection
+        // R7hr(NABH-P3.5) — a swallowed CreditNote-create failure (refund
+        // or invoice-cancel leg) previously left only a console line; this
+        // marker puts the missing-CN gap on the timeline for re-raising.
+        "CN_CREATE_FAILED",
       ],
       index: true,
     },

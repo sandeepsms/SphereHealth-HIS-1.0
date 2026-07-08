@@ -2252,6 +2252,30 @@ class BillingService {
           // CN failure must not block the refund — log and continue.
           // eslint-disable-next-line no-console
           console.warn(`[recordRefund] CreditNote create failed for bill ${bill.billNumber}: ${e?.message}`);
+          // R7hr(NABH-P3.5) — a swallowed CN failure used to leave ZERO
+          // trace beyond a server log line: the refund stood in GSTR-1
+          // with no CDNR document and nobody knew to re-raise it. Now the
+          // gap lands on the chronological timeline (CN_CREATE_FAILED)
+          // and on the bill's remarks so the accountant can re-raise.
+          try {
+            const { emit } = require("../../models/Billing/BillingAudit");
+            await emit({
+              event:      "CN_CREATE_FAILED",
+              UHID:       bill.UHID,
+              patientId:  bill.patient,
+              billId:     bill._id,
+              billNumber: bill.billNumber,
+              amount:     amt,
+              actorName:  refundedBy || "Reception",
+              reason:     `CreditNote creation FAILED after refund ₹${amt} — re-raise manually. Error: ${e?.message}`,
+            });
+          } catch (_) { /* audit best-effort */ }
+          try {
+            await PatientBill.updateOne(
+              { _id: bill._id },
+              { $set: { remarks: `${bill.remarks || ""} | CN PENDING: refund ₹${amt} has no credit note — re-raise (${new Date().toISOString().slice(0, 10)})`.trim() } },
+            );
+          } catch (_) { /* remarks best-effort */ }
         }
       } catch (err) {
         if (err?.name === "VersionError") { lastErr = err; continue; }

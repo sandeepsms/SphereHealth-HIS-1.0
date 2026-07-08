@@ -422,6 +422,13 @@ const PatientBillSchema = new mongoose.Schema(
       default: "NOT_APPLICABLE" },
     tpaClaimNumber: { type: String, trim: true },
     tpaApprovedAmount: { type: Dec, default: () => toDec(0) },
+    // R7hr(NABH-P3.5) — structured pre-auth capture. Insurers issue a
+    // distinct pre-auth/AL number and a sanctioned amount BEFORE the final
+    // claim approval; both previously squatted on tpaClaimNumber /
+    // tpaPayableAmount, so the desk couldn't show "sanctioned vs claimed
+    // vs approved" side by side.
+    tpaPreAuthNumber: { type: String, trim: true, default: "" },
+    tpaPreAuthAmount: { type: Dec, default: () => toDec(0) },
     // R7bb-FIX-E-15 / D3-HIGH-2: maker-checker on TPA approval. The
     // user who SUBMITTED the preauth cannot also APPROVE the claim —
     // otherwise a single TPA Coordinator can move from preauth straight

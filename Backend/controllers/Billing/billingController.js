@@ -1484,6 +1484,11 @@ exports.tpaPreAuthSubmit = async (req, res, next) => {
     bill.tpaClaimNumber  = req.body.claimNumber || bill.tpaClaimNumber || "";
     bill.tpaClaimStatus  = "SUBMITTED";
     bill.tpaPayableAmount = Number(req.body.requestedAmount) || bill.tpaPayableAmount || 0;
+    // R7hr(NABH-P3.5) — structured pre-auth ref + sanctioned amount
+    // (insurer's AL number is distinct from the claim number; the
+    // sanctioned figure is distinct from the eventual approved amount).
+    if (req.body.preAuthNumber != null) bill.tpaPreAuthNumber = String(req.body.preAuthNumber).trim();
+    bill.tpaPreAuthAmount = Number(req.body.requestedAmount) || bill.tpaPreAuthAmount || 0;
     // R7bb-FIX-E-15 / D3-HIGH-2: stamp the submitter so tpaApprove can
     // enforce a different-actor check. We capture name + id + when so
     // the maker-checker trail is complete even if the user is later
@@ -1580,6 +1585,9 @@ exports.tpaApprove = async (req, res, next) => {
       b.tpaClaimStatus    = "APPROVED";
       b.tpaApprovedAmount = Number(req.body.approvedAmount) || b.tpaPayableAmount || 0;
       b.tpaApprovedAt     = new Date();
+      // R7hr(NABH-P3.5) — insurers often issue/confirm the AL/pre-auth
+      // number WITH the approval; capture it structurally when supplied.
+      if (req.body.preAuthNumber != null) b.tpaPreAuthNumber = String(req.body.preAuthNumber).trim();
       // R7bb-C / S5 (D7-CRIT-1): actor from req.user only — body's
       // approvedBy is ignored so a forged body can't impersonate the
       // TPA desk. Fallback to "TPA Desk" remains for the (impossible
@@ -1859,6 +1867,20 @@ exports.cancelBill = async (req, res, next) => {
       }
     } catch (cnErr) {
       console.error(`[cancelBill] credit-note for cancelled invoice ${bill.billNumber} failed:`, cnErr.message);
+      // R7hr(NABH-P3.5) — surface the missing-CN gap on the timeline so
+      // the accountant re-raises it (mirrors recordRefund's marker).
+      try {
+        const { emit } = require("../../models/Billing/BillingAudit");
+        await emit({
+          event:      "CN_CREATE_FAILED",
+          UHID:       bill.UHID,
+          patientId:  bill.patient,
+          billId:     bill._id,
+          billNumber: bill.billNumber,
+          actorName:  cancelledBy,
+          reason:     `CreditNote for CANCELLED invoice ${bill.billNumber} FAILED — the register keeps the invoice; re-raise the CN manually. Error: ${cnErr.message}`,
+        });
+      } catch (_) { /* audit best-effort */ }
     }
 
     // R7ap-F15: cancel-bill audit — outside the retry block so it doesn't
@@ -3309,6 +3331,9 @@ exports.refundAdvance = async (req, res) => {
       mode:             req.body?.mode          || req.body?.refundMode,
       transactionId:    req.body?.transactionId || req.body?.refundTransactionId || null,
       approverOverride,
+      // R7hr(NABH-P3.5) — recipient capture (next of kin on Death cases).
+      refundedToName:     req.body?.refundedToName || null,
+      refundedToRelation: req.body?.refundedToRelation || null,
     });
     res.json({ success: true, data: adv });
   } catch (e) {

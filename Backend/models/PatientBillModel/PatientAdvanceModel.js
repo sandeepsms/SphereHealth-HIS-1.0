@@ -138,6 +138,11 @@ const PatientAdvanceSchema = new mongoose.Schema(
       },
     },
     refundMode:            { type: String, trim: true, default: null }, // CASH/UPI/BANK_TRANSFER
+    // R7hr(NABH-P3.5) — who physically received the refund (next of kin on
+    // Death discharges; attendant with authority letter; the patient
+    // themselves on routine refunds — optional then).
+    refundedToName:        { type: String, trim: true, default: null },
+    refundedToRelation:    { type: String, trim: true, default: null },
     refundTransactionId:   { type: String, trim: true, default: null },
     // R7bb-FIX-E-3 / D3-CRIT-3: Admin-only override slot. When a refund
     // is requested by the same cashier who took the deposit, the service
