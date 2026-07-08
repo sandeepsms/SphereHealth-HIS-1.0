@@ -2621,9 +2621,15 @@ exports.sequenceAudit = async (req, res, next) => {
     const PatientAdvance = require("../../models/PatientBillModel/PatientAdvanceModel");
     const CreditNote     = require("../../models/Billing/CreditNote");
 
+    // R7hr(NABH-P1.2) — parse the sequence from AFTER the prefix, not a
+    // fixed-width slice(-padLen). Bills mint the short `BILL-YY-NN` format
+    // (generateBillNumber, billingService.js) whose suffix auto-widens past
+    // 99 (NN → NNN…), so a right-slice mis-parses; ADV/CN keep their fixed
+    // 6-wide suffixes and parse identically either way. padLen is now only
+    // the display padding for reported missing numbers.
     const checkGaps = async (Model, field, prefix, padLen) => {
       const rows = await Model.find({ [field]: { $regex: `^${prefix}` } }).select(field).lean();
-      const nums = rows.map((r) => parseInt(r[field].slice(-padLen), 10)).filter(Number.isFinite).sort((a, b) => a - b);
+      const nums = rows.map((r) => parseInt(String(r[field]).slice(prefix.length), 10)).filter(Number.isFinite).sort((a, b) => a - b);
       if (nums.length === 0) return { prefix, total: 0, max: 0, missing: [] };
       const max = nums[nums.length - 1];
       const present = new Set(nums);
@@ -2632,11 +2638,31 @@ exports.sequenceAudit = async (req, res, next) => {
       return { prefix, total: nums.length, max, missing };
     };
 
-    const [bills, advances, creditNotes] = await Promise.all([
-      checkGaps(PatientBill,    "billNumber",     `BILL-${year}-`, 6),
+    // R7hr(NABH-P1.2) — the bill series is SHORT-format (`BILL-YY-`), not
+    // `BILL-YYYY-`. The old scan looked for the long prefix, so every bill
+    // minted since the R7hb short-format switch was invisible to gap
+    // detection — the auditor reported "0 bills, no gaps" while real bills
+    // existed (gap-less claim unverifiable in practice). Scan the short
+    // series, and separately surface any rows NOT in the short format
+    // (legacy `BILL-YYYY-NNNNNN` / `BILL-YYYYMMDD-NNNNN` rows that
+    // migrateNumberShortFormat.js hasn't renamed yet) so they are a
+    // visible finding instead of silently unaudited.
+    const yy = String(year).slice(-2);
+    const [bills, advances, creditNotes, nonShortRows] = await Promise.all([
+      checkGaps(PatientBill,    "billNumber",     `BILL-${yy}-`,   2),
       checkGaps(PatientAdvance, "receiptNumber",  `ADV-${year}-`,  6),
       checkGaps(CreditNote,     "creditNoteNumber", `CN-${year}-`, 6),
+      PatientBill.find({
+        billNumber: { $type: "string", $not: { $regex: `^BILL-\\d{2}-\\d+$` } },
+      }).select("billNumber").limit(500).lean(),
     ]);
+    const legacyFormat = {
+      total: nonShortRows.length,
+      note: nonShortRows.length
+        ? "Bills outside the current BILL-YY-N series — run migrateNumberShortFormat.js to unify; these rows are NOT gap-scanned."
+        : "All numbered bills are in the current BILL-YY-N series.",
+      sample: nonShortRows.slice(0, 10).map((r) => r.billNumber),
+    };
 
     res.json({
       success: true,
@@ -2645,6 +2671,7 @@ exports.sequenceAudit = async (req, res, next) => {
         bills,
         advances,
         creditNotes,
+        legacyFormat,
         anyGaps: bills.missing.length + advances.missing.length + creditNotes.missing.length > 0,
       },
     });

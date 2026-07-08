@@ -464,11 +464,6 @@ const PatientBillSchema = new mongoose.Schema(
     toObject: { virtuals: true, transform: decimalToNumber } },
 );
 
-// Atomic bill-number sequence via shared Counter (replaces race-prone
-// countDocuments). Generator stays in pre("save") — billNumber isn't
-// `required`, so validation order is irrelevant here.
-const { nextSequence: nextSeqBill } = require("../../utils/counter");
-
 // ── Recalc helper ───────────────────────────────────────────────
 // R7b: extracted from the pre-save hook so other code paths
 // (settlementAdjust, audit log "after" snapshots) can mirror what the
@@ -636,12 +631,36 @@ PatientBillSchema.post("init", function () {
   }
 });
 
-PatientBillSchema.pre("save", async function (next) {
-  if (this.isNew && !this.billNumber && this.billStatus && this.billStatus !== "DRAFT") {
-    const year = new Date().getFullYear();
-    const seq  = await nextSeqBill(`bill:${year}`);
-    this.billNumber = `BILL-${year}-${String(seq).padStart(6, "0")}`;
+// R7hr(NABH-P1.2) — number-minting fallback for bills CREATED directly in a
+// non-DRAFT state. Two fixes in one:
+//   (1) It now delegates to the SAME generator the service layer uses. The
+//       old fallback minted `BILL-YYYY-NNNNNN` off its own counter key
+//       (`bill:${YYYY}`) while generateBillNumber mints `BILL-YY-NN` off
+//       `bill:${YY}` — two independent series in two formats, and the short
+//       series was invisible to sequenceAudit. One generator ⇒ one gap-less
+//       series (IT Rule 46 / §44AB).
+//   (2) It runs in pre("validate"), not pre("save"). Mongoose validates
+//       BEFORE pre-save hooks, and the R7bp path-validator ("non-DRAFT ⇒
+//       billNumber present") therefore rejected the document before the old
+//       pre-save fallback ever got to mint — the fallback was dead code and
+//       direct non-DRAFT creation always ValidationError'd. Minting in
+//       pre("validate") restores the safety net: number first, validator
+//       passes, invariant intact.
+// Lazy require: billingService requires this model at load, so a top-level
+// import here would be circular; at validate time both modules are loaded.
+PatientBillSchema.pre("validate", async function (next) {
+  try {
+    if (this.isNew && !this.billNumber && this.billStatus && this.billStatus !== "DRAFT") {
+      const { generateBillNumber } = require("../../services/Billing/billingService");
+      this.billNumber = await generateBillNumber();
+    }
+    next();
+  } catch (e) {
+    next(e);
   }
+});
+
+PatientBillSchema.pre("save", async function (next) {
 
   // R7bm-F6 / META-5 — append-only guard on writeOffAmount.
   // Write-offs represent finance-team approved residual absorption on
