@@ -12,10 +12,11 @@
 **Abhi hua:** ER-P1 (4 commits) + **DC-P1 + DC-P2-conversion DONE**. Emergency aur Day Care dono ke core loops band.
 
 **Sabse pehle karne layak (koi bhi ek):**
-1. **`git push`** — **~8 commits unpushed** (`5f3f5d9c..b6469107` — ER-P1 arc + DC-P1 board/checklist/readiness `57915ba0` + DC→IPD conversion `b6469107` + TASK-LOG). PR pe auto-add.
-2. **DC-P2 bacha hua**: NABH Day Care register (emitter pattern ready) + DC discharge-summary variant (procedure + readiness score + home advice).
-3. **ER-P2** — SBAR handover on Admit, referral-letter wiring, ER TAT tile.
-4. VPS Docker dry-run (Docker install/server chahiye) · Task #43 prints unification.
+1. **`git push`** — **~10 commits unpushed** (`5f3f5d9c..9e25ab56` — ER-P1 arc + DC-P1 + DC-P2 poora + TASK-LOGs). PR pe auto-add.
+2. **ER-P2** — SBAR handover on Admit, referral-letter wiring, ER TAT tile.
+3. VPS Docker dry-run (Docker install/server chahiye) · Task #43 prints unification.
+
+**DC-P2 DONE (2026-07-09):** `b6469107` DC→IPD conversion; `9e25ab56` NABH Day Care register (`DayCareRegisterModel` + `emitDayCare`, idempotent, gate-pass + conversion se emit) + `dc-summary` printable (checklist state + Aldrete breakdown + home advice, board pe 🖨). **Emergency + Day Care dono workflows ab complete** (ER-P2/P3 polish backlog me).
 
 ### DC-P1 + P2-conversion (2026-07-09)
 | Commit | Kya hua |
