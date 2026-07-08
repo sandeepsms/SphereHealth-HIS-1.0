@@ -153,6 +153,37 @@ class BillingService {
     else            filter.admission = null;       // explicit so the OPD
                                                    // companion index matches
 
+    // R7hr(billing-audit R1b) — SERVICE walk-in fresh-slate. A walk-in service
+    // bill carries no admission and no visit entity, so its {UHID, "SERVICE",
+    // admission:null} DRAFT is shared forever: a NEW walk-in would silently
+    // merge its cart into a PRIOR walk-in's unfinalised DRAFT (two visits → one
+    // bill, wrong per-visit accounting, and the patient sees stale charges).
+    // Billing rule 1 says each fresh walk-in is its own bill. So if a PRIOR-DAY
+    // SERVICE draft that still holds charges is open, finalise it through the
+    // sanctioned generateFinalBill path — turning those abandoned charges into
+    // a tracked pending bill that resurfaces at the next visit (see
+    // getPreviousPendingDues) — which frees the DRAFT slot so the upsert below
+    // mints a FRESH draft for today. Scoped strictly to SERVICE + no admission
+    // (OPD/IPD/DAYCARE/EMERGENCY isolate by admission/visitId and are
+    // untouched). Same-day drafts are left alone (the cart is still being built
+    // this session). Empty stale drafts are harmless: generateFinalBill rejects
+    // them (rolls back to DRAFT) and we simply reuse them. Fail-safe: any
+    // hiccup falls through to the normal upsert (prior merge behaviour — never
+    // blocks the new walk-in).
+    if (visitType === "SERVICE" && !admissionId) {
+      try {
+        const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+        const staleDraft = await PatientBill.findOne({
+          ...filter, createdAt: { $lt: startOfToday },
+        }).select("_id billItems");
+        if (staleDraft && (staleDraft.billItems?.length || 0) > 0) {
+          await this.generateFinalBill(staleDraft._id, "System (auto-close stale walk-in draft)");
+        }
+      } catch (_) {
+        // Empty-draft rejection / finalize hiccup → leave as-is, fall through.
+      }
+    }
+
     // setOnInsert payload — only applied if the upsert creates a new doc.
     // billNumber is INTENTIONALLY omitted: DRAFT bills carry null per
     // Pattern B (see _ensureBillNumberForNonDraft note above).
