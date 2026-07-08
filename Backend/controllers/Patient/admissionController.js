@@ -912,6 +912,12 @@ class AdmissionController {
     if (!adm) {
       return res.status(409).json({ success: false, message: "Convert failed — admission must be an ACTIVE Day Care admission" });
     }
+    // R7hr(DC-P2) — Day Care register: conversion is a registrable outcome.
+    try {
+      const emitter = require("../../services/Compliance/nabhRegisterEmitter");
+      emitter.emitDayCare({ admission: adm, actor: req.user, outcome: "ConvertedToIPD", remarks: reason })
+        .catch((e) => console.error("DC register emit error:", e.message));
+    } catch (_) { /* never block conversion */ }
     return res.json({ success: true, message: "Converted to IPD — same admission continues (bed, bills, episode intact)", data: adm });
   });
 
@@ -1314,6 +1320,15 @@ class AdmissionController {
         success: false,
         message: `Final bill must be cleared before issuing gate pass (current stage: ${stage})`,
       });
+    }
+
+    // R7hr(DC-P2) — NABH Day Care register row at exit (best-effort).
+    if (/day ?care/i.test(adm.admissionType || "")) {
+      try {
+        const emitter = require("../../services/Compliance/nabhRegisterEmitter");
+        emitter.emitDayCare({ admission: adm, actor: req.user, outcome: "SameDayDischarge" })
+          .catch((e) => console.error("DC register emit error:", e.message));
+      } catch (_) { /* never block gate pass */ }
     }
 
     // Free the bed so the next admission can use it. Mirrors

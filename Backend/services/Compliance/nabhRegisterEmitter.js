@@ -3318,11 +3318,63 @@ async function emitPROMPREMReg(payload = {}) {
   }
 }
 
+// R7hr(DC-P2) — NABH Day Care register. One row per day-care admission,
+// written at EXIT (gate-pass or DC→IPD conversion) so the row carries the
+// complete story: procedure, checklist state, readiness score, outcome.
+// Idempotent by admissionId — a conversion followed by a later discharge
+// updates the same row's outcome/dischargedAt instead of duplicating.
+async function emitDayCare(args = {}) {
+  try {
+    const { admission, actor = {}, outcome = "SameDayDischarge", remarks = "" } = args;
+    if (!admission || !admission._id) return null;
+    const DayCareRegister = require("../../models/Compliance/DayCareRegisterModel");
+    const { nextSequence } = require("../../utils/counter");
+
+    const cl = admission.dayCare?.preProcChecklist || {};
+    const checklistComplete = !!(cl.consentVerified && cl.npoConfirmed && cl.siteMarked && cl.highRiskMedsReviewed);
+    const payload = {
+      patientId:       admission.patientId,
+      UHID:            admission.UHID,
+      patientName:     admission.patientName || "",
+      age:             admission.age || null,
+      sex:             admission.gender || "",
+      admissionNumber: admission.admissionNumber || "",
+      procedure:       admission.reasonForAdmission || admission.provisionalDiagnosis || "",
+      doctor:          admission.attendingDoctor || "",
+      admittedAt:      admission.admissionDate || admission.createdAt,
+      dischargedAt:    admission.actualDischargeDate || (outcome === "SameDayDischarge" ? new Date() : null),
+      checklistComplete,
+      readinessScore:  admission.dayCare?.readiness?.total ?? null,
+      outcome,
+      remarks:         remarks || admission.dayCare?.convertedToIpdReason || "",
+      recordedBy:      actor.fullName || actor.employeeId || "System",
+      recordedByRole:  actor.role || "",
+    };
+    const existing = await DayCareRegister.findOne({ admissionId: admission._id });
+    if (existing) {
+      Object.assign(existing, payload);
+      await existing.save();
+      return existing;
+    }
+    const year = new Date().getFullYear();
+    const seq = await nextSequence(`dcregister:${year}`);
+    return await DayCareRegister.create({
+      dcNumber: `DCR-${year}-${String(seq).padStart(4, "0")}`,
+      admissionId: admission._id,
+      ...payload,
+    });
+  } catch (e) {
+    console.error("[nabhRegisterEmitter] emitDayCare failed:", e?.message || e);
+    return null;
+  }
+}
+
 // ═════════════════════════════════════════════════════════════════════════
 // Exports
 // ═════════════════════════════════════════════════════════════════════════
 
 module.exports = {
+  emitDayCare,   // R7hr(DC-P2)
   emitBloodSugar,
   emitBloodSugarFromVitalSheet,
   emitEmergency,

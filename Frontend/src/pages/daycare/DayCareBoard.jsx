@@ -10,6 +10,7 @@ import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
+import { openPrint } from "../../Components/print/openPrint";   // R7hr(DC-P2)
 
 const C = { amber: "#d97706", green: "#059669", red: "#dc2626", slate: "#64748b" };
 
@@ -86,6 +87,19 @@ export default function DayCareBoard() {
                 </div>
               </div>
               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                {/* R7hr(DC-P2) — discharge-summary print (READY patients ke liye handout) */}
+                <button
+                  onClick={() => openPrint("dc-summary", {
+                    admissionNumber: a.admissionNumber, patientName: a.patientName || a.UHID, uhid: a.UHID,
+                    age: a.age, gender: a.gender, procedure: a.reasonForAdmission || a.provisionalDiagnosis,
+                    doctor: a.attendingDoctor, admittedAt: a.admissionDate, dischargedAt: a.actualDischargeDate,
+                    checklist: a.dayCare?.preProcChecklist || {}, readiness: a.dayCare?.readiness || {},
+                    printAudit: { entityType: "Admission", entityId: a._id, entityNumber: a.admissionNumber, UHID: a.UHID, patientName: a.patientName },
+                  })}
+                  title="Print day-care discharge summary"
+                  style={{ padding: "6px 10px", borderRadius: 7, border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer" }}>
+                  🖨
+                </button>
                 <button onClick={() => setChecklistFor(a)} style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 11.5 }}>☑ Checklist</button>
                 <button onClick={() => setReadinessFor(a)} style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 11.5 }}>📊 Readiness</button>
                 <button onClick={() => navigate(`/billing/ipd/${a._id}`)} title="Live ledger" style={{ padding: "6px 10px", borderRadius: 7, border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer" }}>₹</button>
