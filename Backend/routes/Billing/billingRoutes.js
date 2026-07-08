@@ -73,6 +73,8 @@ router.post("/:billId/tpa-deny",           vBill, requireAction("tpa.claim"),   
 // endpoint posts the actual remittance + handles the shortfall (default:
 // bump patientPayableAmount; alt: write off via extraDiscount).
 router.post("/:billId/tpa-settle",         vBill, requireAction("tpa.claim"),    ctrl.tpaSettle);
+// UHID-wide by default; OPTIONAL ?visitId / ?admissionId / ?visitType narrow
+// the bills[] to one encounter server-side (R7hr billing-audit R1c, additive).
 router.get("/uhid/:UHID", requireAction("billing.read"), ctrl.getBillsByUHID); // R7ap-F5
 // R7ap-F17: canonical UHID totals endpoint — single source of truth for
 // every page showing per-patient money KPIs.

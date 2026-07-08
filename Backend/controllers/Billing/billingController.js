@@ -26,6 +26,30 @@ exports.getBillsByUHID = async (req, res) => {
         data.bills.forEach((b) => decimalToNumber(null, b));
       }
     } catch (_) { /* best-effort */ }
+    // R7hr(billing-audit R1c) — OPTIONAL visit-scope filter. The default
+    // response stays UHID-wide (lifetime history) because ReceptionBilling's
+    // current/history split + the accounts collection views depend on it. When
+    // a caller explicitly passes ?visitId / ?admissionId / ?visitType, narrow
+    // the returned bills[] to that single encounter server-side — a caller can
+    // then request a pre-scoped view instead of pulling everything and
+    // filtering client-side. Purely additive: absent params ⇒ no filtering ⇒
+    // byte-for-byte the previous behaviour. `data.scoped` echoes what matched.
+    const { visitId, admissionId, visitType } = req.query;
+    if (Array.isArray(data?.bills) && (visitId || admissionId || visitType)) {
+      const before = data.bills.length;
+      data.bills = data.bills.filter((b) => {
+        if (visitType   && String(b.visitType)        !== String(visitType))   return false;
+        if (visitId     && String(b.visitId || "")    !== String(visitId))     return false;
+        if (admissionId && String(b.admission || "")  !== String(admissionId)) return false;
+        return true;
+      });
+      data.scoped = {
+        applied: true,
+        by:      { visitId: visitId || null, admissionId: admissionId || null, visitType: visitType || null },
+        matched: data.bills.length,
+        of:      before,
+      };
+    }
     res.json({ success: true, data });
   } catch (e) {
     const status = e.message.includes("not found") ? 404 : 500;
