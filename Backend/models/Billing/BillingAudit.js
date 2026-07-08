@@ -115,6 +115,11 @@ const BillingAuditSchema = new mongoose.Schema(
         "BILL_ITEM_ORDER_CANCELLED", // cancelBillItemOrder — line excluded from payable
         "TPA_REFUND_PENDING_INSURER",// recordRefund TPA_CLAIM leg (was silently dropped)
         "PHARMACY_SALE_RECORDED",    // pharmacy dispense/sale money-in
+        // R7hr(NABH-P2.3) — patient-money safety marker: an unapplied
+        // advance balance still existed when the discharge bill was
+        // cleared. The refund itself remains the SoD-gated manual flow;
+        // this row makes the stranded deposit visible on the timeline.
+        "ADVANCE_UNSPENT_AT_DISCHARGE", // clearFinalBill detection
       ],
       index: true,
     },

@@ -277,6 +277,14 @@ const AdmissionSchema = new mongoose.Schema(
       summaryId:           { type: mongoose.Schema.Types.ObjectId, ref: "DischargeSummary", default: null },
       summaryFinalizedAt:  Date,
       billWaiverReason:    String,   // mandatory reason when LAMA/Death clears with a balance
+      // R7hr(NABH-P2.3) — unspent advance detected at bill-clear time.
+      // Patient-money safety: a deposit that was never applied to any bill
+      // used to sit silently after discharge (nothing surfaced it unless
+      // the patient had also OVERPAID — dischargeOverage). The cashier now
+      // sees this figure at bill-clear + it persists here for the discharge
+      // queue / MRD review. Refund itself stays the manual SoD-gated
+      // refundAdvance flow (never auto-refunded).
+      unspentAdvanceAtClear: { type: Number, default: 0 },
       dischargedBy:        String,   // JWT actor who issued the final bed-clear/gate-pass
       // R7i: Same-day discharge undo (Admin override). Populated by
       // POST /admissions/:id/reactivate when an admin re-activates a

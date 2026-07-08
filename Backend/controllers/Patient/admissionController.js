@@ -1144,7 +1144,50 @@ class AdmissionController {
       });
     }
 
-    return res.json({ success: true, data: adm.dischargeWorkflow });
+    // R7hr(NABH-P2.3) — unspent-advance surfacing at bill clearance.
+    // dischargeOverage only fires when the patient OVERPAID the bill; a
+    // deposit that simply never got applied (unspent-but-not-overpaid)
+    // sat silently after discharge — nothing told the cashier the patient
+    // was owed money (highest patient-money-safety gap in the NABH
+    // re-audit). Detect it here: persist on dischargeWorkflow for the
+    // discharge queue / MRD, mark the chronological timeline, and hand the
+    // cashier an actionable note in the response. Refund stays the manual
+    // SoD-gated refundAdvance flow — never auto-refunded. Best-effort:
+    // detection failure must never block a legitimate discharge.
+    let unspentAdvance = 0;
+    try {
+      const advSvc = require("../../services/Billing/patientAdvanceService");
+      unspentAdvance = await advSvc.getUnspentBalance(admGate?.UHID || adm.UHID);
+      if (unspentAdvance > 0.5) {
+        await Admission.updateOne(
+          { _id: adm._id },
+          { $set: { "dischargeWorkflow.unspentAdvanceAtClear": unspentAdvance } },
+        ).catch(() => {});
+        try {
+          const { emit } = require("../../models/Billing/BillingAudit");
+          await emit({
+            event:     "ADVANCE_UNSPENT_AT_DISCHARGE",
+            UHID:      admGate?.UHID || adm.UHID,
+            amount:    unspentAdvance,
+            actorName: req.user?.fullName || req.user?.employeeId || "Reception",
+            actorId:   req.user?._id || null,
+            reason:    `Bill cleared for admission ${adm.admissionNumber || adm._id} with ₹${unspentAdvance.toFixed(2)} advance still unspent — refund or apply before the patient leaves.`,
+          });
+        } catch (_) { /* audit best-effort */ }
+      }
+    } catch (_) { /* detection best-effort */ }
+
+    return res.json({
+      success: true,
+      data: adm.dischargeWorkflow,
+      unspentAdvance,
+      ...(unspentAdvance > 0.5 ? {
+        unspentAdvanceNote:
+          `₹${unspentAdvance.toFixed(2)} advance is still unspent — refund it ` +
+          `${dispoType === "Death" ? "to the next of kin " : ""}(Billing Counter → Advances → Refund) ` +
+          `or apply it to dues before the patient leaves.`,
+      } : {}),
+    });
   });
 
   // POST /api/admissions/:id/issue-gate-pass
