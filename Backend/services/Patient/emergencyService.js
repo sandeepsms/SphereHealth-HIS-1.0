@@ -356,6 +356,37 @@ class EmergencyService {
           } else {
             note(`[SYSTEM] Bed "${bed}" was not auto-claimed (already occupied or not a registered bed) — Reception must allocate/confirm the bed.`, "System");
           }
+          // R7hr(billing-audit P2) — consolidate the ER-TRIAGE charge into the
+          // episode. At visit-creation the triage fee was billed against the
+          // SYNTHETIC admission id (visit._id) because no Admission existed yet
+          // (emergencyController → onEmergencyVisitCreated fallback). Now that
+          // the real stub admission exists, rebind that EMERGENCY draft bill +
+          // its trigger(s) from visit._id → stub._id so the whole ER→IPD
+          // episode lives under ONE admission — the IPD ledger, the multi-bill
+          // discharge gate, and the final bill's payment tie-out all then see
+          // the triage charge instead of it stranding on a phantom-id bill.
+          // Done BEFORE onAdmissionCreated so getOrCreateDraftBill(stub,
+          // EMERGENCY) REUSES this rebound draft and appends the registration/
+          // admission fees onto it (one consolidated bill) rather than spawning
+          // a duplicate. Own try — a rebind hiccup must not drop the admission.
+          try {
+            const PatientBill    = require("../../models/PatientBillModel/PatientBillModel");
+            const BillingTrigger = require("../../models/Billing/BillingTrigger");
+            const rb = await PatientBill.updateMany(
+              { admission: visit._id },
+              { $set: { admission: stub._id, admissionNumber: stub.admissionNumber } },
+            );
+            await BillingTrigger.updateMany(
+              { admissionId: visit._id },
+              { $set: { admissionId: stub._id } },
+            );
+            if (rb.modifiedCount) {
+              note(`[SYSTEM] ER-triage charge(s) rebound onto admission ${stub.admissionNumber} — triage now billed within the IPD episode.`, "System (ER→IPD)");
+            }
+          } catch (re) {
+            note(`[SYSTEM] ER-triage charge rebind failed: ${re.message}. Reception must move the triage charge onto the IPD ledger.`, "System (ER→IPD)");
+          }
+
           // R7hr(billing-audit P1.1) — bootstrap billing for the bridged ER→IPD
           // admission exactly like the reception path (admissionController.
           // createAdmission → onAdmissionCreated). Without this the emergency
