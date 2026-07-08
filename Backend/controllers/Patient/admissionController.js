@@ -911,13 +911,27 @@ class AdmissionController {
     }
 
     const openBillCond = { billStatus: { $nin: ["PAID", "CANCELLED", "REFUNDED"] } };
-    let gateBill = await PatientBill.findOne({ admission: req.params.id, ...openBillCond });
-    if (!gateBill && admGate?.admissionNumber)
-      gateBill = await PatientBill.findOne({ admissionNumber: admGate.admissionNumber, ...openBillCond });
-    if (!gateBill && admGate?.UHID)
-      gateBill = await PatientBill.findOne({ UHID: admGate.UHID, visitType: { $in: ["IPD", "DAYCARE"] }, ...openBillCond });
-
-    const balanceNow     = gateBill ? toNum(gateBill.balanceAmount) : 0;
+    // R7hr(billing-audit R3) — sum ALL open bills for this admission, not just
+    // one. An admission can carry more than a single open bill (the IPD bill
+    // plus a separately-generated day-care / service bill, or a residual DRAFT
+    // beside a PARTIAL). The old single findOne checked only the first, so a
+    // patient could be discharged still owing on the un-checked bill. Match by
+    // admission link OR admissionNumber denorm (one $or, each doc once — no
+    // double count); fall back to the UHID IPD/DAYCARE sweep only when nothing
+    // matched by admission.
+    let gateBills = await PatientBill.find({
+      ...openBillCond,
+      $or: [
+        { admission: req.params.id },
+        ...(admGate?.admissionNumber ? [{ admissionNumber: admGate.admissionNumber }] : []),
+      ],
+    }).lean();
+    if (!gateBills.length && admGate?.UHID) {
+      gateBills = await PatientBill.find({
+        UHID: admGate.UHID, visitType: { $in: ["IPD", "DAYCARE"] }, ...openBillCond,
+      }).lean();
+    }
+    const balanceNow     = gateBills.reduce((s, b) => s + toNum(b.balanceAmount), 0);
     const enteredAmt     = Number(req.body.finalBillAmount) || 0;
     const remainingAfter = balanceNow - enteredAmt;
     const isNormalDispo  = !["LAMA", "DAMA", "Death", "Absconded", "Referral"].includes(dispoType);
@@ -1033,32 +1047,55 @@ class AdmissionController {
       });
     }
 
-    // Also push a payment row onto the linked IPD/DAYCARE bill so the
+    // Also push payment row(s) onto the admission's open bill(s) so the
     // patient's outstanding balance reflects the final-bill clearance.
-    // We try (a) admission link, (b) admissionNumber denorm, then
-    // (c) the patient's open IPD/DAYCARE bill — covering bills created
-    // through any of the three paths the system supports.
+    // R7hr(billing-audit R3) — WATERFALL across EVERY open bill (oldest first)
+    // instead of dumping the whole payment onto the first bill found. The gate
+    // above now sums ALL open bills for the admission, so a multi-bill
+    // admission needs the full total to pass; here we distribute that total
+    // bill-by-bill — each takes min(remaining, its own balance), and the last
+    // bill soaks up any rounding/overpayment remainder so the whole collected
+    // amount stays on the audit trail. Reduces EXACTLY to the old single-bill
+    // behaviour when the admission has one open bill (pay = full finalAmt).
+    // Bill resolution still covers all three link paths: (a) admission ref,
+    // (b) admissionNumber denorm, (c) UHID IPD/DAYCARE fallback.
     try {
-      const finalAmt = Number(req.body.finalBillAmount) || 0;
+      const finalAmt = Number(req.body.finalBillAmount) || 0;   // toNum already in scope (L894)
       if (finalAmt > 0) {
         const openCond = { billStatus: { $nin: ["PAID", "CANCELLED", "REFUNDED"] } };
-        let bill = await PatientBill.findOne({ admission: adm._id, ...openCond });
-        if (!bill && adm.admissionNumber)
-          bill = await PatientBill.findOne({ admissionNumber: adm.admissionNumber, ...openCond });
-        if (!bill && adm.UHID)
-          bill = await PatientBill.findOne({
+        let bills = await PatientBill.find({
+          ...openCond,
+          $or: [
+            { admission: adm._id },
+            ...(adm.admissionNumber ? [{ admissionNumber: adm.admissionNumber }] : []),
+          ],
+        }).sort({ createdAt: 1 });
+        if (!bills.length && adm.UHID)
+          bills = await PatientBill.find({
             UHID: adm.UHID,
             visitType: { $in: ["IPD", "DAYCARE"] },
             ...openCond,
-          });
-        if (bill) {
-          // Validate paymentMode against PaymentSchema enum
-          const ALLOWED = ["CASH", "CARD", "UPI", "CHEQUE", "ONLINE", "TPA_CLAIM"];
-          const reqMode = String(req.body.paymentMode || "CASH").toUpperCase();
-          const mode = ALLOWED.includes(reqMode) ? reqMode : "CASH";
+          }).sort({ createdAt: 1 });
+
+        // Validate paymentMode against PaymentSchema enum (once).
+        const ALLOWED = ["CASH", "CARD", "UPI", "CHEQUE", "ONLINE", "TPA_CLAIM"];
+        const reqMode = String(req.body.paymentMode || "CASH").toUpperCase();
+        const mode = ALLOWED.includes(reqMode) ? reqMode : "CASH";
+
+        let remaining = finalAmt;
+        for (let i = 0; i < bills.length && remaining > 0.005; i++) {
+          const bill = bills[i];
+          const patientShare = toNum(bill.patientPayableAmount) || toNum(bill.netAmount) || 0;
+          const paidSoFar    = bill.payments.reduce((s, p) => s + toNum(p.amount), 0);
+          const billBal      = Math.max(0, patientShare - paidSoFar);
+          const isLast       = i === bills.length - 1;
+          // Each bill takes what it owes; the last one absorbs any leftover
+          // (rounding / overpayment) so nothing collected goes unrecorded.
+          const pay = isLast ? remaining : Math.min(remaining, billBal);
+          if (pay <= 0.005) continue;
 
           bill.payments.push({
-            amount:        finalAmt,
+            amount:        pay,
             paymentMode:   mode,
             transactionId: req.body.transactionId,
             receivedBy:    req.body.clearedBy || "Reception",
@@ -1066,28 +1103,17 @@ class AdmissionController {
           });
           // Status flip happens before save so the pre-save hook (which
           // honours billStatus when computing balanceAmount) sees the right
-          // value. The hook itself recomputes advancePaid + balanceAmount
-          // using patientPayableAmount, so we don't need manual math here.
-          // R7at-FIX-12/D1-CRIT-C2: `bill.payments[].amount` is Decimal128
-          // — pre-R7at `s + (p.amount || 0)` coerced via toString and the
-          // reducer produced string-concat values like "0100.00". The
-          // status-flip comparison then string-compared against a
-          // Decimal128 RHS — tiny IPD bills silently stayed PARTIAL at
-          // discharge. Now uses `toNum()` everywhere.
-          const { toNum } = require("../../utils/money");
+          // value. R7at-FIX-12/D1-CRIT-C2: use toNum() everywhere — Decimal128
+          // payment amounts once string-concatenated ("0100.00") and left tiny
+          // bills silently PARTIAL at discharge.
           const paid = bill.payments.reduce((s, p) => s + toNum(p.amount), 0);
-          const patientShare = toNum(bill.patientPayableAmount) || toNum(bill.netAmount) || 0;
-          bill.billStatus    = paid + 0.5 >= patientShare ? "PAID" : "PARTIAL";
+          bill.billStatus = paid + 0.5 >= patientShare ? "PAID" : "PARTIAL";
           if (bill.billStatus === "PAID") bill.paidAt = new Date();
-          // R7bp-FIX (audit P0 — billNumber dup-null E11000): the bill we
-          // resolved above may still be DRAFT (the cashier never finalised
-          // it on the OPD desk — discharge is closing it directly). The
-          // PatientBill model now enforces `billStatus !== "DRAFT" ⇒
-          // billNumber present` via a path validator, so flipping a DRAFT
-          // bill to PAID/PARTIAL without stamping a billNumber first
-          // ValidationErrors on save. Use the centralised service-layer
-          // helper to stamp one atomically (idempotent — no-op if the
-          // bill already carries a number from an earlier finalise).
+          // R7bp-FIX (audit P0 — billNumber dup-null E11000): a resolved bill
+          // may still be DRAFT (never finalised on the OPD desk — discharge is
+          // closing it directly). The model enforces `billStatus !== "DRAFT" ⇒
+          // billNumber present`, so stamp one atomically before the status flip
+          // saves (idempotent — no-op if it already carries a number).
           try {
             const billingSvc = require("../../services/Billing/billingService");
             if (typeof billingSvc.ensureBillNumberForNonDraft === "function") {
@@ -1097,6 +1123,7 @@ class AdmissionController {
             console.warn("[admissionController] ensureBillNumberForNonDraft failed (proceeding — model validator will catch):", e?.message || e);
           }
           await bill.save();
+          remaining -= pay;
         }
       }
     } catch (e) {
