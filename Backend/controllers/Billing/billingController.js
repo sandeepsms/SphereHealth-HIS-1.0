@@ -2708,10 +2708,29 @@ exports.sequenceAudit = async (req, res, next) => {
     // migrateNumberShortFormat.js hasn't renamed yet) so they are a
     // visible finding instead of silently unaudited.
     const yy = String(year).slice(-2);
-    const [bills, advances, creditNotes, nonShortRows] = await Promise.all([
+    // R7hr(NABH-P3.4) — payment-receipt serials (REC-YY-N) live on the
+    // payments[] subdocs, so their gap scan unwinds instead of checkGaps.
+    const recPrefix = `REC-${yy}-`;
+    const receiptScanP = PatientBill.aggregate([
+      { $match: { "payments.receiptNumber": { $regex: `^${recPrefix}` } } },
+      { $unwind: "$payments" },
+      { $match: { "payments.receiptNumber": { $regex: `^${recPrefix}` } } },
+      { $project: { _n: { $toInt: { $substrBytes: ["$payments.receiptNumber", recPrefix.length, 10] } } } },
+    ]).option({ allowDiskUse: true, maxTimeMS: 15_000 }).then((rows) => {
+      const nums = rows.map((r) => r._n).filter(Number.isFinite).sort((a, b) => a - b);
+      if (!nums.length) return { prefix: recPrefix, total: 0, max: 0, missing: [] };
+      const max = nums[nums.length - 1];
+      const present = new Set(nums);
+      const missing = [];
+      for (let i = 1; i <= max; i++) if (!present.has(i)) missing.push(`${recPrefix}${String(i).padStart(2, "0")}`);
+      return { prefix: recPrefix, total: nums.length, max, missing };
+    });
+
+    const [bills, advances, creditNotes, receipts, nonShortRows] = await Promise.all([
       checkGaps(PatientBill,    "billNumber",     `BILL-${yy}-`,   2),
       checkGaps(PatientAdvance, "receiptNumber",  `ADV-${year}-`,  6),
       checkGaps(CreditNote,     "creditNoteNumber", `CN-${year}-`, 6),
+      receiptScanP,
       PatientBill.find({
         billNumber: { $type: "string", $not: { $regex: `^BILL-\\d{2}-\\d+$` } },
       }).select("billNumber").limit(500).lean(),
@@ -2731,8 +2750,9 @@ exports.sequenceAudit = async (req, res, next) => {
         bills,
         advances,
         creditNotes,
+        receipts,        // R7hr(NABH-P3.4) — REC-YY-N payment-receipt series
         legacyFormat,
-        anyGaps: bills.missing.length + advances.missing.length + creditNotes.missing.length > 0,
+        anyGaps: bills.missing.length + advances.missing.length + creditNotes.missing.length + receipts.missing.length > 0,
       },
     });
   } catch (e) { next(e); }

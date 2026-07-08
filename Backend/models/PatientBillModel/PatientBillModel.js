@@ -169,6 +169,13 @@ function isItemBillable(item) {
 // ── Payment record ─────────────────────────────────────────────
 const PaymentSchema = new mongoose.Schema(
   {
+    // R7hr(NABH-P3.4) — gap-less per-payment receipt serial (REC-YY-N,
+    // FY-keyed like BILL). Minted by billingService.generatePaymentReceipt
+    // Number for cashier-collected money (recordPayment, bulk-collect
+    // legs, discharge waterfall). ADVANCE_ADJUSTMENT rows carry none —
+    // that money was receipted at deposit time (ADV-…) and this is an
+    // internal transfer, not new money in.
+    receiptNumber: { type: String, trim: true, index: true },
     amount: { type: Dec, required: true },
     paymentMode: {
       type: String,

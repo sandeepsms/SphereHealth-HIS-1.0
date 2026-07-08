@@ -1094,7 +1094,14 @@ class AdmissionController {
           const pay = isLast ? remaining : Math.min(remaining, billBal);
           if (pay <= 0.005) continue;
 
+          // R7hr(NABH-P3.4) — receipt serial on the discharge collection too.
+          let _recNo;
+          try {
+            const billingSvc = require("../../services/Billing/billingService");
+            _recNo = await billingSvc.generatePaymentReceiptNumber();
+          } catch (_) { _recNo = undefined; }
           bill.payments.push({
+            receiptNumber: _recNo,
             amount:        pay,
             paymentMode:   mode,
             transactionId: req.body.transactionId,

@@ -1312,7 +1312,10 @@ export default function ReceptionBilling() {
     const balanceAfter = Number(bill.balanceAmount || 0);
     const isFullyPaid  = balanceAfter <= 0.5;
     openPrint("payment-receipt", {
-      receiptNo:    `${bill.billNumber}-P${(bill.payments || []).length || 1}`,
+      // R7hr(NABH-P3.4) — prefer the payment row's gap-less REC-YY-N serial
+      // (minted by recordPayment/bulk-collect); synthetic BILL-…-Pn stays
+      // the fallback for legacy rows recorded before serials existed.
+      receiptNo:    pay.receiptNumber || `${bill.billNumber}-P${(bill.payments || []).length || 1}`,
       patientName:  patient?.fullName || bill.patientName,
       uhid:         patient?.UHID || bill.UHID,
       // R7hb — pass visitType so the template labels the No. row

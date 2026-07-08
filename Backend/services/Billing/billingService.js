@@ -64,6 +64,31 @@ async function generateBillNumber() {
   return `${prefix}${String(seq).padStart(2, "0")}`;
 }
 
+// R7hr(NABH-P3.4) — gap-less per-payment receipt serial: REC-YY-N, keyed
+// on the FINANCIAL year like the bill series. Minted for cashier-collected
+// money only (recordPayment, bulk-collect legs, discharge waterfall);
+// ADVANCE_ADJUSTMENT transfers carry none — that money was receipted at
+// deposit time (ADV-…). Same seed-from-max self-heal as generateBillNumber.
+async function generatePaymentReceiptNumber() {
+  const yy = String(fyStartYear()).slice(-2);
+  const key = `receipt:${yy}`;
+  const prefix = `REC-${yy}-`;
+  const last = await PatientBill.findOne({
+    "payments.receiptNumber": { $regex: `^${prefix}` },
+  })
+    .sort({ "payments.receiptNumber": -1 })
+    .select({ "payments.receiptNumber": 1 })
+    .lean();
+  let seed = 0;
+  if (last) {
+    seed = (last.payments || [])
+      .map((p) => (p.receiptNumber || "").startsWith(prefix) ? parseInt(p.receiptNumber.slice(prefix.length), 10) : 0)
+      .reduce((m, n) => (Number.isFinite(n) && n > m ? n : m), 0);
+  }
+  const seq = await nextSequence(key, seed);
+  return `${prefix}${String(seq).padStart(2, "0")}`;
+}
+
 // R7bp-FIX (audit P0 — billNumber dup-null E11000) — defense-in-depth.
 // Pattern B (status-gated billNumber): the canonical commitment in this
 // codebase is that DRAFT bills carry `billNumber: null` and a fresh
@@ -1095,6 +1120,13 @@ class BillingService {
     for (const billRef of bills) {
       if (remaining <= 0.005) break;
 
+      // R7hr(NABH-P3.4) — one gap-less receipt serial per LEG, minted
+      // OUTSIDE the retry closure so a VersionError replay reuses the
+      // same number instead of burning one per attempt. Legs that end
+      // up skipped burn their number (reported by the sequence audit —
+      // expected Counter behaviour).
+      const legReceiptNumber = await generatePaymentReceiptNumber();
+
       let legAmount = 0;
       try {
         const result = await retryVE(async () => {
@@ -1107,6 +1139,7 @@ class BillingService {
           const leg = Math.min(remaining, bal);
 
           fresh.payments.push({
+            receiptNumber: legReceiptNumber,
             amount: leg,
             paymentMode: mode,
             transactionId: parentTxn,
@@ -1672,7 +1705,14 @@ class BillingService {
         throw err;
       }
 
+      // R7hr(NABH-P3.4) — gap-less receipt serial for this collection.
+      // Minted once per outer attempt is fine: a VersionError retry
+      // re-runs the loop and re-mints, burning a number — acceptable
+      // (gaps are expected in Counter schemes and the sequence-audit
+      // reports them); the SAVED row always carries exactly one serial.
+      const receiptNumber = await generatePaymentReceiptNumber();
       bill.payments.push({
+        receiptNumber,
         amount,
         paymentMode,
         transactionId,
@@ -2672,5 +2712,6 @@ class BillingService {
 //                                          and billNumber is missing.
 const _svc = new BillingService();
 _svc.generateBillNumber = generateBillNumber;
+_svc.generatePaymentReceiptNumber = generatePaymentReceiptNumber;   // R7hr(NABH-P3.4)
 _svc.ensureBillNumberForNonDraft = _ensureBillNumberForNonDraft;
 module.exports = _svc;
