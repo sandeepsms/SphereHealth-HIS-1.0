@@ -277,6 +277,14 @@ const AdmissionSchema = new mongoose.Schema(
       summaryId:           { type: mongoose.Schema.Types.ObjectId, ref: "DischargeSummary", default: null },
       summaryFinalizedAt:  Date,
       billWaiverReason:    String,   // mandatory reason when LAMA/Death clears with a balance
+      // R7hr(NABH-P2.3) — unspent advance detected at bill-clear time.
+      // Patient-money safety: a deposit that was never applied to any bill
+      // used to sit silently after discharge (nothing surfaced it unless
+      // the patient had also OVERPAID — dischargeOverage). The cashier now
+      // sees this figure at bill-clear + it persists here for the discharge
+      // queue / MRD review. Refund itself stays the manual SoD-gated
+      // refundAdvance flow (never auto-refunded).
+      unspentAdvanceAtClear: { type: Number, default: 0 },
       dischargedBy:        String,   // JWT actor who issued the final bed-clear/gate-pass
       // R7i: Same-day discharge undo (Admin override). Populated by
       // POST /admissions/:id/reactivate when an admin re-activates a
@@ -306,6 +314,14 @@ const AdmissionSchema = new mongoose.Schema(
     // race-survivor's E11000 surfaces immediately.
     admissionNumber: { type: String, trim: true, unique: true, sparse: true },  // R7ag: IPD-YY-NN continuous, e.g. IPD-26-01 (legacy rows may still use ADM26050001 / IPD-2026-000001)
     visitNumber:     { type: String, trim: true, index: true },  // OPD visitNumber link
+    // R7hr(billing-audit P1.2) — OPD→IPD episode linkage. When a patient with
+    // an active same-day OPD visit is admitted, the auto-close hook stamps a
+    // two-way link so the OPD bill and the IPD bill of ONE episode can surface
+    // together (IPD Live Ledger "Pre-admission OPD charges" + IPD final bill +
+    // discharge dues gate). Both default null (planned/direct admissions have
+    // no source OPD visit).
+    convertedFromAdmission: { type: mongoose.Schema.Types.ObjectId, ref: "Admission", default: null, index: true }, // on the IPD admission → the source OPD admission
+    convertedToAdmission:   { type: mongoose.Schema.Types.ObjectId, ref: "Admission", default: null },              // on the OPD admission → the IPD admission it converted into
     paymentType:     { type: String, enum: ["GENERAL","TPA","CORPORATE","CASH"], default: "GENERAL" },
 
     // ── Treatment Team (NABH COP.1 — Multi-disciplinary consultation) ──

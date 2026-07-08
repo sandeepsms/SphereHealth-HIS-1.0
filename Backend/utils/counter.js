@@ -17,6 +17,20 @@ function _currentIstYear() {
   return Number(_IST_YEAR_FMT.format(new Date()));
 }
 
+// R7hr(NABH-P2.4) — Indian financial-year start year (Apr 1 – Mar 31,
+// IST-anchored). fyStartYear(8-Jul-2026) → 2026; fyStartYear(15-Feb-2027)
+// → 2026 (still FY 2026-27). Statutory sequence series (BILL / ADV / CN)
+// key on this so they reset on Apr 1, not Jan 1 — IT Rule 46 / GST
+// practice expects per-FY gap-less series. Calendar-keyed operational
+// series (opd:, appointment:, gatepass:) are unaffected.
+const _IST_YM_FMT = new Intl.DateTimeFormat("en-CA", {
+  timeZone: _IST_TZ, year: "numeric", month: "2-digit",
+});
+function fyStartYear(date = new Date()) {
+  const [y, m] = _IST_YM_FMT.format(date).split("-").map(Number);
+  return m >= 4 ? y : y - 1;
+}
+
 // One-warn-per-key memo so a cron loop doesn't flood the log.
 const _rolloverWarnedKeys = new Set();
 
@@ -45,7 +59,12 @@ async function nextSequence(key, seed) {
     if (yearMatch) {
       const keyYear = Number(yearMatch[1]);
       const nowYear = _currentIstYear();
-      if (Number.isFinite(keyYear) && Number.isFinite(nowYear) && keyYear !== nowYear) {
+      // R7hr(NABH-P2.4) — statutory series now key on the FY start year,
+      // which legitimately equals (calendar year − 1) during Jan–Mar.
+      // Accept either interpretation; warn only when the key matches
+      // NEITHER (a truly stale/wrong prefix, e.g. two years old).
+      const fyNow = fyStartYear();
+      if (Number.isFinite(keyYear) && Number.isFinite(nowYear) && keyYear !== nowYear && keyYear !== fyNow) {
         const memoKey = `${key}|${nowYear}`;
         if (!_rolloverWarnedKeys.has(memoKey)) {
           _rolloverWarnedKeys.add(memoKey);
@@ -89,4 +108,4 @@ function formatId(prefix, seq, pad = 4) {
   return `${prefix}-${String(seq).padStart(pad, "0")}`;
 }
 
-module.exports = { nextSequence, formatId };
+module.exports = { nextSequence, formatId, fyStartYear };

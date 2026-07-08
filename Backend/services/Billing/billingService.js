@@ -34,14 +34,18 @@ function sanitizeTaxPct(v) {
 // hook so both code paths produce the same shape). Legacy bills with
 // `BILL-YYYYMMDD-NNNNN` (5-digit serial) remain queryable — only NEW
 // bills use the unified format.
-const { nextSequence } = require("../../utils/counter");
+const { nextSequence, fyStartYear } = require("../../utils/counter");
 
 async function generateBillNumber() {
   // R7hb — Short bill number: BILL-YY-NN (continuous within year,
   // auto-widens past 99). Pre-R7hb this was BILL-YYYY-NNNNNN — too
-  // long for counter receipts and verbal hand-off. Year-keyed so a
-  // fiscal-year audit still groups correctly.
-  const yy = String(new Date().getFullYear()).slice(-2);
+  // long for counter receipts and verbal hand-off.
+  // R7hr(NABH-P2.4) — YY is the FINANCIAL-year start year (Apr–Mar), not
+  // the calendar year: the series no longer resets on Jan 1 mid-FY, and a
+  // Feb-2027 invoice stays in the BILL-26- series (FY 2026-27) per IT
+  // Rule 46 / GST per-FY gap-less practice. No change Apr–Dec (FY start
+  // == calendar year).
+  const yy = String(fyStartYear()).slice(-2);
   const key = `bill:${yy}`;
   // Seed from existing max on first call this year so legacy series
   // continues without a gap. Looks for the short prefix BILL-YY-; the
@@ -57,6 +61,31 @@ async function generateBillNumber() {
     .lean();
   const seed = last ? parseInt(last.billNumber.slice(prefix.length), 10) || 0 : 0;
   const seq  = await nextSequence(key, seed);
+  return `${prefix}${String(seq).padStart(2, "0")}`;
+}
+
+// R7hr(NABH-P3.4) — gap-less per-payment receipt serial: REC-YY-N, keyed
+// on the FINANCIAL year like the bill series. Minted for cashier-collected
+// money only (recordPayment, bulk-collect legs, discharge waterfall);
+// ADVANCE_ADJUSTMENT transfers carry none — that money was receipted at
+// deposit time (ADV-…). Same seed-from-max self-heal as generateBillNumber.
+async function generatePaymentReceiptNumber() {
+  const yy = String(fyStartYear()).slice(-2);
+  const key = `receipt:${yy}`;
+  const prefix = `REC-${yy}-`;
+  const last = await PatientBill.findOne({
+    "payments.receiptNumber": { $regex: `^${prefix}` },
+  })
+    .sort({ "payments.receiptNumber": -1 })
+    .select({ "payments.receiptNumber": 1 })
+    .lean();
+  let seed = 0;
+  if (last) {
+    seed = (last.payments || [])
+      .map((p) => (p.receiptNumber || "").startsWith(prefix) ? parseInt(p.receiptNumber.slice(prefix.length), 10) : 0)
+      .reduce((m, n) => (Number.isFinite(n) && n > m ? n : m), 0);
+  }
+  const seq = await nextSequence(key, seed);
   return `${prefix}${String(seq).padStart(2, "0")}`;
 }
 
@@ -89,6 +118,33 @@ async function _ensureBillNumberForNonDraft(bill) {
   // Use the same atomic Counter-backed generator as generateFinalBill so
   // the sequence stays gap-less across both code paths.
   bill.billNumber = await generateBillNumber();
+}
+
+// R7hr(NABH-P1.3) — tiered discount authorization (NABH ROM: documented
+// authorization levels on financial concessions). One adjustment by a
+// non-Admin may reduce a bill by at most BILLING_DISCOUNT_CAP_PCT (env,
+// default 10%) of its pre-adjustment net; anything larger requires an
+// Admin to perform it (403 DISCOUNT_ABOVE_CAP tells the UI exactly that).
+// Admin reductions stay unlimited — but every path that calls this is
+// already reason-mandatory + adjustmentLog'd + BillingAudit'd, so the
+// unlimited tier is fully attributable. The cap covers BOTH the explicit
+// extraDiscount and the sneaky equivalents (unit-price drops / line
+// write-offs) because callers pass the net-to-net reduction, not just the
+// discount field.
+function enforceDiscountCap({ actorRole, beforeNet, reduction, context = "adjustment" }) {
+  if (String(actorRole || "") === "Admin") return;
+  const capPct = Number(process.env.BILLING_DISCOUNT_CAP_PCT) || 10;
+  const capAmt = (Math.max(0, Number(beforeNet) || 0) * capPct) / 100;
+  if (reduction > capAmt + 0.005) {
+    const err = new Error(
+      `Discount ₹${reduction.toFixed(2)} exceeds the ${capPct}% authorization cap ` +
+      `(₹${capAmt.toFixed(2)} of ₹${(Number(beforeNet) || 0).toFixed(2)} net) for role ` +
+      `${actorRole || "unknown"} — an Admin must apply this ${context}.`,
+    );
+    err.status = 403;
+    err.code = "DISCOUNT_ABOVE_CAP";
+    throw err;
+  }
 }
 
 class BillingService {
@@ -152,6 +208,37 @@ class BillingService {
     if (admissionId) filter.admission = admissionId;
     else            filter.admission = null;       // explicit so the OPD
                                                    // companion index matches
+
+    // R7hr(billing-audit R1b) — SERVICE walk-in fresh-slate. A walk-in service
+    // bill carries no admission and no visit entity, so its {UHID, "SERVICE",
+    // admission:null} DRAFT is shared forever: a NEW walk-in would silently
+    // merge its cart into a PRIOR walk-in's unfinalised DRAFT (two visits → one
+    // bill, wrong per-visit accounting, and the patient sees stale charges).
+    // Billing rule 1 says each fresh walk-in is its own bill. So if a PRIOR-DAY
+    // SERVICE draft that still holds charges is open, finalise it through the
+    // sanctioned generateFinalBill path — turning those abandoned charges into
+    // a tracked pending bill that resurfaces at the next visit (see
+    // getPreviousPendingDues) — which frees the DRAFT slot so the upsert below
+    // mints a FRESH draft for today. Scoped strictly to SERVICE + no admission
+    // (OPD/IPD/DAYCARE/EMERGENCY isolate by admission/visitId and are
+    // untouched). Same-day drafts are left alone (the cart is still being built
+    // this session). Empty stale drafts are harmless: generateFinalBill rejects
+    // them (rolls back to DRAFT) and we simply reuse them. Fail-safe: any
+    // hiccup falls through to the normal upsert (prior merge behaviour — never
+    // blocks the new walk-in).
+    if (visitType === "SERVICE" && !admissionId) {
+      try {
+        const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+        const staleDraft = await PatientBill.findOne({
+          ...filter, createdAt: { $lt: startOfToday },
+        }).select("_id billItems");
+        if (staleDraft && (staleDraft.billItems?.length || 0) > 0) {
+          await this.generateFinalBill(staleDraft._id, "System (auto-close stale walk-in draft)");
+        }
+      } catch (_) {
+        // Empty-draft rejection / finalize hiccup → leave as-is, fall through.
+      }
+    }
 
     // setOnInsert payload — only applied if the upsert creates a new doc.
     // billNumber is INTENTIONALLY omitted: DRAFT bills carry null per
@@ -312,6 +399,42 @@ class BillingService {
       .sort({ createdAt: -1 })
       .limit(200)
       .lean({ virtuals: true });
+  }
+
+  // ── R7hr(billing-audit P1.3) — previous PENDING dues for a patient ──
+  // Rule 1: at the next visit, surface prior billing ONLY when it's still
+  // pending. Returns every UNPAID bill (DRAFT/GENERATED/PARTIAL with
+  // balance > 0) that is NOT the current visit/admission, so registration +
+  // the billing page can warn the biller — while paid history stays hidden
+  // (fresh slate). excludeVisitId / excludeAdmissionId scope out the current
+  // encounter's own in-progress bill.
+  async getPreviousPendingDues(UHID, { excludeVisitId, excludeAdmissionId } = {}) {
+    const { toNum } = require("../../utils/money");
+    const bills = await PatientBill.find({
+      UHID,
+      billStatus: { $in: ["DRAFT", "GENERATED", "PARTIAL"] },
+    }).sort({ createdAt: -1 }).limit(200).lean();
+    const pending = bills.filter((b) => {
+      if (toNum(b.balanceAmount) <= 0.5) return false;
+      if (excludeVisitId && b.visitId && String(b.visitId) === String(excludeVisitId)) return false;
+      if (excludeAdmissionId && b.admission && String(b.admission) === String(excludeAdmissionId)) return false;
+      return true;
+    });
+    return {
+      hasPending: pending.length > 0,
+      count:      pending.length,
+      totalDue:   pending.reduce((s, b) => s + toNum(b.balanceAmount), 0),
+      bills: pending.map((b) => ({
+        billId:        b._id,
+        billNumber:    b.billNumber || null,
+        visitType:     b.visitType,
+        visitId:       b.visitId || null,
+        billStatus:    b.billStatus,
+        netAmount:     toNum(b.netAmount),
+        balanceAmount: toNum(b.balanceAmount),
+        createdAt:     b.createdAt,
+      })),
+    };
   }
 
   // ── 6. Add service to bill ────────────────────────────────────
@@ -532,6 +655,24 @@ class BillingService {
       item.completedBy = opts.completedBy || "";
       item.completedByRole = opts.completedByRole || "";
       await bill.save();
+      // R7hr(NABH-P2.1) — this flip CHANGES the bill's billable total (the
+      // line now counts toward what the patient owes) on a possibly
+      // GENERATED/PARTIAL bill, yet emitted no chronological audit row —
+      // one of the re-audit's "billable-value change without BillingAudit"
+      // blind spots. Best-effort emit, never blocks the clinician's click.
+      try {
+        const { emit } = require("../../models/Billing/BillingAudit");
+        await emit({
+          event:      "BILL_ITEM_ORDER_COMPLETED",
+          UHID:       bill.UHID,
+          patientId:  bill.patient,
+          billId:     bill._id,
+          billNumber: bill.billNumber,
+          amount:     toNum(item.netAmount) + toNum(item.taxAmount),
+          actorName:  opts.completedBy || "System",
+          reason:     `Order completed — ${item.serviceName || item.serviceCode || "line"} now payable`,
+        });
+      } catch (_) { /* audit best-effort */ }
       return bill;
     }, { label: "completeBillItemOrder" });
   }
@@ -577,6 +718,23 @@ class BillingService {
       item.cancelledAt = new Date();
       item.cancelReason = (opts.cancelReason || "").trim() || "Cancelled by clinician";
       await bill.save();
+      // R7hr(NABH-P2.1) — mirror of the complete-order emit: cancelling an
+      // Active order EXCLUDES the line's value from the billable total on a
+      // possibly GENERATED/PARTIAL bill, which previously left no
+      // chronological audit row. Best-effort, never blocks the cancel.
+      try {
+        const { emit } = require("../../models/Billing/BillingAudit");
+        await emit({
+          event:      "BILL_ITEM_ORDER_CANCELLED",
+          UHID:       bill.UHID,
+          patientId:  bill.patient,
+          billId:     bill._id,
+          billNumber: bill.billNumber,
+          amount:     toNum(item.netAmount) + toNum(item.taxAmount),
+          actorName:  opts.cancelledBy || "System",
+          reason:     `Order cancelled — ${item.serviceName || item.serviceCode || "line"}: ${item.cancelReason}`,
+        });
+      } catch (_) { /* audit best-effort */ }
       return bill;
     }, { label: "cancelBillItemOrder" });
   }
@@ -700,7 +858,7 @@ class BillingService {
   // R7bb-C / S5 (D7-CRIT-2): accept adjustedById from the controller so
   // the audit row can carry the operator's _id (not just display name).
   async settlementAdjust(billId, payload = {}) {
-    const { extraDiscount, extraDiscountReason, items, adjustedBy, adjustedById, reason } = payload;
+    const { extraDiscount, extraDiscountReason, items, adjustedBy, adjustedById, adjustedByRole, reason } = payload;
 
     if (!adjustedBy || !String(adjustedBy).trim()) {
       const err = new Error("adjustedBy (staff name) is required for audit");
@@ -828,6 +986,22 @@ class BillingService {
       })),
     };
 
+    // R7hr(NABH-P1.3) — tiered authorization on the NET reduction. Measured
+    // net-to-net (before recalc vs after recalc), so it catches the explicit
+    // extraDiscount AND the equivalent write-offs via unit-price/qty drops in
+    // the same rule. Throwing here (inside retryVE, before save) discards the
+    // in-memory mutation — nothing persists on a blocked adjustment. Net
+    // INCREASES (qty corrections upward) are not discounts and pass freely.
+    const netReduction = beforeSnap.netAmount - afterSnap.netAmount;
+    if (netReduction > 0.005) {
+      enforceDiscountCap({
+        actorRole: adjustedByRole,
+        beforeNet: beforeSnap.netAmount,
+        reduction: netReduction,
+        context:   "settlement adjustment",
+      });
+    }
+
     bill.adjustmentLog.push({
       at:     new Date(),
       by:     String(adjustedBy).trim(),
@@ -946,6 +1120,13 @@ class BillingService {
     for (const billRef of bills) {
       if (remaining <= 0.005) break;
 
+      // R7hr(NABH-P3.4) — one gap-less receipt serial per LEG, minted
+      // OUTSIDE the retry closure so a VersionError replay reuses the
+      // same number instead of burning one per attempt. Legs that end
+      // up skipped burn their number (reported by the sequence audit —
+      // expected Counter behaviour).
+      const legReceiptNumber = await generatePaymentReceiptNumber();
+
       let legAmount = 0;
       try {
         const result = await retryVE(async () => {
@@ -958,6 +1139,7 @@ class BillingService {
           const leg = Math.min(remaining, bal);
 
           fresh.payments.push({
+            receiptNumber: legReceiptNumber,
             amount: leg,
             paymentMode: mode,
             transactionId: parentTxn,
@@ -1095,6 +1277,31 @@ class BillingService {
     const flatPool = m === "AMOUNT" ? v : null;
     if (flatPool != null && flatPool > totalDue + 0.5) {
       throw new Error(`Discount ₹${flatPool} exceeds total outstanding ₹${totalDue.toFixed(2)}`);
+    }
+
+    // R7hr(NABH-P1.3) — tiered authorization, checked UPFRONT so a blocked
+    // bulk settlement saves nothing (no partial application mid-loop).
+    // PERCENT: v% of each bill's balance never exceeds v% of its net, so
+    // blocking v > cap% is exact for the tier rule. AMOUNT: compare the flat
+    // pool against cap% of the total pre-adjustment net across the batch.
+    const totalNet = bills.reduce((s, b) => s + toNum(b.netAmount), 0);
+    if (m === "PERCENT") {
+      const capPct = Number(process.env.BILLING_DISCOUNT_CAP_PCT) || 10;
+      if (String(adjustedByRole || "") !== "Admin" && v > capPct) {
+        const err = new Error(
+          `Bulk discount ${v}% exceeds the ${capPct}% authorization cap for role ${adjustedByRole || "unknown"} — an Admin must apply this bulk settlement.`,
+        );
+        err.status = 403;
+        err.code = "DISCOUNT_ABOVE_CAP";
+        throw err;
+      }
+    } else {
+      enforceDiscountCap({
+        actorRole: adjustedByRole,
+        beforeNet: totalNet,
+        reduction: flatPool,
+        context:   "bulk settlement",
+      });
     }
 
     const adjustments = [];
@@ -1498,7 +1705,14 @@ class BillingService {
         throw err;
       }
 
+      // R7hr(NABH-P3.4) — gap-less receipt serial for this collection.
+      // Minted once per outer attempt is fine: a VersionError retry
+      // re-runs the loop and re-mints, burning a number — acceptable
+      // (gaps are expected in Counter schemes and the sequence-audit
+      // reports them); the SAVED row always carries exactly one serial.
+      const receiptNumber = await generatePaymentReceiptNumber();
       bill.payments.push({
+        receiptNumber,
         amount,
         paymentMode,
         transactionId,
@@ -2038,6 +2252,30 @@ class BillingService {
           // CN failure must not block the refund — log and continue.
           // eslint-disable-next-line no-console
           console.warn(`[recordRefund] CreditNote create failed for bill ${bill.billNumber}: ${e?.message}`);
+          // R7hr(NABH-P3.5) — a swallowed CN failure used to leave ZERO
+          // trace beyond a server log line: the refund stood in GSTR-1
+          // with no CDNR document and nobody knew to re-raise it. Now the
+          // gap lands on the chronological timeline (CN_CREATE_FAILED)
+          // and on the bill's remarks so the accountant can re-raise.
+          try {
+            const { emit } = require("../../models/Billing/BillingAudit");
+            await emit({
+              event:      "CN_CREATE_FAILED",
+              UHID:       bill.UHID,
+              patientId:  bill.patient,
+              billId:     bill._id,
+              billNumber: bill.billNumber,
+              amount:     amt,
+              actorName:  refundedBy || "Reception",
+              reason:     `CreditNote creation FAILED after refund ₹${amt} — re-raise manually. Error: ${e?.message}`,
+            });
+          } catch (_) { /* audit best-effort */ }
+          try {
+            await PatientBill.updateOne(
+              { _id: bill._id },
+              { $set: { remarks: `${bill.remarks || ""} | CN PENDING: refund ₹${amt} has no credit note — re-raise (${new Date().toISOString().slice(0, 10)})`.trim() } },
+            );
+          } catch (_) { /* remarks best-effort */ }
         }
       } catch (err) {
         if (err?.name === "VersionError") { lastErr = err; continue; }
@@ -2498,5 +2736,6 @@ class BillingService {
 //                                          and billNumber is missing.
 const _svc = new BillingService();
 _svc.generateBillNumber = generateBillNumber;
+_svc.generatePaymentReceiptNumber = generatePaymentReceiptNumber;   // R7hr(NABH-P3.4)
 _svc.ensureBillNumberForNonDraft = _ensureBillNumberForNonDraft;
 module.exports = _svc;

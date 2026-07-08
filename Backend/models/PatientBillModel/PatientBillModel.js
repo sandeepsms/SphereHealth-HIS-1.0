@@ -169,6 +169,13 @@ function isItemBillable(item) {
 // ── Payment record ─────────────────────────────────────────────
 const PaymentSchema = new mongoose.Schema(
   {
+    // R7hr(NABH-P3.4) — gap-less per-payment receipt serial (REC-YY-N,
+    // FY-keyed like BILL). Minted by billingService.generatePaymentReceipt
+    // Number for cashier-collected money (recordPayment, bulk-collect
+    // legs, discharge waterfall). ADVANCE_ADJUSTMENT rows carry none —
+    // that money was receipted at deposit time (ADV-…) and this is an
+    // internal transfer, not new money in.
+    receiptNumber: { type: String, trim: true, index: true },
     amount: { type: Dec, required: true },
     paymentMode: {
       type: String,
@@ -297,6 +304,12 @@ const PatientBillSchema = new mongoose.Schema(
     netAmount:            { type: Dec, default: () => toDec(0) },
     tpaPayableAmount:     { type: Dec, default: () => toDec(0) },
     patientPayableAmount: { type: Dec, default: () => toDec(0) },
+    // R7hr(NABH-P3.1) — invoice round-off (standard GST invoice
+    // presentation): the patient share is rounded to the nearest rupee in
+    // recalcTotals and the signed difference lives here (−0.50..+0.49),
+    // rendered as its own "Round Off" line on the tax invoice. TPA share
+    // stays exact — insurers settle to the paisa.
+    roundOffAmount:       { type: Dec, default: () => toDec(0) },
     advancePaid:          { type: Dec, default: () => toDec(0) },
     balanceAmount:        { type: Dec, default: () => toDec(0) },
 
@@ -409,6 +422,13 @@ const PatientBillSchema = new mongoose.Schema(
       default: "NOT_APPLICABLE" },
     tpaClaimNumber: { type: String, trim: true },
     tpaApprovedAmount: { type: Dec, default: () => toDec(0) },
+    // R7hr(NABH-P3.5) — structured pre-auth capture. Insurers issue a
+    // distinct pre-auth/AL number and a sanctioned amount BEFORE the final
+    // claim approval; both previously squatted on tpaClaimNumber /
+    // tpaPayableAmount, so the desk couldn't show "sanctioned vs claimed
+    // vs approved" side by side.
+    tpaPreAuthNumber: { type: String, trim: true, default: "" },
+    tpaPreAuthAmount: { type: Dec, default: () => toDec(0) },
     // R7bb-FIX-E-15 / D3-HIGH-2: maker-checker on TPA approval. The
     // user who SUBMITTED the preauth cannot also APPROVE the claim —
     // otherwise a single TPA Coordinator can move from preauth straight
@@ -463,11 +483,6 @@ const PatientBillSchema = new mongoose.Schema(
     toJSON:   { virtuals: true, transform: decimalToNumber },
     toObject: { virtuals: true, transform: decimalToNumber } },
 );
-
-// Atomic bill-number sequence via shared Counter (replaces race-prone
-// countDocuments). Generator stays in pre("save") — billNumber isn't
-// `required`, so validation order is irrelevant here.
-const { nextSequence: nextSeqBill } = require("../../utils/counter");
 
 // ── Recalc helper ───────────────────────────────────────────────
 // R7b: extracted from the pre-save hook so other code paths
@@ -584,9 +599,23 @@ PatientBillSchema.methods.recalcTotals = function () {
     this.grossAmount          = toDec(gross);
     this.totalDiscount        = toDec(disc + extra);
     this.taxAmount            = toDec(tax);
-    this.netAmount            = toDec(gross - disc + tax - extra);
     this.tpaPayableAmount     = toDec(tpaPay);
-    this.patientPayableAmount = toDec(ptPay - extra);
+    // R7hr(NABH-P3.1) — round the PATIENT share to the nearest rupee
+    // (standard GST invoice presentation; fractional paise arise from %
+    // discounts, 5% room-rent GST, half-day prorations). The signed
+    // difference is stored on roundOffAmount and printed as its own line.
+    // netAmount absorbs the same delta so gross − disc + tax − extra +
+    // roundOff == tpaShare + rounded patient share stays an identity.
+    // TPA share stays exact (insurers settle to the paisa); balanceAmount
+    // below derives from the ROUNDED patient share, so cash dues are
+    // always collectible whole-ish rupees. Whole-rupee bills get
+    // roundOff = 0 — zero visible change for existing data.
+    const _ptExact   = ptPay - extra;
+    const _ptRounded = Math.round(_ptExact);
+    const _roundOff  = +(_ptRounded - _ptExact).toFixed(2);
+    this.roundOffAmount       = toDec(_roundOff);
+    this.patientPayableAmount = toDec(_ptRounded);
+    this.netAmount            = toDec(gross - disc + tax - extra + _roundOff);
     // R7ap-F35: aggregate item-level CGST/SGST/IGST into bill-level fields.
     // Driven by placeOfSupply (set above per-item). Used by GSTR-1 export.
     const _hosp = process.env.HOSPITAL_STATE_CODE || "";
@@ -636,12 +665,36 @@ PatientBillSchema.post("init", function () {
   }
 });
 
-PatientBillSchema.pre("save", async function (next) {
-  if (this.isNew && !this.billNumber && this.billStatus && this.billStatus !== "DRAFT") {
-    const year = new Date().getFullYear();
-    const seq  = await nextSeqBill(`bill:${year}`);
-    this.billNumber = `BILL-${year}-${String(seq).padStart(6, "0")}`;
+// R7hr(NABH-P1.2) — number-minting fallback for bills CREATED directly in a
+// non-DRAFT state. Two fixes in one:
+//   (1) It now delegates to the SAME generator the service layer uses. The
+//       old fallback minted `BILL-YYYY-NNNNNN` off its own counter key
+//       (`bill:${YYYY}`) while generateBillNumber mints `BILL-YY-NN` off
+//       `bill:${YY}` — two independent series in two formats, and the short
+//       series was invisible to sequenceAudit. One generator ⇒ one gap-less
+//       series (IT Rule 46 / §44AB).
+//   (2) It runs in pre("validate"), not pre("save"). Mongoose validates
+//       BEFORE pre-save hooks, and the R7bp path-validator ("non-DRAFT ⇒
+//       billNumber present") therefore rejected the document before the old
+//       pre-save fallback ever got to mint — the fallback was dead code and
+//       direct non-DRAFT creation always ValidationError'd. Minting in
+//       pre("validate") restores the safety net: number first, validator
+//       passes, invariant intact.
+// Lazy require: billingService requires this model at load, so a top-level
+// import here would be circular; at validate time both modules are loaded.
+PatientBillSchema.pre("validate", async function (next) {
+  try {
+    if (this.isNew && !this.billNumber && this.billStatus && this.billStatus !== "DRAFT") {
+      const { generateBillNumber } = require("../../services/Billing/billingService");
+      this.billNumber = await generateBillNumber();
+    }
+    next();
+  } catch (e) {
+    next(e);
   }
+});
+
+PatientBillSchema.pre("save", async function (next) {
 
   // R7bm-F6 / META-5 — append-only guard on writeOffAmount.
   // Write-offs represent finance-team approved residual absorption on

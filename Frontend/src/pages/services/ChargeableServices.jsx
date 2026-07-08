@@ -24,6 +24,7 @@ import { Toast } from "primereact/toast";
 import { ConfirmDialog, confirmDialog } from "primereact/confirmdialog";
 
 import { useBilling } from "../../hooks/useBilling";
+import { openPrint } from "../../Components/print/openPrint";   // R7hr(NABH-P3.6)
 import { TabStrip } from "../../Components/admin-theme";
 
 // ── HIS theme palette (matches PharmacyHomePage) ─────────────────
@@ -970,6 +971,41 @@ export default function ChargeableServices() {
               of the HIS. Seed is muted (secondary), Add Service is the
               primary white-on-amber call-to-action. */}
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            {/* R7hr(NABH-P3.6) — PRE.4 patient-facing tariff. Reception
+                prints this on request and hands it to the patient; rates
+                come from the SAME ServiceMaster every bill prices from. */}
+            <button
+              onClick={() =>
+                openPrint("tariff-list", {
+                  tariffRef: `TARIFF-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}`,
+                  tariffClass: "General / Cash",
+                  items: (services || [])
+                    .filter((s) => s.isActive !== false && Number(s.defaultPrice) > 0)
+                    .map((s) => ({
+                      name:     s.serviceName,
+                      code:     s.serviceCode,
+                      category: s.category,
+                      price:    Number(s.defaultPrice) || 0,
+                    })),
+                })
+              }
+              disabled={!services?.length}
+              title="Print the patient-facing tariff list (NABH PRE.4)"
+              style={{
+                padding: "8px 14px",
+                background: "rgba(255,255,255,.16)",
+                color: "#fff",
+                border: "1px solid rgba(255,255,255,.32)",
+                borderRadius: 8,
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: !services?.length ? "not-allowed" : "pointer",
+                opacity: !services?.length ? 0.6 : 1,
+              }}
+            >
+              <i className="pi pi-print" style={{ marginRight: 6 }} />
+              Print Tariff
+            </button>
             <button
               onClick={handleSeed}
               disabled={billing.loading}

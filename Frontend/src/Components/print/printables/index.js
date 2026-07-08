@@ -14,6 +14,7 @@ import CompleteIPDFile   from "./CompleteIPDFile";
 import ReferralSummary   from "./patientFileThemes/ReferralSummary";
 import DischargeSummary  from "./DischargeSummary";
 import CostEstimate      from "./CostEstimate";
+import TariffList        from "./TariffList";   // R7hr(NABH-P3.6) — PRE.4 patient-facing tariff
 import RefundReceipt     from "./RefundReceipt";
 import ServiceReceipt    from "./ServiceReceipt";
 import ConsentForm       from "./ConsentForm";
@@ -99,6 +100,7 @@ export const PRINTABLES = {
   "advance-receipt":  { component: AdvanceReceipt,    title: "Advance / Deposit Receipt", defaultPaper: "half-a4" },
   "refund-receipt":   { component: RefundReceipt,     title: "Refund Receipt",            defaultPaper: "half-a4" },
   "cost-estimate":    { component: CostEstimate,      title: "Cost Estimate · Indicative",defaultPaper: "a4"      },
+  "tariff-list":      { component: TariffList,        title: "Hospital Tariff List",      defaultPaper: "a4"      },
   "final-bill":       { component: FinalBill,         title: "Final Bill (IPD)",          defaultPaper: "a4"      },
   // Interim Bill — same component, caller passes { isInterim: true } in
   // the receipt payload to flip the title + the "snapshot as of …" banner.

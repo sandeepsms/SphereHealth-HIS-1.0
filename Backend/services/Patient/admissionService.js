@@ -79,6 +79,10 @@ class AdmissionService {
     // caller wants the existing visit. We let the OPD path bypass via
     // an internal opt-out (data._allowConcurrentBedless) so its dedupe
     // upstream can take over without this throwing.
+    // R7hr(billing-audit P1.2) — when the incoming admission auto-closes an
+    // active same-day OPD visit, remember it here so the episode can be
+    // two-way-linked once the new admission exists (OPD↔IPD bill consolidation).
+    let convertedFromOpdId = null;
     if (!data._allowConcurrentBedless) {
       const existingActive = await Admission.findOne({
         patientId: patient._id,
@@ -109,10 +113,13 @@ class AdmissionService {
               $set: {
                 status: "Discharged",
                 actualDischargeDate: new Date(),
-                dischargeNotes: `Auto-closed by incoming ${incomingType} admission (R7en-OPD-BLOCKER-FIX)`,
+                dischargeNotes: `Auto-closed by incoming ${incomingType} admission — OPD→${incomingType} conversion (R7en-OPD-BLOCKER-FIX)`,
               },
             },
           );
+          // R7hr(billing-audit P1.2) — this active OPD visit is converting into
+          // the incoming inpatient admission; record it for the episode link.
+          convertedFromOpdId = existingActive._id;
         } else {
           const err = new Error(
             `Patient already has an active admission: ${existingActive.admissionNumber} ` +
@@ -199,6 +206,10 @@ class AdmissionService {
             specialInstructions:  data.specialInstructions || "",
             expectedStayDays:     Number(data.expectedStayDays) || 0,
             admissionType: data.admissionType || "Emergency",
+            // R7hr(billing-audit P1.2) — link back to the source OPD visit this
+            // admission converted from (undefined → default null for planned /
+            // direct admits with no same-day OPD).
+            convertedFromAdmission: convertedFromOpdId || undefined,
             attendingDoctor:   data.attendingDoctor || "",
             // R7bd-A-4 / A1-CRIT-5 — attendingDoctorId is the Doctor._id
             // (medical staff record). attendingDoctorUserId is the linked
@@ -276,6 +287,16 @@ class AdmissionService {
       }
     } finally {
       session?.endSession();
+    }
+
+    // R7hr(billing-audit P1.2) — complete the two-way episode link: the now
+    // auto-closed OPD admission points FORWARD to this IPD admission. Best-
+    // effort + non-blocking (the clinical admission already committed above).
+    if (convertedFromOpdId && admission?._id) {
+      await Admission.updateOne(
+        { _id: convertedFromOpdId },
+        { $set: { convertedToAdmission: admission._id } },
+      ).catch(logErr("admission", `OPD→IPD reverse-link ${convertedFromOpdId}→${admission._id}`));
     }
 
     return admission;

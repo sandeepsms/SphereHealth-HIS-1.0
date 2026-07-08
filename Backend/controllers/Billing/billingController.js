@@ -26,10 +26,51 @@ exports.getBillsByUHID = async (req, res) => {
         data.bills.forEach((b) => decimalToNumber(null, b));
       }
     } catch (_) { /* best-effort */ }
+    // R7hr(billing-audit R1c) — OPTIONAL visit-scope filter. The default
+    // response stays UHID-wide (lifetime history) because ReceptionBilling's
+    // current/history split + the accounts collection views depend on it. When
+    // a caller explicitly passes ?visitId / ?admissionId / ?visitType, narrow
+    // the returned bills[] to that single encounter server-side — a caller can
+    // then request a pre-scoped view instead of pulling everything and
+    // filtering client-side. Purely additive: absent params ⇒ no filtering ⇒
+    // byte-for-byte the previous behaviour. `data.scoped` echoes what matched.
+    const { visitId, admissionId, visitType } = req.query;
+    if (Array.isArray(data?.bills) && (visitId || admissionId || visitType)) {
+      const before = data.bills.length;
+      data.bills = data.bills.filter((b) => {
+        if (visitType   && String(b.visitType)        !== String(visitType))   return false;
+        if (visitId     && String(b.visitId || "")    !== String(visitId))     return false;
+        if (admissionId && String(b.admission || "")  !== String(admissionId)) return false;
+        return true;
+      });
+      data.scoped = {
+        applied: true,
+        by:      { visitId: visitId || null, admissionId: admissionId || null, visitType: visitType || null },
+        matched: data.bills.length,
+        of:      before,
+      };
+    }
     res.json({ success: true, data });
   } catch (e) {
     const status = e.message.includes("not found") ? 404 : 500;
     res.status(status).json({ success: false, message: e.message });
+  }
+};
+
+// ── GET /api/billing/uhid/:UHID/previous-dues ─────────────────
+// R7hr(billing-audit P1.3) — rule 1: surface previous PENDING dues at the
+// next visit (registration + billing banner). Query params scope out the
+// current encounter so its own in-progress bill isn't reported as "previous":
+//   ?excludeVisitId=<current OPD visitNumber>  &excludeAdmissionId=<active adm>
+exports.getPreviousDues = async (req, res) => {
+  try {
+    const data = await billingService.getPreviousPendingDues(req.params.UHID, {
+      excludeVisitId:     req.query.excludeVisitId || null,
+      excludeAdmissionId: req.query.excludeAdmissionId || null,
+    });
+    res.json({ success: true, data });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
   }
 };
 
@@ -146,7 +187,12 @@ exports.cancelItemOrder = async (req, res) => {
     const data = await billingService.cancelBillItemOrder(
       req.params.billId,
       req.params.itemId,
-      { cancelReason: req.body?.cancelReason || "" },
+      {
+        cancelReason: req.body?.cancelReason || "",
+        // R7hr(NABH-P2.1) — actor for the BILL_ITEM_ORDER_CANCELLED audit
+        // row; sourced from req.user (forge-proof), like completeItemOrder.
+        cancelledBy: req.user?.fullName || req.user?.employeeId || "",
+      },
     );
     res.json({ success: true, data });
   } catch (e) {
@@ -328,8 +374,12 @@ exports.settlementAdjust = async (req, res) => {
         extraDiscountReason,
         items,
         reason,
-        adjustedBy:   req.user?.fullName || req.user?.employeeId,
-        adjustedById: req.user?._id,
+        adjustedBy:     req.user?.fullName || req.user?.employeeId,
+        adjustedById:   req.user?._id,
+        // R7hr(NABH-P1.3) — role drives the tiered discount cap
+        // (non-Admin bounded by BILLING_DISCOUNT_CAP_PCT). Sourced from
+        // req.user like the identity fields — body cannot forge it.
+        adjustedByRole: req.user?.role,
       },
     );
     res.json({ success: true, data, message: "Settlement adjustment recorded" });
@@ -1434,6 +1484,11 @@ exports.tpaPreAuthSubmit = async (req, res, next) => {
     bill.tpaClaimNumber  = req.body.claimNumber || bill.tpaClaimNumber || "";
     bill.tpaClaimStatus  = "SUBMITTED";
     bill.tpaPayableAmount = Number(req.body.requestedAmount) || bill.tpaPayableAmount || 0;
+    // R7hr(NABH-P3.5) — structured pre-auth ref + sanctioned amount
+    // (insurer's AL number is distinct from the claim number; the
+    // sanctioned figure is distinct from the eventual approved amount).
+    if (req.body.preAuthNumber != null) bill.tpaPreAuthNumber = String(req.body.preAuthNumber).trim();
+    bill.tpaPreAuthAmount = Number(req.body.requestedAmount) || bill.tpaPreAuthAmount || 0;
     // R7bb-FIX-E-15 / D3-HIGH-2: stamp the submitter so tpaApprove can
     // enforce a different-actor check. We capture name + id + when so
     // the maker-checker trail is complete even if the user is later
@@ -1530,6 +1585,9 @@ exports.tpaApprove = async (req, res, next) => {
       b.tpaClaimStatus    = "APPROVED";
       b.tpaApprovedAmount = Number(req.body.approvedAmount) || b.tpaPayableAmount || 0;
       b.tpaApprovedAt     = new Date();
+      // R7hr(NABH-P3.5) — insurers often issue/confirm the AL/pre-auth
+      // number WITH the approval; capture it structurally when supplied.
+      if (req.body.preAuthNumber != null) b.tpaPreAuthNumber = String(req.body.preAuthNumber).trim();
       // R7bb-C / S5 (D7-CRIT-1): actor from req.user only — body's
       // approvedBy is ignored so a forged body can't impersonate the
       // TPA desk. Fallback to "TPA Desk" remains for the (impossible
@@ -1764,6 +1822,66 @@ exports.cancelBill = async (req, res, next) => {
       await b.save();
       return { bill: b, _priorBillStatus: priorBillStatus, _priorTpaStatus: priorTpaStatus };
     }, { label: "cancelBill" });
+
+    // R7hr(NABH-P3.3) — a NUMBERED invoice cancelled post-issue needs a §34
+    // credit note: the register now keeps the invoice visible (numbered
+    // CANCELLED bills match its filter) and this CN reverses its value in
+    // the CDNR section — net zero WITH a paper trail, instead of the
+    // invoice silently vanishing. Zero-payment is guaranteed here (the
+    // paid/advancePaid guards above force refund-first when money landed —
+    // and the refund path raises its own CN), so refundAmount is 0: the
+    // CN reverses the receivable, not a payout. Outside the retry block
+    // (no double-create on VersionError replay); idempotent via the
+    // original-bill lookup; best-effort — a CN hiccup never blocks the
+    // cancel (accountant re-raises from the register).
+    try {
+      if (bill.billNumber) {
+        const CreditNote = require("../../models/Billing/CreditNote");
+        const already = await CreditNote.findOne({ billId: bill._id, reasonCode: "07" }).select("_id").lean();
+        if (!already) {
+          const { toNum } = require("../../utils/money");
+          // status stays the schema default (APPROVED — subtracts from the
+          // register immediately): unlike refund CNs, no money moves here
+          // (the invoice was provably unpaid), the reversal is
+          // deterministic full-value, and the cancel itself is already
+          // role-gated (billing.refund) + reason-mandatory + audited — the
+          // R7bb maker-checker exists for discretionary payouts, not this.
+          await CreditNote.create({
+            UHID:               bill.UHID,
+            patientId:          bill.patient,
+            billId:             bill._id,
+            originalBillNumber: bill.billNumber,
+            creditNoteDate:     new Date(),
+            reasonCode:         "07",
+            reasonText:         `Invoice cancelled: ${reason}`,
+            taxableValue:       Math.max(0, toNum(bill.netAmount) - toNum(bill.taxAmount)),
+            taxAmount:          toNum(bill.taxAmount),
+            cgstAmount:         toNum(bill.cgstAmount),
+            sgstAmount:         toNum(bill.sgstAmount),
+            igstAmount:         toNum(bill.igstAmount),
+            refundAmount:       0,
+            issuedBy:           cancelledBy,
+            issuedByRole:       req.user?.role || "",
+          });
+        }
+      }
+    } catch (cnErr) {
+      console.error(`[cancelBill] credit-note for cancelled invoice ${bill.billNumber} failed:`, cnErr.message);
+      // R7hr(NABH-P3.5) — surface the missing-CN gap on the timeline so
+      // the accountant re-raises it (mirrors recordRefund's marker).
+      try {
+        const { emit } = require("../../models/Billing/BillingAudit");
+        await emit({
+          event:      "CN_CREATE_FAILED",
+          UHID:       bill.UHID,
+          patientId:  bill.patient,
+          billId:     bill._id,
+          billNumber: bill.billNumber,
+          actorName:  cancelledBy,
+          reason:     `CreditNote for CANCELLED invoice ${bill.billNumber} FAILED — the register keeps the invoice; re-raise the CN manually. Error: ${cnErr.message}`,
+        });
+      } catch (_) { /* audit best-effort */ }
+    }
 
     // R7ap-F15: cancel-bill audit — outside the retry block so it doesn't
     // double-emit on a VersionError replay.
@@ -2575,14 +2693,25 @@ exports.listAdvancesByUHID = async (req, res) => {
 // a save that failed AFTER the counter incremented).
 exports.sequenceAudit = async (req, res, next) => {
   try {
-    const year = Number(req.query.year) || new Date().getFullYear();
+    // R7hr(NABH-P2.4) — `year` is the FINANCIAL-year START year (Apr–Mar):
+    // ?year=2026 audits FY 2026-27 (BILL-26- / ADV-2026- / CN-2026-).
+    // Defaults to the CURRENT FY, so a Feb-2027 audit still reads the
+    // FY-2026 series instead of an empty calendar-2027 one.
+    const { fyStartYear } = require("../../utils/counter");
+    const year = Number(req.query.year) || fyStartYear();
     const PatientBill    = require("../../models/PatientBillModel/PatientBillModel");
     const PatientAdvance = require("../../models/PatientBillModel/PatientAdvanceModel");
     const CreditNote     = require("../../models/Billing/CreditNote");
 
+    // R7hr(NABH-P1.2) — parse the sequence from AFTER the prefix, not a
+    // fixed-width slice(-padLen). Bills mint the short `BILL-YY-NN` format
+    // (generateBillNumber, billingService.js) whose suffix auto-widens past
+    // 99 (NN → NNN…), so a right-slice mis-parses; ADV/CN keep their fixed
+    // 6-wide suffixes and parse identically either way. padLen is now only
+    // the display padding for reported missing numbers.
     const checkGaps = async (Model, field, prefix, padLen) => {
       const rows = await Model.find({ [field]: { $regex: `^${prefix}` } }).select(field).lean();
-      const nums = rows.map((r) => parseInt(r[field].slice(-padLen), 10)).filter(Number.isFinite).sort((a, b) => a - b);
+      const nums = rows.map((r) => parseInt(String(r[field]).slice(prefix.length), 10)).filter(Number.isFinite).sort((a, b) => a - b);
       if (nums.length === 0) return { prefix, total: 0, max: 0, missing: [] };
       const max = nums[nums.length - 1];
       const present = new Set(nums);
@@ -2591,11 +2720,50 @@ exports.sequenceAudit = async (req, res, next) => {
       return { prefix, total: nums.length, max, missing };
     };
 
-    const [bills, advances, creditNotes] = await Promise.all([
-      checkGaps(PatientBill,    "billNumber",     `BILL-${year}-`, 6),
+    // R7hr(NABH-P1.2) — the bill series is SHORT-format (`BILL-YY-`), not
+    // `BILL-YYYY-`. The old scan looked for the long prefix, so every bill
+    // minted since the R7hb short-format switch was invisible to gap
+    // detection — the auditor reported "0 bills, no gaps" while real bills
+    // existed (gap-less claim unverifiable in practice). Scan the short
+    // series, and separately surface any rows NOT in the short format
+    // (legacy `BILL-YYYY-NNNNNN` / `BILL-YYYYMMDD-NNNNN` rows that
+    // migrateNumberShortFormat.js hasn't renamed yet) so they are a
+    // visible finding instead of silently unaudited.
+    const yy = String(year).slice(-2);
+    // R7hr(NABH-P3.4) — payment-receipt serials (REC-YY-N) live on the
+    // payments[] subdocs, so their gap scan unwinds instead of checkGaps.
+    const recPrefix = `REC-${yy}-`;
+    const receiptScanP = PatientBill.aggregate([
+      { $match: { "payments.receiptNumber": { $regex: `^${recPrefix}` } } },
+      { $unwind: "$payments" },
+      { $match: { "payments.receiptNumber": { $regex: `^${recPrefix}` } } },
+      { $project: { _n: { $toInt: { $substrBytes: ["$payments.receiptNumber", recPrefix.length, 10] } } } },
+    ]).option({ allowDiskUse: true, maxTimeMS: 15_000 }).then((rows) => {
+      const nums = rows.map((r) => r._n).filter(Number.isFinite).sort((a, b) => a - b);
+      if (!nums.length) return { prefix: recPrefix, total: 0, max: 0, missing: [] };
+      const max = nums[nums.length - 1];
+      const present = new Set(nums);
+      const missing = [];
+      for (let i = 1; i <= max; i++) if (!present.has(i)) missing.push(`${recPrefix}${String(i).padStart(2, "0")}`);
+      return { prefix: recPrefix, total: nums.length, max, missing };
+    });
+
+    const [bills, advances, creditNotes, receipts, nonShortRows] = await Promise.all([
+      checkGaps(PatientBill,    "billNumber",     `BILL-${yy}-`,   2),
       checkGaps(PatientAdvance, "receiptNumber",  `ADV-${year}-`,  6),
       checkGaps(CreditNote,     "creditNoteNumber", `CN-${year}-`, 6),
+      receiptScanP,
+      PatientBill.find({
+        billNumber: { $type: "string", $not: { $regex: `^BILL-\\d{2}-\\d+$` } },
+      }).select("billNumber").limit(500).lean(),
     ]);
+    const legacyFormat = {
+      total: nonShortRows.length,
+      note: nonShortRows.length
+        ? "Bills outside the current BILL-YY-N series — run migrateNumberShortFormat.js to unify; these rows are NOT gap-scanned."
+        : "All numbered bills are in the current BILL-YY-N series.",
+      sample: nonShortRows.slice(0, 10).map((r) => r.billNumber),
+    };
 
     res.json({
       success: true,
@@ -2604,7 +2772,9 @@ exports.sequenceAudit = async (req, res, next) => {
         bills,
         advances,
         creditNotes,
-        anyGaps: bills.missing.length + advances.missing.length + creditNotes.missing.length > 0,
+        receipts,        // R7hr(NABH-P3.4) — REC-YY-N payment-receipt series
+        legacyFormat,
+        anyGaps: bills.missing.length + advances.missing.length + creditNotes.missing.length + receipts.missing.length > 0,
       },
     });
   } catch (e) { next(e); }
@@ -2810,7 +2980,15 @@ exports.getHospitalGstRegister = async (req, res, next) => {
     // CreditNote + 1 find on snapshots — Promise.all-parallelizable.
     const billsAggP = PatientBill.aggregate([
       { $match: {
-          billStatus:      { $nin: ["DRAFT", "CANCELLED"] },
+          // R7hr(NABH-P3.3) — numbered CANCELLED invoices STAY in the
+          // register. billGeneratedAt exists only once a bill was issued a
+          // number (DRAFT→GENERATED), so a cancelled-after-issue tax
+          // invoice matches here and its full-value CreditNote (raised by
+          // cancelBill) reverses it in the CDNR section — invoice + CN net
+          // to zero with a §34 paper trail, instead of the invoice
+          // silently vanishing retroactively. Never-generated cancelled
+          // DRAFTs carry no billGeneratedAt and stay out as before.
+          billStatus:      { $ne: "DRAFT" },
           billGeneratedAt: { $gte: from, $lte: to },
       }},
       { $unwind: "$billItems" },
@@ -3123,6 +3301,14 @@ exports.applyAdvanceToBill = async (req, res) => {
       bill: { _id: result.bill._id, billNumber: result.bill.billNumber, balanceAmount: result.bill.balanceAmount, billStatus: result.bill.billStatus },
     });
   } catch (e) {
+    // Honour typed service errors (status + code) so the cashier UI can tell
+    // apart e.g. ADVANCE_EARMARK_MISMATCH (409 — advance ring-fenced to another
+    // admission) and GENERATE_IN_FLIGHT (409 — bill finalizing) from a plain
+    // validation 400, and react programmatically (offer a general advance,
+    // retry, etc.). Mirrors refundAdvance's catch below.
+    if (e?.status && e?.code) {
+      return res.status(e.status).json({ success: false, message: e.message, code: e.code });
+    }
     res.status(400).json({ success: false, message: e?.message || "Advance apply failed" });
   }
 };
@@ -3145,6 +3331,9 @@ exports.refundAdvance = async (req, res) => {
       mode:             req.body?.mode          || req.body?.refundMode,
       transactionId:    req.body?.transactionId || req.body?.refundTransactionId || null,
       approverOverride,
+      // R7hr(NABH-P3.5) — recipient capture (next of kin on Death cases).
+      refundedToName:     req.body?.refundedToName || null,
+      refundedToRelation: req.body?.refundedToRelation || null,
     });
     res.json({ success: true, data: adv });
   } catch (e) {

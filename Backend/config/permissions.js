@@ -646,10 +646,14 @@ const ACTIONS = {
   // helper may still consult them for UI hiding, so they stay for
   // now. Remove in a future cycle once frontend usage is also dropped.
   //
-  //   "billing.discount"            — only referenced in this file;
-  //                                   no route depends on it. UI hides
-  //                                   the discount button via
-  //                                   billing.refund which IS gated.
+  //   "billing.discount"            — LIVE since R7hr(NABH-P1.3): gates
+  //                                   POST /:billId/settlement-adjust and
+  //                                   POST /uhid/:UHID/bulk-settle (was
+  //                                   billing.refund; same Admin+Accountant
+  //                                   set, now independently tunable).
+  //                                   Service adds the tiered cap —
+  //                                   non-Admin net reductions bounded by
+  //                                   BILLING_DISCOUNT_CAP_PCT (default 10%).
   //   "ward.read" alias surface     — equipment.read covers /api/equipment,
   //                                   ward.read covers /api/ward-tasks +
   //                                   wardOps; the new equipment.* tokens

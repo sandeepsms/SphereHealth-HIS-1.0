@@ -138,6 +138,11 @@ const PatientAdvanceSchema = new mongoose.Schema(
       },
     },
     refundMode:            { type: String, trim: true, default: null }, // CASH/UPI/BANK_TRANSFER
+    // R7hr(NABH-P3.5) — who physically received the refund (next of kin on
+    // Death discharges; attendant with authority letter; the patient
+    // themselves on routine refunds — optional then).
+    refundedToName:        { type: String, trim: true, default: null },
+    refundedToRelation:    { type: String, trim: true, default: null },
     refundTransactionId:   { type: String, trim: true, default: null },
     // R7bb-FIX-E-3 / D3-CRIT-3: Admin-only override slot. When a refund
     // is requested by the same cashier who took the deposit, the service
@@ -216,12 +221,15 @@ PatientAdvanceSchema.set("toObject", { virtuals: true });
 // at the desk with a cryptic "duplicate key" error. nextSequence is
 // the shared atomic counter used elsewhere; we seed from the existing
 // max on first call so legacy receipts aren't re-issued.
-const { nextSequence: nextSeqAdv } = require("../../utils/counter");
+const { nextSequence: nextSeqAdv, fyStartYear: fyStartYearAdv } = require("../../utils/counter");
 const CounterModelForAdv = require("../CounterModel");
 PatientAdvanceSchema.pre("save", async function (next) {
   if (!this.isNew || this.receiptNumber) return next();
   try {
-    const year = new Date().getFullYear();
+    // R7hr(NABH-P2.4) — receipt series keyed on the FINANCIAL year
+    // (Apr–Mar), not the calendar year: gap-less per-FY receipts per IT
+    // Rule 46 practice. A Feb-2027 deposit stays in ADV-2026- (FY 2026-27).
+    const year = fyStartYearAdv();
     const prefix = `ADV-${year}-`;
     const key = `advance:receipt:${year}`;
     // Seed from existing max ONCE (first time this year's counter is touched).

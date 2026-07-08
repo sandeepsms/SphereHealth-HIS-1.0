@@ -128,6 +128,10 @@ const emptyIPD = {
   expectedDischargeDate: "",
   specialInstructions: "",
   advancePayment: 0,
+  // NABH PRE.4 — indicative treatment-cost estimate counselled to the
+  // patient at admission. Persisted on admission.estimatedCost and printed
+  // as the Cost Estimate document (patient-acknowledgement copy).
+  estimatedCost: 0,
 };
 
 const emptyDayCare = {
@@ -182,6 +186,11 @@ export default function ReceptionConsole() {
   /* ── Form state ── */
   const [visitType, setVisitType] = useState("OPD");
   const [isExisting, setIsExisting] = useState(false);
+  // Billing rule 1 — previous PENDING dues for the selected existing patient.
+  // Probed on patient-select so the receptionist is warned at registration
+  // time (before a new visit is opened) that unpaid money is carried forward.
+  // { total, count, bills[] } | null (null = not an existing patient / clean).
+  const [prevDues, setPrevDues] = useState(null);
   const [patient,    setPatient]    = useState(emptyPatient);
   const [opd,        setOpd]        = useState(emptyOPD);
   const [ipd,        setIpd]        = useState(emptyIPD);
@@ -583,6 +592,35 @@ export default function ReceptionConsole() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patient.fullName]);
 
+  /* ─── Billing rule 1 · previous PENDING dues probe ──────────────────
+     When an EXISTING patient is loaded, ask the backend whether any prior
+     bill still carries an unpaid balance. Only PENDING dues surface — a
+     patient whose past visits are all settled comes back clean (banner
+     stays hidden), so a fresh visit truly starts from a clean slate. The
+     endpoint filters to DRAFT/GENERATED/PARTIAL with balance > 0 server
+     side (billingController.getPreviousDues). A brand-new patient (no _id)
+     can have no history, so we skip the call and clear any stale state. */
+  useEffect(() => {
+    if (!patient._id || !patient.UHID) { setPrevDues(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await axios.get(
+          `${API_ENDPOINTS.BASE}/billing/uhid/${patient.UHID}/previous-dues`
+        );
+        if (cancelled) return;
+        const d = r.data?.data;
+        setPrevDues(d && d.hasPending ? d : null);
+      } catch (_) {
+        // Backend down / 404 / not permitted → fail silent (registration
+        // must never be blocked by a dues probe). Banner just won't show.
+        if (!cancelled) setPrevDues(null);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patient._id, patient.UHID]);
+
   /* ─── New patient (clear all form) ─── */
   const newPatient = () => {
     setPatient(emptyPatient);
@@ -850,6 +888,9 @@ export default function ReceptionConsole() {
           // Admission model field is `advancePaid` — sending under the old
           // name silently dropped every IPD advance the receptionist took.
           advancePaid:    isDC || isER ? 0 : (Number(ipd.advancePayment) || 0),
+          // NABH PRE.4 — indicative cost estimate counselled at admission.
+          // admissionService persists this scalar (admission.estimatedCost).
+          estimatedCost:  isDC || isER ? 0 : (Number(ipd.estimatedCost) || 0),
           // bed
           bedId:        bedData.bedId,
           bedNumber:    bedData.bedNumber,
@@ -868,6 +909,40 @@ export default function ReceptionConsole() {
         const admResp = await admissionService.createAdmission(admissionPayload);
         // Service wraps axios — response is the raw body (no extra .data wrap).
         const createdAdm = admResp?.data || admResp || null;
+
+        // ── NABH PRE.4 — Cost Estimate print ───────────────────────
+        // When the receptionist entered an indicative estimate on the IPD
+        // form, print the patient-acknowledgement Cost Estimate document
+        // right at admission (before any money changes hands). One estimate
+        // per admission — EST-<admissionNumber> keeps it referenceable
+        // without a separate counter. The CostEstimate printable derives
+        // the ±(10/15)% likely range itself. Fired before the advance
+        // receipt so the counselling doc precedes the payment doc.
+        const estAmt = Number(ipd.estimatedCost) || 0;
+        if (visitType === "IPD" && estAmt > 0 && createdAdm?._id) {
+          try {
+            openPrint("cost-estimate", {
+              estimateNo:    `EST-${createdAdm.admissionNumber || createdAdm._id}`,
+              patientName:   patient.fullName,
+              uhid:          patientUHID,
+              age:           patient.age,
+              gender:        patient.gender,
+              procedure:     ipd.reasonForAdmission || ipd.provisionalDiagnosis || "IPD treatment",
+              wardClass:     bedData.wardName || createdAdm.wardName || "",
+              consultantName: docLabelFor(docIdFor) || "",
+              estimatedDays: Number(ipd.expectedStayDays) || undefined,
+              items: [{
+                name:     `Estimated IPD treatment — ${ipd.reasonForAdmission || ipd.provisionalDiagnosis || "as advised"}`,
+                category: deptLabelFor(ipd.department) || undefined,
+                qty:      1,
+                rate:     estAmt,
+                amount:   estAmt,
+              }],
+            });
+          } catch (e) {
+            console.error("Cost-estimate print failed:", e);
+          }
+        }
 
         // ── IPD initial advance → PatientAdvance row + receipt ─────
         // Receptionist enters the advance amount on the IPD form. Previously
@@ -933,6 +1008,10 @@ export default function ReceptionConsole() {
               method:        adv.paymentMode || "CASH",
               refNo:         adv.transactionId || null,
               depositPurpose: "hospitalization advance",
+              // NABH PRE.4 — feed the receipt's estimated-cost block (shows
+              // estimate + "balance after this deposit" context). The block
+              // renders only when this is non-null, so 0/absent hides it.
+              estimatedCost: estAmt > 0 ? estAmt : null,
             };
             // R7hr-172 / sprint review: use the shared openPrint helper — it
             // stashes advPayload under printPayload-advance-receipt, opens the
@@ -1297,6 +1376,27 @@ export default function ReceptionConsole() {
             </div>
           )}
 
+          {/* Billing rule 1 — previous PENDING dues alert. Shown at
+              registration time so the receptionist knows, before opening a
+              new visit, that this patient carries unpaid dues from earlier.
+              Only pending balances reach here (settled history is silent →
+              a clean revisit stays clean). Links straight to the Billing
+              Counter to collect / carry forward. */}
+          {prevDues && prevDues.totalDue > 0.5 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: "9px 14px", margin: "0 0 12px" }}>
+              <i className="pi pi-exclamation-triangle" style={{ color: "#b91c1c", fontSize: 14 }} />
+              <div style={{ flex: 1, fontSize: 12.5, color: "#991b1b" }}>
+                Previous pending dues: <strong>{fmtCur(prevDues.totalDue)}</strong> across <strong>{prevDues.count}</strong> earlier bill{prevDues.count === 1 ? "" : "s"} — clear or carry forward before the new visit.
+              </div>
+              <button
+                type="button"
+                onClick={() => navigate(`/reception-billing/${patient.UHID}`)}
+                style={{ padding: "6px 12px", borderRadius: 8, border: "none", background: "#b91c1c", color: "#fff", fontWeight: 700, fontSize: 11.5, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                Open Billing →
+              </button>
+            </div>
+          )}
+
           {/* ─── Patient Info (always shown) ─── */}
           <div className="rc-section">
             <div className="rc-section-head">
@@ -1639,6 +1739,16 @@ export default function ReceptionConsole() {
                     <label className="his-label">Advance Payment (₹)</label>
                     <input className="his-field" type="number" value={ipd.advancePayment}
                       onChange={e => setIpd(p => ({ ...p, advancePayment: e.target.value }))} placeholder="0" />
+                  </div>
+                  <div className="his-field-group">
+                    <label className="his-label">
+                      Estimated Cost (₹)
+                      <span className="rc-section-sublabel">
+                        (NABH PRE.4 — counselled to patient; prints estimate)
+                      </span>
+                    </label>
+                    <input className="his-field" type="number" value={ipd.estimatedCost}
+                      onChange={e => setIpd(p => ({ ...p, estimatedCost: e.target.value }))} placeholder="0" />
                   </div>
                 </div>
                 <div className="his-field-group">

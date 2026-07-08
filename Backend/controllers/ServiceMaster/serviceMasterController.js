@@ -188,9 +188,13 @@ exports.update = async (req, res) => {
     const body = req.body || {};
     const hasFlat = Object.prototype.hasOwnProperty.call(body, "defaultPrice");
     const hasTier = Object.prototype.hasOwnProperty.call(body, "tierPricing");
+    // R7hr(NABH-P2.2) — hoisted so the sub-threshold direct path below can
+    // emit a before/after audit row after the update lands.
+    let priorSnap = null;
     if (hasFlat || hasTier) {
       const prior = await ServiceMaster.findById(req.params.id).lean();
       if (!prior) return res.status(404).json({ success: false, message: "Service not found" });
+      priorSnap = prior;
       const beforePrice = Number(prior.defaultPrice || 0);
       const afterPrice  = hasFlat ? Number(body.defaultPrice) : beforePrice;
       const delta = Math.abs(afterPrice - beforePrice);
@@ -234,6 +238,25 @@ exports.update = async (req, res) => {
       req.body,
       req.user,
     );
+    // R7hr(NABH-P2.2) — the sub-threshold direct edit (< ₹500 AND ≤ 10%,
+    // no tier change) previously mutated the tariff with NO audit row and
+    // no updatedBy anywhere: the documented MASTER_SERVICE_UPDATED event
+    // was never emitted and the R7bb logMasterDataEvent helper was never
+    // wired. Emit it now with the before/after price snapshot + actor from
+    // req (the ≥-threshold path is separately trailed by its
+    // PriceChangeRequest doc + the approve emit below). Best-effort.
+    if (priorSnap && (hasFlat || hasTier)) {
+      const { logMasterDataEvent } = require("../../services/Clinical/activityLogger");
+      await logMasterDataEvent({
+        event:    "MASTER_SERVICE_UPDATED",
+        model:    "ServiceMaster",
+        docId:    req.params.id,
+        actorReq: req,
+        reason:   String(body.reason || "").trim() || `Sub-threshold direct price edit — ${priorSnap.serviceCode || ""}`,
+        before:   { serviceCode: priorSnap.serviceCode, defaultPrice: Number(priorSnap.defaultPrice || 0) },
+        after:    { serviceCode: priorSnap.serviceCode, defaultPrice: hasFlat ? Number(body.defaultPrice) : Number(priorSnap.defaultPrice || 0) },
+      });
+    }
     res.json({ success: true, data });
   } catch (e) {
     const status = e.message === "Service not found" ? 404 : 400;
@@ -280,6 +303,21 @@ exports.approvePriceChangeRequest = async (req, res) => {
     reqDoc.approvedByRole = req.user?.role || "";
     reqDoc.approvedAt     = new Date();
     await reqDoc.save();
+    // R7hr(NABH-P2.2) — the approved (maker-checker) change also lands in
+    // the chronological BillingAudit timeline, not just the
+    // PriceChangeRequest doc — one place to review every tariff mutation.
+    {
+      const { logMasterDataEvent } = require("../../services/Clinical/activityLogger");
+      await logMasterDataEvent({
+        event:    "MASTER_SERVICE_UPDATED",
+        model:    "ServiceMaster",
+        docId:    reqDoc.serviceMaster,
+        actorReq: req,
+        reason:   `PriceChangeRequest ${reqDoc._id} approved (requested by ${reqDoc.requestedBy || "?"}, maker-checker)`,
+        before:   reqDoc.before,
+        after:    reqDoc.after,
+      });
+    }
     res.json({ success: true, data: { request: reqDoc, service: data } });
   } catch (e) { res.status(400).json({ success: false, message: e.message }); }
 };

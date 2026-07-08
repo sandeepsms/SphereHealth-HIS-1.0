@@ -400,6 +400,90 @@ exports.getLabTat = async (req, res, next) => {
 };
 
 // ════════════════════════════════════════════════════════════════════
+// R7hr(NABH-P2.5): IPD discharge TAT — the NABH CQI discharge-process
+// quality indicator. dischargeWorkflow has carried the stage timestamps
+// (doctorApprovedAt → billClearedAt → gatePassIssuedAt) since R7hr-197,
+// but nothing ever derived the metric — the re-audit flagged the
+// indicator as absent. Stage semantics:
+//   billingMins = doctorApprovedAt → billClearedAt   (cashier settle time)
+//   exitMins    = billClearedAt   → gatePassIssuedAt (paperwork/exit time)
+//   totalMins   = doctorApprovedAt → gatePassIssuedAt (patient-felt TAT)
+// Grouped overall + by dischargeType, with the 5 slowest discharges
+// listed for actionability. Mirrors getLabTat's shape/limits.
+// ════════════════════════════════════════════════════════════════════
+exports.getDischargeTat = async (req, res, next) => {
+  try {
+    let from, to;
+    try {
+      ({ from, to } = parseHospitalDateRange(req.query.from, req.query.to, { defaultDays: 30, maxDays: 366 }));
+    } catch (e) {
+      return sendErr(res, e, "VALIDATION", e.status || 400);
+    }
+    const rows = await Admission.aggregate([
+      { $match: {
+          "dischargeWorkflow.gatePassIssuedAt": { $gte: from, $lt: to },
+          "dischargeWorkflow.doctorApprovedAt": { $type: "date" },
+      } },
+      { $addFields: {
+          _billClearedAt: { $ifNull: ["$dischargeWorkflow.billClearedAt", "$dischargeWorkflow.gatePassIssuedAt"] },
+      } },
+      { $addFields: {
+          billingMins: { $divide: [{ $subtract: ["$_billClearedAt", "$dischargeWorkflow.doctorApprovedAt"] }, 60000] },
+          exitMins:    { $divide: [{ $subtract: ["$dischargeWorkflow.gatePassIssuedAt", "$_billClearedAt"] }, 60000] },
+          totalMins:   { $divide: [{ $subtract: ["$dischargeWorkflow.gatePassIssuedAt", "$dischargeWorkflow.doctorApprovedAt"] }, 60000] },
+      } },
+      { $match: { totalMins: { $gte: 0 } } },   // clock-skew guard
+      { $facet: {
+          overall: [
+            { $group: {
+                _id: null, count: { $sum: 1 },
+                avgBillingMins: { $avg: "$billingMins" }, avgExitMins: { $avg: "$exitMins" },
+                avgTotalMins: { $avg: "$totalMins" }, maxTotalMins: { $max: "$totalMins" }, minTotalMins: { $min: "$totalMins" },
+            } },
+          ],
+          byType: [
+            { $group: {
+                _id: { $ifNull: ["$dischargeWorkflow.dischargeType", "Routine"] },
+                count: { $sum: 1 }, avgTotalMins: { $avg: "$totalMins" },
+            } },
+            { $sort: { count: -1 } },
+          ],
+          slowest: [
+            { $sort: { totalMins: -1 } },
+            { $limit: 5 },
+            { $project: {
+                _id: 0, admissionNumber: 1, UHID: 1,
+                dischargeType: "$dischargeWorkflow.dischargeType",
+                totalMins: { $round: ["$totalMins", 0] },
+                billingMins: { $round: ["$billingMins", 0] },
+                gatePassIssuedAt: "$dischargeWorkflow.gatePassIssuedAt",
+            } },
+          ],
+      } },
+    ]).option({ allowDiskUse: true, maxTimeMS: 20_000 });
+
+    const o = rows?.[0]?.overall?.[0] || null;
+    const fromStr = from.toISOString().slice(0, 10);
+    const toStr   = to.toISOString().slice(0, 10);
+    return sendOk(res, {
+      from: fromStr, to: toStr,
+      overall: o ? {
+        count: o.count,
+        avgBillingMins: Math.round(o.avgBillingMins || 0),
+        avgExitMins:    Math.round(o.avgExitMins || 0),
+        avgTotalMins:   Math.round(o.avgTotalMins || 0),
+        maxTotalMins:   Math.round(o.maxTotalMins || 0),
+        minTotalMins:   Math.round(o.minTotalMins || 0),
+      } : { count: 0 },
+      byType: (rows?.[0]?.byType || []).map((r) => ({
+        dischargeType: r._id, count: r.count, avgTotalMins: Math.round(r.avgTotalMins || 0),
+      })),
+      slowest: rows?.[0]?.slowest || [],
+    }, { from: fromStr, to: toStr, count: o?.count || 0 });
+  } catch (e) { next(e); }
+};
+
+// ════════════════════════════════════════════════════════════════════
 // A6-HIGH-6: inventory ABC analysis (12-month consumption value)
 // ════════════════════════════════════════════════════════════════════
 exports.getAbcAnalysis = async (req, res, next) => {
