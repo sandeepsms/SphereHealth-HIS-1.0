@@ -216,12 +216,15 @@ PatientAdvanceSchema.set("toObject", { virtuals: true });
 // at the desk with a cryptic "duplicate key" error. nextSequence is
 // the shared atomic counter used elsewhere; we seed from the existing
 // max on first call so legacy receipts aren't re-issued.
-const { nextSequence: nextSeqAdv } = require("../../utils/counter");
+const { nextSequence: nextSeqAdv, fyStartYear: fyStartYearAdv } = require("../../utils/counter");
 const CounterModelForAdv = require("../CounterModel");
 PatientAdvanceSchema.pre("save", async function (next) {
   if (!this.isNew || this.receiptNumber) return next();
   try {
-    const year = new Date().getFullYear();
+    // R7hr(NABH-P2.4) — receipt series keyed on the FINANCIAL year
+    // (Apr–Mar), not the calendar year: gap-less per-FY receipts per IT
+    // Rule 46 practice. A Feb-2027 deposit stays in ADV-2026- (FY 2026-27).
+    const year = fyStartYearAdv();
     const prefix = `ADV-${year}-`;
     const key = `advance:receipt:${year}`;
     // Seed from existing max ONCE (first time this year's counter is touched).

@@ -2625,7 +2625,12 @@ exports.listAdvancesByUHID = async (req, res) => {
 // a save that failed AFTER the counter incremented).
 exports.sequenceAudit = async (req, res, next) => {
   try {
-    const year = Number(req.query.year) || new Date().getFullYear();
+    // R7hr(NABH-P2.4) — `year` is the FINANCIAL-year START year (Apr–Mar):
+    // ?year=2026 audits FY 2026-27 (BILL-26- / ADV-2026- / CN-2026-).
+    // Defaults to the CURRENT FY, so a Feb-2027 audit still reads the
+    // FY-2026 series instead of an empty calendar-2027 one.
+    const { fyStartYear } = require("../../utils/counter");
+    const year = Number(req.query.year) || fyStartYear();
     const PatientBill    = require("../../models/PatientBillModel/PatientBillModel");
     const PatientAdvance = require("../../models/PatientBillModel/PatientAdvanceModel");
     const CreditNote     = require("../../models/Billing/CreditNote");

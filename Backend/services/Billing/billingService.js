@@ -34,14 +34,18 @@ function sanitizeTaxPct(v) {
 // hook so both code paths produce the same shape). Legacy bills with
 // `BILL-YYYYMMDD-NNNNN` (5-digit serial) remain queryable — only NEW
 // bills use the unified format.
-const { nextSequence } = require("../../utils/counter");
+const { nextSequence, fyStartYear } = require("../../utils/counter");
 
 async function generateBillNumber() {
   // R7hb — Short bill number: BILL-YY-NN (continuous within year,
   // auto-widens past 99). Pre-R7hb this was BILL-YYYY-NNNNNN — too
-  // long for counter receipts and verbal hand-off. Year-keyed so a
-  // fiscal-year audit still groups correctly.
-  const yy = String(new Date().getFullYear()).slice(-2);
+  // long for counter receipts and verbal hand-off.
+  // R7hr(NABH-P2.4) — YY is the FINANCIAL-year start year (Apr–Mar), not
+  // the calendar year: the series no longer resets on Jan 1 mid-FY, and a
+  // Feb-2027 invoice stays in the BILL-26- series (FY 2026-27) per IT
+  // Rule 46 / GST per-FY gap-less practice. No change Apr–Dec (FY start
+  // == calendar year).
+  const yy = String(fyStartYear()).slice(-2);
   const key = `bill:${yy}`;
   // Seed from existing max on first call this year so legacy series
   // continues without a gap. Looks for the short prefix BILL-YY-; the
