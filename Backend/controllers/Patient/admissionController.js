@@ -886,6 +886,35 @@ class AdmissionController {
     return res.json({ success: true, data: updated });
   });
 
+  // R7hr(DC-P2) — POST /api/admissions/:id/convert-to-ipd
+  // Day-care complication → overnight stay. Flips the SAME admission to
+  // IPD (admissionType "Planned") so the episode/bed/bills continue —
+  // no new admission, no re-registration. Billing note: the existing
+  // DAYCARE-typed draft stays as-is; post-flip accrual mints IPD-typed
+  // charges on a sibling draft for the same admission — the multi-bill
+  // discharge gate + payment waterfall (R3) and getIPDLedger's all-bills
+  // read already handle that split correctly. Reason mandatory (audit).
+  convertDayCareToIpd = handle(async (req, res) => {
+    const Admission = require("../../models/Patient/admissionModel");
+    const reason = String(req.body?.reason || "").trim();
+    if (!reason) return res.status(400).json({ success: false, message: "Conversion reason is required (e.g. post-op complication, observation needed overnight)" });
+    const actor = req.user?.fullName || req.user?.employeeId || "Staff";
+    const adm = await Admission.findOneAndUpdate(
+      { _id: req.params.id, status: "Active", admissionType: { $in: ["Day Care", "Daycare"] } },
+      { $set: {
+          admissionType: "Planned",
+          "dayCare.convertedToIpdAt": new Date(),
+          "dayCare.convertedToIpdBy": actor,
+          "dayCare.convertedToIpdReason": reason,
+        } },
+      { new: true, runValidators: true },
+    );
+    if (!adm) {
+      return res.status(409).json({ success: false, message: "Convert failed — admission must be an ACTIVE Day Care admission" });
+    }
+    return res.json({ success: true, message: "Converted to IPD — same admission continues (bed, bills, episode intact)", data: adm });
+  });
+
   // POST /api/admissions/:id/clear-final-bill
   // Receptionist clears the final bill (after payment collected).
   // Body: { finalBillNumber, finalBillAmount, clearedBy, paymentMode?, transactionId? }

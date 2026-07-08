@@ -89,6 +89,21 @@ export default function DayCareBoard() {
                 <button onClick={() => setChecklistFor(a)} style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 11.5 }}>☑ Checklist</button>
                 <button onClick={() => setReadinessFor(a)} style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 11.5 }}>📊 Readiness</button>
                 <button onClick={() => navigate(`/billing/ipd/${a._id}`)} title="Live ledger" style={{ padding: "6px 10px", borderRadius: 7, border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer" }}>₹</button>
+                {/* R7hr(DC-P2) — complication → overnight: same admission flips to IPD */}
+                <button
+                  onClick={async () => {
+                    const reason = window.prompt("DC → IPD conversion reason (mandatory):", "");
+                    if (!reason || !reason.trim()) return;
+                    try {
+                      await axios.post(`${API_ENDPOINTS.ADMISSIONS}/${a._id}/convert-to-ipd`, { reason: reason.trim() });
+                      toast.success("Converted to IPD — bed, bills aur episode same admission pe continue");
+                      load();
+                    } catch (e) { toast.error(e?.response?.data?.message || "Convert failed"); }
+                  }}
+                  title="Convert to IPD (overnight stay)"
+                  style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid #fca5a5", background: "#fef2f2", color: "#991b1b", cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 11.5 }}>
+                  → IPD
+                </button>
               </div>
             </div>
           </div>

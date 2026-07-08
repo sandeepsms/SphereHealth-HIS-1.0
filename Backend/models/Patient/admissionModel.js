@@ -321,6 +321,11 @@ const AdmissionSchema = new mongoose.Schema(
         recordedBy:    String,
         recordedAt:    Date,
       },
+      // R7hr(DC-P2) — DC→IPD conversion trail (complication → overnight;
+      // the SAME admission flips to admissionType Planned).
+      convertedToIpdAt:     Date,
+      convertedToIpdBy:     String,
+      convertedToIpdReason: String,
     },
 
     // ── Cancel ───────────────────────────────────────────────
