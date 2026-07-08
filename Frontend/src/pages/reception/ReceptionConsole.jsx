@@ -182,6 +182,11 @@ export default function ReceptionConsole() {
   /* ── Form state ── */
   const [visitType, setVisitType] = useState("OPD");
   const [isExisting, setIsExisting] = useState(false);
+  // Billing rule 1 — previous PENDING dues for the selected existing patient.
+  // Probed on patient-select so the receptionist is warned at registration
+  // time (before a new visit is opened) that unpaid money is carried forward.
+  // { total, count, bills[] } | null (null = not an existing patient / clean).
+  const [prevDues, setPrevDues] = useState(null);
   const [patient,    setPatient]    = useState(emptyPatient);
   const [opd,        setOpd]        = useState(emptyOPD);
   const [ipd,        setIpd]        = useState(emptyIPD);
@@ -582,6 +587,35 @@ export default function ReceptionConsole() {
     if (lastSaved && patient.fullName) setLastSaved(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [patient.fullName]);
+
+  /* ─── Billing rule 1 · previous PENDING dues probe ──────────────────
+     When an EXISTING patient is loaded, ask the backend whether any prior
+     bill still carries an unpaid balance. Only PENDING dues surface — a
+     patient whose past visits are all settled comes back clean (banner
+     stays hidden), so a fresh visit truly starts from a clean slate. The
+     endpoint filters to DRAFT/GENERATED/PARTIAL with balance > 0 server
+     side (billingController.getPreviousDues). A brand-new patient (no _id)
+     can have no history, so we skip the call and clear any stale state. */
+  useEffect(() => {
+    if (!patient._id || !patient.UHID) { setPrevDues(null); return; }
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await axios.get(
+          `${API_ENDPOINTS.BASE}/billing/uhid/${patient.UHID}/previous-dues`
+        );
+        if (cancelled) return;
+        const d = r.data?.data;
+        setPrevDues(d && d.hasPending ? d : null);
+      } catch (_) {
+        // Backend down / 404 / not permitted → fail silent (registration
+        // must never be blocked by a dues probe). Banner just won't show.
+        if (!cancelled) setPrevDues(null);
+      }
+    })();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patient._id, patient.UHID]);
 
   /* ─── New patient (clear all form) ─── */
   const newPatient = () => {
@@ -1294,6 +1328,27 @@ export default function ReceptionConsole() {
               <i className="pi pi-user-edit" />
               Editing existing patient · UHID: <strong>{patient.UHID || "—"}</strong>
               <button className="rc-revisit-clear" onClick={newPatient}>Clear</button>
+            </div>
+          )}
+
+          {/* Billing rule 1 — previous PENDING dues alert. Shown at
+              registration time so the receptionist knows, before opening a
+              new visit, that this patient carries unpaid dues from earlier.
+              Only pending balances reach here (settled history is silent →
+              a clean revisit stays clean). Links straight to the Billing
+              Counter to collect / carry forward. */}
+          {prevDues && prevDues.totalDue > 0.5 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: "9px 14px", margin: "0 0 12px" }}>
+              <i className="pi pi-exclamation-triangle" style={{ color: "#b91c1c", fontSize: 14 }} />
+              <div style={{ flex: 1, fontSize: 12.5, color: "#991b1b" }}>
+                Previous pending dues: <strong>{fmtCur(prevDues.totalDue)}</strong> across <strong>{prevDues.count}</strong> earlier bill{prevDues.count === 1 ? "" : "s"} — clear or carry forward before the new visit.
+              </div>
+              <button
+                type="button"
+                onClick={() => navigate(`/reception-billing/${patient.UHID}`)}
+                style={{ padding: "6px 12px", borderRadius: 8, border: "none", background: "#b91c1c", color: "#fff", fontWeight: 700, fontSize: 11.5, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                Open Billing →
+              </button>
             </div>
           )}
 

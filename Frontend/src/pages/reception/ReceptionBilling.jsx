@@ -404,6 +404,22 @@ export default function ReceptionBilling() {
   // Pick the active list based on the toggle
   const displayBills    = showHistory ? pastBills    : currentBills;
   const displayAdvances = showHistory ? pastAdvances : currentAdvances;
+  // Billing rule 1 — surface previous PENDING dues only. Prior-visit bills that
+  // still carry an unpaid balance are flagged at this visit; fully-settled
+  // history stays out of the way (a settled revisit is a fresh slate with no
+  // link to the past). `pastBills` already holds every bill outside the current
+  // visit/admission, so the pending subset is exactly the carry-forward set.
+  const prevPending = useMemo(() => {
+    const unpaid = (pastBills || []).filter(
+      (b) =>
+        toMoney(b.balanceAmount) > 0.5 &&
+        !["PAID", "CANCELLED", "REFUNDED"].includes(b.billStatus)
+    );
+    return {
+      count: unpaid.length,
+      total: unpaid.reduce((s, b) => s + toMoney(b.balanceAmount), 0),
+    };
+  }, [pastBills]);
   // ── Smart search + active-patient directory ────────────────────
   //   searchQ        — text in the search box (name / UHID / phone)
   //   searchResults  — live dropdown matches (debounced 250ms)
@@ -2211,6 +2227,27 @@ export default function ReceptionBilling() {
                 );
               })}
               </div>
+            </div>
+          )}
+
+          {/* Billing rule 1 — carry forward previous PENDING dues. Prior-visit
+              bills that are still unpaid are surfaced at this visit so the
+              cashier can collect (or knowingly carry forward) before closing.
+              Fully-settled history never triggers this — a settled revisit is
+              a clean slate. Rendered above the IPD-hidden notice because unpaid
+              money owed is the higher-priority alert. */}
+          {prevPending.count > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, background: "#fef2f2", border: "1px solid #fecaca", borderRadius: 10, padding: "9px 14px", marginBottom: 12 }}>
+              <i className="pi pi-exclamation-triangle" style={{ color: "#b91c1c", fontSize: 14 }} />
+              <div style={{ flex: 1, fontSize: 12, color: "#991b1b" }}>
+                Previous pending dues: <strong>{fmtCur(prevPending.total)}</strong> across <strong>{prevPending.count}</strong> earlier bill{prevPending.count === 1 ? "" : "s"} — collect or carry forward before closing this visit.
+              </div>
+              {!showHistory && (
+                <button onClick={() => setShowHistory(true)}
+                  style={{ padding: "6px 12px", borderRadius: 8, border: "none", background: "#b91c1c", color: "#fff", fontWeight: 700, fontSize: 11.5, cursor: "pointer", fontFamily: "inherit", whiteSpace: "nowrap" }}>
+                  View pending →
+                </button>
+              )}
             </div>
           )}
 

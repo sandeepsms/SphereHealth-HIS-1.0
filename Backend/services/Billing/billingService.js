@@ -314,6 +314,42 @@ class BillingService {
       .lean({ virtuals: true });
   }
 
+  // ── R7hr(billing-audit P1.3) — previous PENDING dues for a patient ──
+  // Rule 1: at the next visit, surface prior billing ONLY when it's still
+  // pending. Returns every UNPAID bill (DRAFT/GENERATED/PARTIAL with
+  // balance > 0) that is NOT the current visit/admission, so registration +
+  // the billing page can warn the biller — while paid history stays hidden
+  // (fresh slate). excludeVisitId / excludeAdmissionId scope out the current
+  // encounter's own in-progress bill.
+  async getPreviousPendingDues(UHID, { excludeVisitId, excludeAdmissionId } = {}) {
+    const { toNum } = require("../../utils/money");
+    const bills = await PatientBill.find({
+      UHID,
+      billStatus: { $in: ["DRAFT", "GENERATED", "PARTIAL"] },
+    }).sort({ createdAt: -1 }).limit(200).lean();
+    const pending = bills.filter((b) => {
+      if (toNum(b.balanceAmount) <= 0.5) return false;
+      if (excludeVisitId && b.visitId && String(b.visitId) === String(excludeVisitId)) return false;
+      if (excludeAdmissionId && b.admission && String(b.admission) === String(excludeAdmissionId)) return false;
+      return true;
+    });
+    return {
+      hasPending: pending.length > 0,
+      count:      pending.length,
+      totalDue:   pending.reduce((s, b) => s + toNum(b.balanceAmount), 0),
+      bills: pending.map((b) => ({
+        billId:        b._id,
+        billNumber:    b.billNumber || null,
+        visitType:     b.visitType,
+        visitId:       b.visitId || null,
+        billStatus:    b.billStatus,
+        netAmount:     toNum(b.netAmount),
+        balanceAmount: toNum(b.balanceAmount),
+        createdAt:     b.createdAt,
+      })),
+    };
+  }
+
   // ── 6. Add service to bill ────────────────────────────────────
   // R7aw-FIX-7/D7-LOW: full body now wrapped in retryVersionError so a
   // concurrent cron / cashier writer doesn't 500 the addService request.

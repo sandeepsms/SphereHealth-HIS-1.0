@@ -33,6 +33,23 @@ exports.getBillsByUHID = async (req, res) => {
   }
 };
 
+// ── GET /api/billing/uhid/:UHID/previous-dues ─────────────────
+// R7hr(billing-audit P1.3) — rule 1: surface previous PENDING dues at the
+// next visit (registration + billing banner). Query params scope out the
+// current encounter so its own in-progress bill isn't reported as "previous":
+//   ?excludeVisitId=<current OPD visitNumber>  &excludeAdmissionId=<active adm>
+exports.getPreviousDues = async (req, res) => {
+  try {
+    const data = await billingService.getPreviousPendingDues(req.params.UHID, {
+      excludeVisitId:     req.query.excludeVisitId || null,
+      excludeAdmissionId: req.query.excludeAdmissionId || null,
+    });
+    res.json({ success: true, data });
+  } catch (e) {
+    res.status(500).json({ success: false, message: e.message });
+  }
+};
+
 // ── POST /api/billing/create ──────────────────────────────────
 exports.getOrCreateBill = async (req, res) => {
   try {

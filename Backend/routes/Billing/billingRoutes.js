@@ -77,6 +77,9 @@ router.get("/uhid/:UHID", requireAction("billing.read"), ctrl.getBillsByUHID); /
 // R7ap-F17: canonical UHID totals endpoint — single source of truth for
 // every page showing per-patient money KPIs.
 router.get("/uhid/:UHID/summary", requireAction("billing.read"), ctrl.getUhidSummary);
+// R7hr(billing-audit P1.3) — previous PENDING dues (rule 1: surface prior
+// billing at the next visit only when still unpaid).
+router.get("/uhid/:UHID/previous-dues", requireAction("billing.read"), ctrl.getPreviousDues);
 // Front-desk bulk actions across every outstanding bill for a UHID.
 // collect-all distributes one lump-sum FIFO; bulk-settle applies a
 // uniform % or proportional ₹ discount. Both writes are audited
