@@ -3,18 +3,29 @@
 > **Ye file kya hai:** Har session ka running task log. Naya session shuru karo toh **sirf ye file padho** — 2 minute me pata chal jayega kya chal raha tha, kaha se pick karna hai, aage kya karna hai.
 > **Rule:** Har work-session ke END pe ye file update karke commit karni hai.
 
-**Last updated:** 2026-07-08 (late evening) · **Branch:** `claude/multi-hospital-deploy` · **Tree:** clean ✅ · **npm audit:** 0/0 dono ✅ · **Build:** green ✅
+**Last updated:** 2026-07-08 (raat) · **Branch:** `claude/multi-hospital-deploy` · **Tree:** clean ✅ · **npm audit:** 0/0 ✅ · **Build:** green ✅
 
 ---
 
 ## 🎯 ABHI YAHA HAI (resume point)
 
-**Chal raha tha:** NABH-standards billing re-audit → **P1 (4) + P2 (5) + P3 (6 commits) SAB DONE**. Billing audit poora band — teeno tiers NABH-solid.
+**Abhi hua:** ER-P1 workflow arc **poora DONE** (4 commits, neeche table). Emergency ka clinical+money loop band. Billing NABH arc pehle se pushed hai.
 
 **Sabse pehle karne layak (koi bhi ek):**
-1. **`git push`** — **~24 commits unpushed hain** (`bac0bc73..e0c5ca48`, poora billing arc + TASK-LOG). Push karke PR-compare link owner ko dena. *(gh CLI authed nahi — `https://github.com/<owner>/<repo>/pull/new/claude/multi-hospital-deploy` URL.)*
-2. **VPS Docker dry-run** — user ke server ki zaroorat, unke bolne pe.
-3. **Task #43** — clinical prints unification verify+close (audit bola mostly done).
+1. **`git push`** — **5 commits unpushed** (`5f3f5d9c..49e6a00c` ER-P1 arc + TASK-LOG update). PR pe auto-add ho jayenge.
+2. **DC-P1 (Day Care)** — plan ready (is file me neeche): DC Today board, pre-procedure checklist, discharge-readiness score. User "do DC-P1" bole toh.
+3. **ER-P2** — SBAR handover on Admit, referral-letter wiring, ER TAT tile.
+4. VPS Docker dry-run (Docker install/server chahiye) · Task #43 prints unification.
+
+### ER-P1 (2026-07-08 raat) — Emergency loop band
+| Commit | Kya hua |
+|---|---|
+| `5f3f5d9c` | Serial vitals: `vitalsLog[]` + POST /:erNo/vitals + board pe heart-button modal (snapshot bhi refresh) |
+| `d1d10de4` | **Disposition modal** (R7z attestation ka pehla UI!) + `ERDischargeSummary` printable — Discharged/Referred/LAMA pe auto-print |
+| `3f4270cb` | **Walk-in ER bill latent bug fix** (synthetic visit._id pe bill kabhi banta hi nahi tha — pending-review me atakta) + exit pe DRAFT→generateFinalBill + "₹X due" prompt |
+| `49e6a00c` | Observation mode: 2h review clock (`ER_OBS_REVIEW_HOURS`), vitals entry se reset, board pe ⏰ OVERDUE chip |
+
+**Emergency + Day Care workflow plans** conversation me diye gaye the (2026-07-08) — DC-P1/P2/P3 aur ER-P2/P3 ki phased list wahi hai; DC plan: DC Today board + pre-procedure checklist + Aldrete-style discharge-readiness (P1), DC→IPD conversion + DC register (P2).
 
 ---
 
