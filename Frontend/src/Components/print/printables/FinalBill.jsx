@@ -46,7 +46,21 @@ const FinalBill = ({ settings, receipt = {} }) => {
     ];
   }
 
-  const sumOf = (g) => g.items.reduce((s, it) => s + toNum(it.amount), 0);
+  // R7hr(NABH-P3.2) — raw PatientBill items (DischargeQueue passes them
+  // verbatim) carry `netAmount`, not `amount`; without the fallback that
+  // path printed ₹0 lines and a ₹0 subtotal.
+  const lineAmt = (it) => toNum(it.amount ?? it.netAmount);
+  const sumOf = (g) => g.items.reduce((s, it) => s + lineAmt(it), 0);
+
+  // R7hr(NABH-P3.2) — per-line discount visibility. Bill items capture
+  // discountPercent/discountAmount but the printed table hid them (only the
+  // bill-level "Less: Discount" showed). When ANY line carries one (raw
+  // billItems path — e.g. DischargeQueue passes the PatientBill items
+  // verbatim), render a Disc column so the itemized concession is on the
+  // invoice; discount-free bills keep the exact old layout.
+  const hasLineDiscounts = groups.some((g) =>
+    (g.items || []).some((it) => toNum(it.discountPercent) > 0 || toNum(it.discountAmount) > 0),
+  );
 
   // R7bf-F / A4-HIGH-1: every money field goes through toNum() so raw
   // Decimal128 ({$numberDecimal:"..."}) wire shapes can never bleed
@@ -68,7 +82,13 @@ const FinalBill = ({ settings, receipt = {} }) => {
   // R7bf-F / A4-HIGH-7: settlement / TPA bills carry a TDS-deducted line
   // (subtracted before Net Receivable). When tdsDeducted=0 the line is
   // hidden so retail bills keep their existing layout.
-  const payable   = Math.max(0, netAfterTax - advances - tpaPaid - tdsDeducted);
+  const payableExact = Math.max(0, netAfterTax - advances - tpaPaid - tdsDeducted);
+  // R7hr(NABH-P3.1) — invoice round-off: the payable is presented rounded
+  // to the nearest rupee with the signed difference on its own line
+  // (mirrors the backend's recalcTotals, which stores the rounded patient
+  // share + roundOffAmount). Whole-rupee bills → roundOff 0 → line hidden.
+  const payable   = Math.round(payableExact);
+  const roundOff  = +(payable - payableExact).toFixed(2);
   const hasGstFields = !!(
     receipt.customerGstin ||
     receipt.placeOfSupply ||
@@ -332,6 +352,7 @@ const FinalBill = ({ settings, receipt = {} }) => {
                 {hasGstFields && <th style={{ width: 70 }}>HSN/SAC</th>}
                 <th className="center" style={{ width: 50 }}>Qty</th>
                 <th className="right" style={{ width: 75 }}>Rate (₹)</th>
+                {hasLineDiscounts && <th className="right" style={{ width: 55 }}>Disc</th>}
                 {hasGstFields && <th className="right" style={{ width: 50 }}>GST %</th>}
                 <th className="right" style={{ width: 90 }}>Amount (₹)</th>
               </tr>
@@ -339,7 +360,7 @@ const FinalBill = ({ settings, receipt = {} }) => {
             <tbody>
               {groups.map((g, gi) => {
                 const sub = sumOf(g);
-                const cols = hasGstFields ? 7 : 5;
+                const cols = (hasGstFields ? 7 : 5) + (hasLineDiscounts ? 1 : 0);
                 // R7bf-F / A4-HIGH-8: daycare same-day proration label.
                 // Receipt sets `receipt.daycareProrationHours` (set by
                 // billingService for daycare admissions with same-day
@@ -385,8 +406,17 @@ const FinalBill = ({ settings, receipt = {} }) => {
                         {hasGstFields && <td style={{ fontFamily: "'DM Mono', monospace", fontSize: 10 }}>{it.hsnSacCode || it.hsnSac || "—"}</td>}
                         <td className="center">{it.qty || it.quantity || 1}</td>
                         <td className="right">{toNum(it.rate || it.unitPrice || it.amount).toLocaleString("en-IN")}</td>
+                        {hasLineDiscounts && (
+                          <td className="right">
+                            {toNum(it.discountPercent) > 0
+                              ? `${toNum(it.discountPercent)}%`
+                              : toNum(it.discountAmount) > 0
+                                ? `₹${toNum(it.discountAmount).toLocaleString("en-IN")}`
+                                : "—"}
+                          </td>
+                        )}
                         {hasGstFields && <td className="right">{toNum(it.taxPercent ?? it.gstRate ?? 0)}%</td>}
-                        <td className="right">{toNum(it.amount).toLocaleString("en-IN")}</td>
+                        <td className="right">{lineAmt(it).toLocaleString("en-IN")}</td>
                       </tr>
                     ))}
                     <tr>
@@ -462,6 +492,13 @@ const FinalBill = ({ settings, receipt = {} }) => {
           <div className="pr-totals__row">
             <span className="pr-totals__lbl">Less: TDS Deducted</span>
             <span className="pr-totals__val">- {fmtINR(tdsDeducted)}</span>
+          </div>
+        )}
+        {/* R7hr(NABH-P3.1) — round-off line (GST invoice presentation) */}
+        {Math.abs(roundOff) >= 0.005 && payableExact > 0 && (
+          <div className="pr-totals__row">
+            <span className="pr-totals__lbl">Round Off</span>
+            <span className="pr-totals__val">{roundOff >= 0 ? "+ " : "- "}{fmtINR(Math.abs(roundOff))}</span>
           </div>
         )}
         <div className="pr-totals__row pr-totals__row--grand">

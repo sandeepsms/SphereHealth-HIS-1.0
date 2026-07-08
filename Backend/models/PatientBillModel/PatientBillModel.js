@@ -297,6 +297,12 @@ const PatientBillSchema = new mongoose.Schema(
     netAmount:            { type: Dec, default: () => toDec(0) },
     tpaPayableAmount:     { type: Dec, default: () => toDec(0) },
     patientPayableAmount: { type: Dec, default: () => toDec(0) },
+    // R7hr(NABH-P3.1) — invoice round-off (standard GST invoice
+    // presentation): the patient share is rounded to the nearest rupee in
+    // recalcTotals and the signed difference lives here (−0.50..+0.49),
+    // rendered as its own "Round Off" line on the tax invoice. TPA share
+    // stays exact — insurers settle to the paisa.
+    roundOffAmount:       { type: Dec, default: () => toDec(0) },
     advancePaid:          { type: Dec, default: () => toDec(0) },
     balanceAmount:        { type: Dec, default: () => toDec(0) },
 
@@ -579,9 +585,23 @@ PatientBillSchema.methods.recalcTotals = function () {
     this.grossAmount          = toDec(gross);
     this.totalDiscount        = toDec(disc + extra);
     this.taxAmount            = toDec(tax);
-    this.netAmount            = toDec(gross - disc + tax - extra);
     this.tpaPayableAmount     = toDec(tpaPay);
-    this.patientPayableAmount = toDec(ptPay - extra);
+    // R7hr(NABH-P3.1) — round the PATIENT share to the nearest rupee
+    // (standard GST invoice presentation; fractional paise arise from %
+    // discounts, 5% room-rent GST, half-day prorations). The signed
+    // difference is stored on roundOffAmount and printed as its own line.
+    // netAmount absorbs the same delta so gross − disc + tax − extra +
+    // roundOff == tpaShare + rounded patient share stays an identity.
+    // TPA share stays exact (insurers settle to the paisa); balanceAmount
+    // below derives from the ROUNDED patient share, so cash dues are
+    // always collectible whole-ish rupees. Whole-rupee bills get
+    // roundOff = 0 — zero visible change for existing data.
+    const _ptExact   = ptPay - extra;
+    const _ptRounded = Math.round(_ptExact);
+    const _roundOff  = +(_ptRounded - _ptExact).toFixed(2);
+    this.roundOffAmount       = toDec(_roundOff);
+    this.patientPayableAmount = toDec(_ptRounded);
+    this.netAmount            = toDec(gross - disc + tax - extra + _roundOff);
     // R7ap-F35: aggregate item-level CGST/SGST/IGST into bill-level fields.
     // Driven by placeOfSupply (set above per-item). Used by GSTR-1 export.
     const _hosp = process.env.HOSPITAL_STATE_CODE || "";
