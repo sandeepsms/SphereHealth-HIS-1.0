@@ -893,7 +893,7 @@ class AdmissionController {
     //     only with a recorded waiverReason (NABH-auditable).
     const { toNum } = require("../../utils/money");
     const BillingTrigger = require("../../models/Billing/BillingTrigger");
-    const admGate = await Admission.findById(req.params.id).select("dischargeWorkflow UHID admissionNumber").lean();
+    const admGate = await Admission.findById(req.params.id).select("dischargeWorkflow UHID admissionNumber convertedFromAdmission").lean();
     const dispoType    = admGate?.dischargeWorkflow?.dischargeType || "Routine";
     const waiverReason = String(req.body.waiverReason || "").trim();
 
@@ -921,6 +921,23 @@ class AdmissionController {
     const enteredAmt     = Number(req.body.finalBillAmount) || 0;
     const remainingAfter = balanceNow - enteredAmt;
     const isNormalDispo  = !["LAMA", "DAMA", "Death", "Absconded", "Referral"].includes(dispoType);
+
+    // R7hr(billing-audit P1.2) — same-episode OPD dues gate. If this admission
+    // converted from a same-day OPD visit, that OPD bill belongs to the SAME
+    // episode and must be settled at discharge too — else the patient walks out
+    // still owing the pre-admission consult/services. Waivable for
+    // LAMA/DAMA/Death/Absconded/Referral via the same waiverReason.
+    if (admGate?.convertedFromAdmission) {
+      const opdBill = await PatientBill.findOne({ admission: admGate.convertedFromAdmission, ...openBillCond });
+      const opdDue  = opdBill ? toNum(opdBill.balanceAmount) : 0;
+      if (opdDue > 0.5 && isNormalDispo && !waiverReason) {
+        return res.status(409).json({
+          success: false, code: "OPD_OUTSTANDING",
+          message: `Pre-admission OPD bill not settled — ₹${opdDue.toFixed(2)} outstanding on the linked OPD visit${opdBill.billNumber ? ` (${opdBill.billNumber})` : ""}. Collect it (or record a waiver) before clearing the final bill.`,
+          opdOutstanding: opdDue, opdBillNumber: opdBill.billNumber || null,
+        });
+      }
+    }
 
     if (remainingAfter > 0.5) {
       if (isNormalDispo) {

@@ -356,6 +356,22 @@ class EmergencyService {
           } else {
             note(`[SYSTEM] Bed "${bed}" was not auto-claimed (already occupied or not a registered bed) — Reception must allocate/confirm the bed.`, "System");
           }
+          // R7hr(billing-audit P1.1) — bootstrap billing for the bridged ER→IPD
+          // admission exactly like the reception path (admissionController.
+          // createAdmission → onAdmissionCreated). Without this the emergency
+          // registration fee + admission charge + any ANH package auto-match
+          // were NEVER billed for ER-desk admits (only bed/nursing were later
+          // recovered by the ledger's backfillAdmissionCharges — one-time fees
+          // and packages were lost revenue). Idempotent: createTrigger dedups on
+          // {admissionId, serviceCode, dateKey}. Own try so a billing hiccup
+          // never drops the disposition update.
+          try {
+            const autoBilling = require("../Billing/autoBillingService");
+            const fired = await autoBilling.onAdmissionCreated(stub);
+            note(`[SYSTEM] ER→IPD billing bootstrapped — ${(fired || []).length} charge trigger(s) fired (registration + admission fee + package match).`, "System (ER→IPD)");
+          } catch (be) {
+            note(`[SYSTEM] ER→IPD billing bootstrap failed: ${be.message}. Reception must review/add charges from the IPD ledger.`, "System (ER→IPD)");
+          }
         } catch (e) {
           // Don't lose the disposition update on a stub-create failure —
           // the receptionist can still complete the admission via the

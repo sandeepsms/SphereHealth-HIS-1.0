@@ -4843,6 +4843,43 @@ async function getIPDLedger(admissionId, user = {}) {
     console.warn("[IPDLedger] PatientAdvance lookup skipped:", e.message);
   }
 
+  // R7hr(billing-audit P1.2) — Pre-admission OPD charges. When this admission
+  // converted from a same-day OPD visit (admissionService stamps
+  // convertedFromAdmission), surface that OPD visit's bill(s) here so the IPD
+  // Live Ledger + final bill + discharge dues gate see the WHOLE episode
+  // (OPD + IPD) in one place. Read-only join — the OPD bill stays its own
+  // document (own bill number, GST, audit); line items are never merged.
+  let linkedOpd = null;
+  if (admission.convertedFromAdmission) {
+    try {
+      const opdAdm = await Admission.findById(admission.convertedFromAdmission)
+        .select("admissionNumber visitNumber admissionType admissionDate")
+        .lean();
+      const opdBills = await PatientBill.find({ admission: admission.convertedFromAdmission })
+        .sort({ createdAt: 1 })
+        .lean();
+      if (opdBills.length) {
+        opdBills.forEach(b => decimalToNumber(null, b));
+        const opdSummary = opdBills.reduce((acc, b) => {
+          acc.netAmount     += toNum(b.netAmount);
+          acc.balanceAmount += toNum(b.balanceAmount);
+          acc.advancePaid   += toNum(b.advancePaid);
+          return acc;
+        }, { netAmount: 0, balanceAmount: 0, advancePaid: 0 });
+        linkedOpd = {
+          admissionId:     admission.convertedFromAdmission,
+          admissionNumber: opdAdm?.admissionNumber || "",
+          visitNumber:     opdAdm?.visitNumber || "",
+          visitDate:       opdAdm?.admissionDate || null,
+          bills:           opdBills,
+          ...opdSummary,
+        };
+      }
+    } catch (e) {
+      console.warn("[IPDLedger] linked-OPD lookup skipped:", e.message);
+    }
+  }
+
   // Sum of all live (non-void/cancelled/skipped) trigger totals — used
   // as a fallback when no bill items exist yet (e.g. brand-new admission)
   // or when bill aggregation is suspiciously empty.
@@ -4868,6 +4905,7 @@ async function getIPDLedger(admissionId, user = {}) {
     billSummary,                           // Aggregated totals across all bills (Decimal128-flattened)
     triggerLiveTotal,                      // Sum of live triggers — fallback when billSummary is 0
     advanceBalance,
+    linkedOpd,                             // R7hr(P1.2) — same-episode OPD bill(s) if this admission converted from OPD; else null
     triggers: decorated,
     byCategory: Object.values(byCategory).sort((a, b) => b.total - a.total),
     byDay: Object.values(byDay).sort((a, b) => a.dateKey.localeCompare(b.dateKey)),

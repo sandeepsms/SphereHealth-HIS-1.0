@@ -479,6 +479,20 @@ const FinalBill = ({ settings, receipt = {} }) => {
         {numberToIndianWords(payable > 0 ? payable : (advances + tpaPaid + tdsDeducted - netAfterTax))}
       </div>
 
+      {/* R7hr(billing-audit P1.2) — same-episode OPD charges memo. Referenced,
+          not merged (the OPD visit keeps its own GST bill + number), so the
+          discharge document still shows the whole episode in one place. */}
+      {receipt.preAdmissionOpd && (
+        <div className="pr-note" style={{ marginTop: 8, padding: "8px 12px", border: "1px dashed #c7d2fe", background: "#eef2ff", borderRadius: 6, fontSize: 10.5 }}>
+          <strong>Pre-admission OPD charges (same episode):</strong>{" "}
+          {fmtINR(receipt.preAdmissionOpd.net)}
+          {receipt.preAdmissionOpd.billNumber ? ` · billed separately on ${receipt.preAdmissionOpd.billNumber}` : ""}
+          {Number(receipt.preAdmissionOpd.due) > 0
+            ? ` · ₹${Number(receipt.preAdmissionOpd.due).toFixed(2)} still outstanding on that bill`
+            : " · settled"}
+        </div>
+      )}
+
       {/* ── Payment history (if provided) ── */}
       {Array.isArray(receipt.payments) && receipt.payments.length > 0 && (
         <div className="pr-section">

@@ -785,6 +785,14 @@ export default function IPDBillingLedger() {
       items,
       discount:         totalDiscount,
       advanceReceived:  paid,
+      // R7hr(billing-audit P1.2) — same-episode OPD charges memo (referenced,
+      // NOT merged — the OPD bill keeps its own number + GST; FinalBill renders
+      // this as a footnote so the discharge document shows the whole episode).
+      preAdmissionOpd:  linkedOpd ? {
+        billNumber: (linkedOpd.bills || []).map(b => b.billNumber).filter(Boolean).join(", ") || linkedOpd.visitNumber || "",
+        net:        Number(linkedOpd.netAmount || 0),
+        due:        Number(linkedOpd.balanceAmount || 0),
+      } : null,
       payments:         (data.bill?.payments || []).map(p => ({
         date:   p.paidAt,
         method: p.paymentMode,
@@ -1638,7 +1646,7 @@ export default function IPDBillingLedger() {
   );
   if (!data) return <div style={{ padding: 60, textAlign: "center", color: C.danger }}>Ledger unavailable</div>;
 
-  const { admission, bill, billSummary, triggerLiveTotal, advanceBalance, triggers, byCategory, byDay, counts, undoWindowMs } = data;
+  const { admission, bill, billSummary, triggerLiveTotal, advanceBalance, linkedOpd, triggers, byCategory, byDay, counts, undoWindowMs } = data;
   const patient = admission.patientId || {};
   // Use aggregated billSummary so totals reflect every bill linked to this
   // admission (auto-biller may split across DRAFTs over a long stay), not
@@ -1747,6 +1755,38 @@ export default function IPDBillingLedger() {
           </div>
         </div>
       </div>
+
+      {/* R7hr(billing-audit P1.2) — Pre-admission OPD charges. This admission
+          converted from a same-day OPD visit; its OPD bill belongs to the SAME
+          episode. Surfaced here so the biller sees the WHOLE episode (OPD + IPD)
+          in ONE place; the discharge dues gate blocks on any unpaid OPD balance. */}
+      {linkedOpd && (
+        <div style={{ background: "#eef2ff", border: "1px solid #c7d2fe", borderRadius: 12, padding: "12px 16px", marginBottom: 14, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+          <i className="pi pi-arrow-right-arrow-left" style={{ color: "#4338ca", fontSize: 16 }} />
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 800, color: "#3730a3" }}>Pre-admission OPD charges · same episode</div>
+            <div style={{ fontSize: 11, color: C.muted, marginTop: 1 }}>
+              Converted from OPD visit {linkedOpd.visitNumber || linkedOpd.admissionNumber}
+              {linkedOpd.visitDate ? ` · ${fmtDate(linkedOpd.visitDate)}` : ""}
+              {" · "}{(linkedOpd.bills || []).length} bill{(linkedOpd.bills || []).length === 1 ? "" : "s"}
+            </div>
+          </div>
+          <div style={{ marginLeft: "auto", display: "flex", gap: 18, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", fontWeight: 700 }}>OPD Net</div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: C.dark }}>{inr(Number(linkedOpd.netAmount || 0))}</div>
+            </div>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 10, color: C.muted, textTransform: "uppercase", fontWeight: 700 }}>OPD Due</div>
+              <div style={{ fontSize: 14, fontWeight: 800, color: Number(linkedOpd.balanceAmount || 0) > 0 ? C.danger : C.success }}>{inr(Number(linkedOpd.balanceAmount || 0))}</div>
+            </div>
+            <button onClick={() => navigate(`/reception-billing/${admission.UHID}`)}
+              style={{ padding: "7px 12px", background: "#fff", border: "1px solid #c7d2fe", borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 12, color: "#4338ca" }}>
+              Open OPD bill
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* KPI strip */}
       <div style={{ display: "flex", gap: 10, marginBottom: 14, flexWrap: "wrap" }}>
