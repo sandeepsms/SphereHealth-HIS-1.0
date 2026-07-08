@@ -339,6 +339,14 @@ function halfDayMultiplier(chargingRule, { isAdmissionDay, isDischargeDay }) {
 // Single source of truth so the cron, the override paths, and the
 // ServiceMaster duplicate audit all stay aligned. Skip-zero short-circuits
 // at the call site — there's no "bill ₹0" line, the trigger isn't emitted.
+// R7hr(NABH-P1.1) — GST Notification 03/2022 (w.e.f. 18-Jul-2022): hospital
+// room rent above ₹5,000/day (non-ICU-family) is taxable at 5% without ITC.
+// Threshold env-overridable so a future notification change is a config
+// edit, not a code change. Rate participates in the PatientBill taxPercent
+// slab enum {0, 0.25, 3, 5, 12, 18, 28} — 5 is a valid slab.
+const ROOM_RENT_GST_THRESHOLD = Number(process.env.ROOM_RENT_GST_THRESHOLD) || 5000;
+const ROOM_RENT_GST_RATE      = 5;
+
 const ROOM_CATEGORY_LINE_ITEMS = [
   // [chargesKey,         serviceCode prefix,    serviceName label,             billCategory]
   ["bedRent",             "BED",                 "Bed Charge",                  "ROOM"],
@@ -514,7 +522,12 @@ async function addItemToBill(bill, service, quantity, source, trigger) {
     // (operator can correct the master later). Spec-canonical 18% medical
     // services slab stays untouched.
     const _GST_SLABS = new Set([0, 0.25, 3, 5, 12, 18, 28]);
-    const _rawTaxPct = Number(service?.taxPercentage ?? service?.gstRate ?? 0) || 0;
+    // R7hr(NABH-P1.1) — source.taxPercentOverride wins over the master's
+    // rate: it carries RULE-driven statutory taxability (room rent above
+    // ₹5000/day → 5%, GST Notification 03/2022) for lines that have no
+    // ServiceMaster row or whose master says 0. Still slab-validated below
+    // so a bad override can never fail the bill's taxPercent enum.
+    const _rawTaxPct = Number(source?.taxPercentOverride ?? service?.taxPercentage ?? service?.gstRate ?? 0) || 0;
     const taxPercent = _GST_SLABS.has(_rawTaxPct) ? _rawTaxPct : 0;
     const isTaxable  = taxPercent > 0;
 
@@ -674,6 +687,11 @@ async function createTrigger(config) {
     overrideDateKey,       // NEW — historical backfill uses past dateKey while
                            //       keeping the dailyDedup guard intact
     chargeDate,            // NEW — bill-item chargeDate (defaults to today)
+    // R7hr(NABH-P1.1) — statutory tax override for lines whose taxability is
+    // decided by a RULE rather than the ServiceMaster row (room rent
+    // >₹5000/day → 5% per GST Notification 03/2022). Threaded through to
+    // addItemToBill's source; still slab-validated there.
+    taxPercentOverride,
     shift, department, notes,
     // R7as-FIX-4/D5-crit-1: bypass-flag for the post-TX discharge flush so
     // bed/nursing/doctor-round charges for the discharge day still land
@@ -897,6 +915,7 @@ async function createTrigger(config) {
         remarks:    `${sourceType} — ${orderDetails || serviceName || serviceCode}`,
         sourceType,
         unitPriceOverride,
+        taxPercentOverride,   // R7hr(NABH-P1.1) — rule-driven GST (room rent)
         chargeDate,
       }, trigger);
 
@@ -2877,6 +2896,25 @@ async function flushDailyChargesForAdmission(admission, {
     const rawRate = Number(matrix.charges?.[chargesKey] || 0);
     if (!(rawRate > 0)) continue;     // skip zero-priced line items entirely
     const lineRate = rawRate * finalMult;
+
+    // R7hr(NABH-P1.1) — GST Notification 03/2022 (w.e.f. 18-Jul-2022):
+    // hospital room rent EXCEEDING ₹5,000/day attracts 5% GST (without
+    // ITC); ICU-family rooms (ICU/CCU/ICCU/NICU and variants — MICU/SICU/
+    // PICU) stay exempt. The test keys on the room's PER-DAY rate
+    // (rawRate) — a half-day-prorated line of a ₹5,200/day room is still
+    // rent of a >₹5,000/day room, so the (prorated) amount is taxed. Only
+    // the bedRent line is rent; nursing/RMO/diet etc. remain composite
+    // healthcare (exempt). Applies to every emitter path (Day-1, daily
+    // cron, backfill, discharge flush, legacy fallback) since they all
+    // route through this loop. taxPercentOverride flows via createTrigger
+    // → addItemToBill; recalcTotals + the GSTR-1 register then derive
+    // taxAmount + CGST/SGST/IGST + rate buckets automatically.
+    const _icuFamily = /icu|ccu/i.test(
+      `${matrix.categoryCode || ""} ${matrix.categoryName || ""} ${matrix.roomType || ""}`,
+    );
+    const roomRentTaxable =
+      chargesKey === "bedRent" && !_icuFamily && rawRate > ROOM_RENT_GST_THRESHOLD;
+
     const r = await createTrigger({
       admissionId:         admission._id,
       patientId:           admission.patientId,
@@ -2886,6 +2924,7 @@ async function flushDailyChargesForAdmission(admission, {
       serviceName:         `${label} — ${matrix.categoryName || matrix.roomType || tc} (Day ${dayN})${halfNoteFragment}${prorateNote}`,
       quantity:            1,
       unitPriceOverride:   lineRate,
+      ...(roomRentTaxable ? { taxPercentOverride: ROOM_RENT_GST_RATE } : {}),
       sourceType:          "DailyRoomAccrual",
       sourceDocumentId:    admission._id,
       sourceDocumentModel: "Admission",
