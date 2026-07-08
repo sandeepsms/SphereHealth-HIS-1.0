@@ -125,6 +125,8 @@ export const NAV = [
       { label: "OPD Queue",          icon: "pi-list",      path: "/opd-queue",         roles: [ADMIN, DR, NR] },
       { label: "Doctor OPD Panel",   icon: "pi-desktop",   path: "/doctor-opd-panel",  roles: [ADMIN, DR] },
       { label: "Emergency Cases",    icon: "pi-bolt",      path: "/emergency",         roles: [ADMIN, DR, NR] },
+      // R7hr(DC-P1) — Day Care Today board (checklist + readiness + overdue)
+      { label: "Day Care Today",     icon: "pi-sun",       path: "/daycare",           roles: [ADMIN, DR, NR, RX] },
     ],
   },
 

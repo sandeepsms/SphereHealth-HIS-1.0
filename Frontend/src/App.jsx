@@ -94,6 +94,8 @@ const OPDDetails = lazy(() => import("./pages/OPD/OPDDetails"));
 const Emergencylist = lazy(() => import("./pages/emergency/EmergencyList"));
 const EmergencyDetails = lazy(() => import("./pages/emergency/EmergencyDetails"));
 const EmergencyAssessmentPage = lazy(() => import("./pages/emergency/EmergencyAssessmentPage"));
+// R7hr(DC-P1) — Day Care Today board
+const DayCareBoard = lazy(() => import("./pages/daycare/DayCareBoard"));
 
 // Doctors
 const DoctorFormPage = lazy(() => import("./pages/doctor/DoctorFormPage"));
@@ -567,6 +569,8 @@ function AppLayout({ collapsed, setCollapsed }) {
               <RoleGuard action="doctor-orders.write"><EmergencyAssessmentPage /></RoleGuard>
             } />
             <Route path="/emergency" element={<Emergencylist />} />
+            {/* R7hr(DC-P1) — Day Care Today board (ipd.read tier) */}
+            <Route path="/daycare" element={<DayCareBoard />} />
             {/* R7bb-E/D5-HIGH-2 — MLC sees PHI + writes medico-legal records;
                 gate by mlc.read (Admin/Doctor/Nurse). The page itself further
                 gates the "issue MLR" CTA by mlc.write. */}

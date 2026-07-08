@@ -845,6 +845,47 @@ class AdmissionController {
     return res.json({ success: true, data: adm.dischargeWorkflow });
   });
 
+  // R7hr(DC-P1) — PATCH /api/admissions/:id/daycare
+  // Day-care workflow updates: pre-procedure checklist (all four safety
+  // ticks) and/or the Aldrete-style discharge-readiness score. Nurse tier
+  // (vitals.write). Actor stamped from req.user. Day Care admissions only.
+  updateDayCare = handle(async (req, res) => {
+    const Admission = require("../../models/Patient/admissionModel");
+    const adm = await Admission.findById(req.params.id).select("admissionType dayCare status");
+    if (!adm) return res.status(404).json({ success: false, message: "Admission not found" });
+    if (!/day ?care/i.test(adm.admissionType || "")) {
+      return res.status(400).json({ success: false, message: "Day-care workflow applies to Day Care admissions only" });
+    }
+    const actor = req.user?.fullName || req.user?.employeeId || "Staff";
+    const set = {};
+    const { checklist, readiness } = req.body || {};
+    if (checklist && typeof checklist === "object") {
+      for (const k of ["consentVerified", "npoConfirmed", "siteMarked", "highRiskMedsReviewed"]) {
+        if (k in checklist) set[`dayCare.preProcChecklist.${k}`] = !!checklist[k];
+      }
+      set["dayCare.preProcChecklist.completedBy"] = actor;
+      set["dayCare.preProcChecklist.completedAt"] = new Date();
+    }
+    if (readiness && typeof readiness === "object") {
+      const crit = ["consciousness", "oxygenation", "ambulation", "pain", "bleeding"];
+      let total = 0;
+      for (const k of crit) {
+        const v = Math.max(0, Math.min(2, Number(readiness[k]) || 0));
+        set[`dayCare.readiness.${k}`] = v;
+        total += v;
+      }
+      set["dayCare.readiness.total"] = total;
+      set["dayCare.readiness.recordedBy"] = actor;
+      set["dayCare.readiness.recordedAt"] = new Date();
+    }
+    if (!Object.keys(set).length) {
+      return res.status(400).json({ success: false, message: "Nothing to update — pass checklist and/or readiness" });
+    }
+    const updated = await Admission.findByIdAndUpdate(req.params.id, { $set: set }, { new: true, runValidators: true })
+      .select("admissionNumber dayCare admissionType");
+    return res.json({ success: true, data: updated });
+  });
+
   // POST /api/admissions/:id/clear-final-bill
   // Receptionist clears the final bill (after payment collected).
   // Body: { finalBillNumber, finalBillAmount, clearedBy, paymentMode?, transactionId? }
