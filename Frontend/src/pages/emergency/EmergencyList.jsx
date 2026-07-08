@@ -19,6 +19,7 @@ import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
+import { openPrint } from "../../Components/print/openPrint";   // R7hr(ER-P1.2)
 import "../reception/reception-shared.css";
 
 const TRIAGE_ORDER = ["Critical", "Emergency", "Urgent", "Semi-urgent", "Non-urgent"];
@@ -85,6 +86,8 @@ export default function EmergencyList() {
   const [triageFilter, setTriageFilter] = useState("");
   // R7hr(ER-P1.1) — serial-vitals modal target (the visit being recorded).
   const [vitalsFor, setVitalsFor] = useState(null);
+  // R7hr(ER-P1.2) — disposition modal target (the visit being closed).
+  const [dispoFor, setDispoFor] = useState(null);
   const inputRef = useRef(null);
 
   const load = useCallback(async () => {
@@ -235,7 +238,7 @@ export default function EmergencyList() {
             </div>
           )}
         </div>
-      ) : filtered.map(e => <ErRow key={`${e._id}-${e._source || "er"}`} e={e} navigate={navigate} onVitals={setVitalsFor} />)}
+      ) : filtered.map(e => <ErRow key={`${e._id}-${e._source || "er"}`} e={e} navigate={navigate} onVitals={setVitalsFor} onDispo={setDispoFor} />)}
 
       {vitalsFor && (
         <VitalsModal
@@ -244,6 +247,191 @@ export default function EmergencyList() {
           onSaved={() => { setVitalsFor(null); load(); }}
         />
       )}
+      {dispoFor && (
+        <DispositionModal
+          visit={dispoFor}
+          onClose={() => setDispoFor(null)}
+          onSaved={() => { setDispoFor(null); load(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+/* R7hr(ER-P1.2) — shared receipt builder for the ER Treatment Summary.
+   Pulls everything the printable needs from the visit doc + the just-
+   submitted disposition form (extra). Latest vitals from vitalsLog tail. */
+function buildErSummaryReceipt(visit, extra = {}) {
+  const lastLog = Array.isArray(visit.vitalsLog) && visit.vitalsLog.length
+    ? visit.vitalsLog[visit.vitalsLog.length - 1]
+    : null;
+  return {
+    erNumber:             visit.emergencyNumber,
+    patientName:          visit.patientId?.fullName || visit.patientName,
+    uhid:                 visit.patientId?.UHID || visit.UHID,
+    age:                  visit.patientId?.age ?? visit.age,
+    gender:               visit.patientId?.gender || visit.gender,
+    arrivalDate:          visit.arrivalDate || visit.createdAt,
+    triageCategory:       visit.triageCategory,
+    arrivalMode:          visit.arrivalMode,
+    consultantIncharge:   visit.consultantIncharge,
+    isMLC:                visit.isMLC,
+    mlcNumber:            visit.mlcNumber,
+    presentingComplaints: visit.presentingComplaints,
+    arrivalVitals:        visit.triage?.vitals || visit.vitals || {},
+    latestVitals:         lastLog,
+    latestVitalsAt:       lastLog?.recordedAt,
+    investigations:       visit.investigationsOrdered || [],
+    medications:          visit.treatmentGiven?.medications || [],
+    procedures:           visit.treatmentGiven?.procedures || [],
+    disposition:          extra.disposition || visit.disposition,
+    dispositionNotes:     extra.dispositionNotes || "",
+    advice:               extra.advice || "",
+    referredToHospital:   extra.referredToHospital || visit.referredTo?.hospital || "",
+    referralReason:       extra.referralReason || visit.referredTo?.reason || "",
+    damaReason:           extra.damaReason || visit.damaDetails?.reason || "",
+    damaExplainedBy:      extra.damaExplainedBy || visit.damaDetails?.explainedBy || "",
+    damaWitness:          extra.damaWitness || visit.damaDetails?.witnessName || "",
+    printAudit: {
+      entityType:   "Emergency",
+      entityId:     visit._id,
+      entityNumber: visit.emergencyNumber,
+      UHID:         visit.patientId?.UHID || visit.UHID,
+      patientName:  visit.patientId?.fullName || visit.patientName,
+    },
+  };
+}
+
+/* R7hr(ER-P1.2) — disposition modal. The R7z attestation machinery
+   (updateDisposition) had NO frontend caller — dispositions never got set
+   from the UI. This closes ER cases from the board with the per-branch
+   attestation the service enforces: Referred needs hospital+reason, LAMA
+   needs reason/explained-by/witness, Expired needs certifier+cause+manner.
+   On Discharged/Referred/LAMA success the ER Treatment Summary auto-prints.
+   Admission goes through the Assessment page (bed flow lives there). */
+function DispositionModal({ visit, onClose, onSaved }) {
+  const [dispo, setDispo] = useState("Discharged");
+  const [f, setF] = useState({
+    advice: "", dispositionNotes: "",
+    referredToHospital: "", referralReason: "",
+    damaReason: "", damaExplainedBy: "", damaWitness: "",
+    declaredBy: "", immediateCause: "", mannerOfDeath: "Natural",
+  });
+  const [saving, setSaving] = useState(false);
+  const set = (k) => (ev) => setF((p) => ({ ...p, [k]: ev.target.value }));
+
+  const save = async () => {
+    // client-side mirrors of the R7z service attestation
+    if (dispo === "Referred" && (!f.referredToHospital.trim() || !f.referralReason.trim()))
+      return toast.error("Referral needs hospital + reason");
+    if (dispo === "Left Against Medical Advice" && (!f.damaReason.trim() || !f.damaExplainedBy.trim() || !f.damaWitness.trim()))
+      return toast.error("LAMA needs reason, explained-by and witness");
+    if (dispo === "Expired" && (!f.declaredBy.trim() || !f.immediateCause.trim()))
+      return toast.error("Death declaration needs certifying doctor + immediate cause");
+
+    setSaving(true);
+    try {
+      const payload = {
+        disposition: dispo,
+        dispositionNotes: f.dispositionNotes || f.advice || "",
+        ...(dispo === "Referred" ? { referredTo: { hospital: f.referredToHospital.trim(), reason: f.referralReason.trim() } } : {}),
+        ...(dispo === "Left Against Medical Advice" ? {
+          damaDetails: { reason: f.damaReason.trim(), risksExplained: true, explainedBy: f.damaExplainedBy.trim(), witnessName: f.damaWitness.trim() },
+        } : {}),
+        ...(dispo === "Expired" ? {
+          deathDetails: { declaredBy: f.declaredBy.trim(), immediateCause: f.immediateCause.trim(), mannerOfDeath: f.mannerOfDeath },
+        } : {}),
+      };
+      const res = await axios.put(`${API_ENDPOINTS.EMERGENCY}/${encodeURIComponent(visit.emergencyNumber)}/disposition`, payload);
+      const updated = res.data?.data || visit;
+      toast.success(`Disposition saved — ${dispo}`);
+      if (["Discharged", "Referred", "Left Against Medical Advice"].includes(dispo)) {
+        openPrint("er-summary", buildErSummaryReceipt({ ...visit, ...updated }, { ...f, disposition: dispo }));
+      }
+      onSaved();
+    } catch (err) {
+      toast.error(err?.response?.data?.message || "Disposition save failed");
+      setSaving(false);
+    }
+  };
+
+  const inp = (k, ph, w = "100%") => (
+    <input value={f[k]} onChange={set(k)} placeholder={ph}
+      style={{ width: w, boxSizing: "border-box", padding: "7px 9px", border: "1px solid #cbd5e1", borderRadius: 7, fontSize: 13, fontFamily: "inherit", marginBottom: 8 }} />
+  );
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div onClick={(ev) => ev.stopPropagation()} style={{ background: "#fff", borderRadius: 14, padding: 18, width: "min(520px, 96vw)", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 50px rgba(0,0,0,.25)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+          <div style={{ fontWeight: 800, fontSize: 15 }}>
+            🏁 Disposition — {visit.patientId?.fullName || visit.patientName || visit.emergencyNumber}
+            <div style={{ fontSize: 11, color: "#64748b", fontWeight: 600 }}>ER #{visit.emergencyNumber}</div>
+          </div>
+          <button onClick={onClose} style={{ border: "none", background: "transparent", fontSize: 18, cursor: "pointer", color: "#64748b" }}>✕</button>
+        </div>
+
+        <label style={{ fontSize: 10.5, fontWeight: 700, color: "#64748b" }}>Disposition</label>
+        <select value={dispo} onChange={(ev) => setDispo(ev.target.value)}
+          style={{ width: "100%", padding: "8px 9px", border: "1px solid #cbd5e1", borderRadius: 7, fontSize: 13, fontFamily: "inherit", marginBottom: 10 }}>
+          <option>Discharged</option>
+          <option>Referred</option>
+          <option>Left Against Medical Advice</option>
+          <option>Observation</option>
+          <option>Expired</option>
+        </select>
+
+        {dispo === "Referred" && (
+          <>
+            <label style={{ fontSize: 10.5, fontWeight: 700, color: "#64748b" }}>Referred to (hospital) *</label>
+            {inp("referredToHospital", "e.g. PGIMS Rohtak")}
+            <label style={{ fontSize: 10.5, fontWeight: 700, color: "#64748b" }}>Reason *</label>
+            {inp("referralReason", "e.g. needs neurosurgery — not available here")}
+          </>
+        )}
+        {dispo === "Left Against Medical Advice" && (
+          <>
+            <label style={{ fontSize: 10.5, fontWeight: 700, color: "#64748b" }}>Reason *</label>
+            {inp("damaReason", "patient/attendant's stated reason")}
+            <label style={{ fontSize: 10.5, fontWeight: 700, color: "#64748b" }}>Risks explained by *</label>
+            {inp("damaExplainedBy", "doctor name")}
+            <label style={{ fontSize: 10.5, fontWeight: 700, color: "#64748b" }}>Witness *</label>
+            {inp("damaWitness", "witness name")}
+          </>
+        )}
+        {dispo === "Expired" && (
+          <>
+            <label style={{ fontSize: 10.5, fontWeight: 700, color: "#64748b" }}>Death declared by (doctor) *</label>
+            {inp("declaredBy", "certifying doctor")}
+            <label style={{ fontSize: 10.5, fontWeight: 700, color: "#64748b" }}>Immediate cause *</label>
+            {inp("immediateCause", "e.g. cardiorespiratory arrest")}
+            <label style={{ fontSize: 10.5, fontWeight: 700, color: "#64748b" }}>Manner of death</label>
+            <select value={f.mannerOfDeath} onChange={set("mannerOfDeath")}
+              style={{ width: "100%", padding: "8px 9px", border: "1px solid #cbd5e1", borderRadius: 7, fontSize: 13, fontFamily: "inherit", marginBottom: 8 }}>
+              {["Natural", "Accident", "Suicide", "Homicide", "Undetermined", "Pending Investigation"].map((m) => <option key={m}>{m}</option>)}
+            </select>
+            <div style={{ fontSize: 10.5, color: "#7f1d1d", marginBottom: 8 }}>
+              Non-natural manner auto-flags MLC + police intimation (backend).
+            </div>
+          </>
+        )}
+        {["Discharged", "Referred"].includes(dispo) && (
+          <>
+            <label style={{ fontSize: 10.5, fontWeight: 700, color: "#64748b" }}>Advice / follow-up (prints on summary)</label>
+            {inp("advice", "e.g. review in Medicine OPD after 3 days; continue meds as prescribed")}
+          </>
+        )}
+        <label style={{ fontSize: 10.5, fontWeight: 700, color: "#64748b" }}>Notes (optional)</label>
+        {inp("dispositionNotes", "any additional note for the record")}
+
+        <button onClick={save} disabled={saving}
+          style={{ width: "100%", padding: "10px 0", background: "#0f172a", color: "#fff", border: "none", borderRadius: 9, fontWeight: 800, fontSize: 13.5, cursor: saving ? "wait" : "pointer", fontFamily: "inherit" }}>
+          {saving ? "Saving…" : `Save — ${dispo}`}
+        </button>
+        <div style={{ fontSize: 10.5, color: "#64748b", marginTop: 8 }}>
+          Admit karna hai? Assessment page se bed allot karke sign-and-submit karo — wahi ER→IPD bridge chalata hai.
+        </div>
+      </div>
     </div>
   );
 }
@@ -336,7 +524,7 @@ function VitalsModal({ visit, onClose, onSaved }) {
 
 /* ───────────────────────────────────────────────────────────── */
 
-function ErRow({ e, navigate, onVitals }) {
+function ErRow({ e, navigate, onVitals, onDispo }) {
   const name   = e.patientId?.fullName     || e.patientName || "Unknown Patient";
   const uhid   = e.patientId?.UHID         || e.UHID;
   const age    = e.patientId?.age          ?? e.age;
@@ -407,6 +595,23 @@ function ErRow({ e, navigate, onVitals }) {
                   onClick={(ev) => { ev.stopPropagation(); onVitals?.(e); }}
                   title="Record vitals">
             <i className="pi pi-heart" />
+          </button>
+        )}
+        {/* R7hr(ER-P1.2) — disposition (close the case) on OPEN visits;
+            terminal dispositions are sticky server-side, so the button
+            hides once one is set. Closed exits get a reprint action. */}
+        {!isAdmission && (!e.disposition || ["Pending", "Observation"].includes(e.disposition)) && (
+          <button className="rx-action-btn"
+                  onClick={(ev) => { ev.stopPropagation(); onDispo?.(e); }}
+                  title="Disposition — close case">
+            <i className="pi pi-sign-out" />
+          </button>
+        )}
+        {!isAdmission && ["Discharged", "Referred", "Left Against Medical Advice"].includes(e.disposition) && (
+          <button className="rx-action-btn"
+                  onClick={(ev) => { ev.stopPropagation(); openPrint("er-summary", buildErSummaryReceipt(e)); }}
+                  title="Print ER treatment summary">
+            <i className="pi pi-print" />
           </button>
         )}
         {uhid && (
