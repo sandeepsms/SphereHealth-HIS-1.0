@@ -369,8 +369,12 @@ exports.settlementAdjust = async (req, res) => {
         extraDiscountReason,
         items,
         reason,
-        adjustedBy:   req.user?.fullName || req.user?.employeeId,
-        adjustedById: req.user?._id,
+        adjustedBy:     req.user?.fullName || req.user?.employeeId,
+        adjustedById:   req.user?._id,
+        // R7hr(NABH-P1.3) — role drives the tiered discount cap
+        // (non-Admin bounded by BILLING_DISCOUNT_CAP_PCT). Sourced from
+        // req.user like the identity fields — body cannot forge it.
+        adjustedByRole: req.user?.role,
       },
     );
     res.json({ success: true, data, message: "Settlement adjustment recorded" });

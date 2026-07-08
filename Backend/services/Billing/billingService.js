@@ -91,6 +91,33 @@ async function _ensureBillNumberForNonDraft(bill) {
   bill.billNumber = await generateBillNumber();
 }
 
+// R7hr(NABH-P1.3) — tiered discount authorization (NABH ROM: documented
+// authorization levels on financial concessions). One adjustment by a
+// non-Admin may reduce a bill by at most BILLING_DISCOUNT_CAP_PCT (env,
+// default 10%) of its pre-adjustment net; anything larger requires an
+// Admin to perform it (403 DISCOUNT_ABOVE_CAP tells the UI exactly that).
+// Admin reductions stay unlimited — but every path that calls this is
+// already reason-mandatory + adjustmentLog'd + BillingAudit'd, so the
+// unlimited tier is fully attributable. The cap covers BOTH the explicit
+// extraDiscount and the sneaky equivalents (unit-price drops / line
+// write-offs) because callers pass the net-to-net reduction, not just the
+// discount field.
+function enforceDiscountCap({ actorRole, beforeNet, reduction, context = "adjustment" }) {
+  if (String(actorRole || "") === "Admin") return;
+  const capPct = Number(process.env.BILLING_DISCOUNT_CAP_PCT) || 10;
+  const capAmt = (Math.max(0, Number(beforeNet) || 0) * capPct) / 100;
+  if (reduction > capAmt + 0.005) {
+    const err = new Error(
+      `Discount ₹${reduction.toFixed(2)} exceeds the ${capPct}% authorization cap ` +
+      `(₹${capAmt.toFixed(2)} of ₹${(Number(beforeNet) || 0).toFixed(2)} net) for role ` +
+      `${actorRole || "unknown"} — an Admin must apply this ${context}.`,
+    );
+    err.status = 403;
+    err.code = "DISCOUNT_ABOVE_CAP";
+    throw err;
+  }
+}
+
 class BillingService {
   // ── 1. Patient + all bills by UHID ───────────────────────────
   async getPatientWithBills(UHID) {
@@ -767,7 +794,7 @@ class BillingService {
   // R7bb-C / S5 (D7-CRIT-2): accept adjustedById from the controller so
   // the audit row can carry the operator's _id (not just display name).
   async settlementAdjust(billId, payload = {}) {
-    const { extraDiscount, extraDiscountReason, items, adjustedBy, adjustedById, reason } = payload;
+    const { extraDiscount, extraDiscountReason, items, adjustedBy, adjustedById, adjustedByRole, reason } = payload;
 
     if (!adjustedBy || !String(adjustedBy).trim()) {
       const err = new Error("adjustedBy (staff name) is required for audit");
@@ -894,6 +921,22 @@ class BillingService {
         netAmount:       toNum(it.netAmount),
       })),
     };
+
+    // R7hr(NABH-P1.3) — tiered authorization on the NET reduction. Measured
+    // net-to-net (before recalc vs after recalc), so it catches the explicit
+    // extraDiscount AND the equivalent write-offs via unit-price/qty drops in
+    // the same rule. Throwing here (inside retryVE, before save) discards the
+    // in-memory mutation — nothing persists on a blocked adjustment. Net
+    // INCREASES (qty corrections upward) are not discounts and pass freely.
+    const netReduction = beforeSnap.netAmount - afterSnap.netAmount;
+    if (netReduction > 0.005) {
+      enforceDiscountCap({
+        actorRole: adjustedByRole,
+        beforeNet: beforeSnap.netAmount,
+        reduction: netReduction,
+        context:   "settlement adjustment",
+      });
+    }
 
     bill.adjustmentLog.push({
       at:     new Date(),
@@ -1162,6 +1205,31 @@ class BillingService {
     const flatPool = m === "AMOUNT" ? v : null;
     if (flatPool != null && flatPool > totalDue + 0.5) {
       throw new Error(`Discount ₹${flatPool} exceeds total outstanding ₹${totalDue.toFixed(2)}`);
+    }
+
+    // R7hr(NABH-P1.3) — tiered authorization, checked UPFRONT so a blocked
+    // bulk settlement saves nothing (no partial application mid-loop).
+    // PERCENT: v% of each bill's balance never exceeds v% of its net, so
+    // blocking v > cap% is exact for the tier rule. AMOUNT: compare the flat
+    // pool against cap% of the total pre-adjustment net across the batch.
+    const totalNet = bills.reduce((s, b) => s + toNum(b.netAmount), 0);
+    if (m === "PERCENT") {
+      const capPct = Number(process.env.BILLING_DISCOUNT_CAP_PCT) || 10;
+      if (String(adjustedByRole || "") !== "Admin" && v > capPct) {
+        const err = new Error(
+          `Bulk discount ${v}% exceeds the ${capPct}% authorization cap for role ${adjustedByRole || "unknown"} — an Admin must apply this bulk settlement.`,
+        );
+        err.status = 403;
+        err.code = "DISCOUNT_ABOVE_CAP";
+        throw err;
+      }
+    } else {
+      enforceDiscountCap({
+        actorRole: adjustedByRole,
+        beforeNet: totalNet,
+        reduction: flatPool,
+        context:   "bulk settlement",
+      });
     }
 
     const adjustments = [];

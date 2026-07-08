@@ -90,7 +90,10 @@ router.get("/uhid/:UHID/previous-dues", requireAction("billing.read"), ctrl.getP
 // user could post a lump-sum cash collection or apply a discount across
 // every bill on a UHID.
 router.post("/uhid/:UHID/collect-all", requireAction("billing.write"),  idempotencyGuard("bulkCollectByUHID"), ctrl.bulkCollectByUHID);
-router.post("/uhid/:UHID/bulk-settle", requireAction("billing.refund"), idempotencyGuard("bulkSettleByUHID"), ctrl.bulkSettleByUHID);
+// R7hr(NABH-P1.3): bulk-settle is pure discount distribution — moved to the
+// billing.discount token (same Admin+Accountant set as billing.refund today)
+// + service-level tiered cap on the % / flat pool for non-Admin actors.
+router.post("/uhid/:UHID/bulk-settle", requireAction("billing.discount"), idempotencyGuard("bulkSettleByUHID"), ctrl.bulkSettleByUHID);
 router.get("/price/:serviceId", requireAction("billing.read"), ctrl.getServicePrice); // R7ap-F5
 router.get("/daycare-check/:admissionId", requireAction("billing.read"), ctrl.checkDaycare); // R7ap-F5
 
@@ -147,12 +150,14 @@ router.post("/:billId/payment",            vBill, requireAction("billing.write")
 router.post("/:billId/payment/:paymentId/void",
   vBill, vPay, requireAction("billing.undo"), ctrl.voidPayment);
 // Audited settlement-time adjustment — extra discount + per-line price/qty edits
-// on GENERATED/PARTIAL bills. Receptionist-accessible (front desk negotiates
-// final settlement), but every change is logged with reason + staff name onto
-// bill.adjustmentLog for NABH review.
-// R7ar-P0-2: settlementAdjust is the line-edit + discount path — gate on
-// billing.refund (Accountant/Admin) since it's a financial reconciliation.
-router.post("/:billId/settlement-adjust", vBill, requireAction("billing.refund"), ctrl.settlementAdjust);
+// on GENERATED/PARTIAL bills. Every change is logged with reason + staff name
+// onto bill.adjustmentLog for NABH review.
+// R7hr(NABH-P1.3): gate on billing.discount — the concession action finally
+// enforced on its own token (was billing.refund; both map Admin+Accountant
+// today, so no role loses access, but a hospital can now tune discount vs
+// refund independently). The service additionally applies the tiered cap:
+// non-Admin net reductions bounded by BILLING_DISCOUNT_CAP_PCT (default 10%).
+router.post("/:billId/settlement-adjust", vBill, requireAction("billing.discount"), ctrl.settlementAdjust);
 // Refunds and cancellations are the only billing writes restricted past
 // the Receptionist tier — both require an Accountant (or Admin) per the
 // central ACTIONS map. Receptionists can record charges and payments but
