@@ -453,9 +453,26 @@ async function findServicesByNamesBatch(names, patientType = "IPD") {
 }
 
 // ── Helper: get or create draft bill for admission ────────────────────────────
-async function getOrCreateBill(admissionId, patientType) {
+async function getOrCreateBill(admissionId, patientType, UHID = null) {
   const admission = await Admission.findById(admissionId).lean();
   if (!admission) {
+    // R7hr(ER-P1.3) — synthetic pre-admission id. ER walk-ins key their
+    // charges on visit._id (no Admission exists yet — emergencyController's
+    // fallback), so this lookup ALWAYS failed for them: the triage charge
+    // landed pending-review and NO bill was ever created for a pure
+    // walk-in ER patient. When the caller supplied a UHID, mint the DRAFT
+    // keyed on the synthetic id anyway — PatientBill.admission is a plain
+    // ObjectId key, and the P2 rebind moves the bill onto the real stub if
+    // the patient is later admitted.
+    if (UHID) {
+      const billingService = require("./billingService");
+      try {
+        return await billingService.getOrCreateDraftBill(UHID, patientType || "EMERGENCY", admissionId.toString());
+      } catch (e) {
+        console.error(`[AutoBilling] getOrCreateBill synthetic-id fallback failed (UHID=${UHID}, id=${admissionId}):`, e?.message || e);
+        return null;
+      }
+    }
     console.warn(`[AutoBilling] getOrCreateBill — admission ${admissionId} not found`);
     return null;
   }
@@ -894,7 +911,7 @@ async function createTrigger(config) {
   // doc (built from the trigger fields) when ServiceMaster doesn't have
   // the code yet — addItemToBill only needs name/code/category/billingType.
   if (canAutoCharge && admissionId) {
-    const bill = await getOrCreateBill(admissionId, patientType);
+    const bill = await getOrCreateBill(admissionId, patientType, UHID);   // R7hr(ER-P1.3) — UHID enables the synthetic-id fallback
     if (bill) {
       const serviceForItem = resolvedService || {
         _id: undefined,

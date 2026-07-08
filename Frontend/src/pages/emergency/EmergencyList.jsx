@@ -345,6 +345,12 @@ function DispositionModal({ visit, onClose, onSaved }) {
       const res = await axios.put(`${API_ENDPOINTS.EMERGENCY}/${encodeURIComponent(visit.emergencyNumber)}/disposition`, payload);
       const updated = res.data?.data || visit;
       toast.success(`Disposition saved — ${dispo}`);
+      // R7hr(ER-P1.3) — exit billing: backend finalised the ER draft and
+      // returned the due; tell the desk to collect BEFORE the patient walks.
+      const eb = res.data?.erBill;
+      if (eb?.balance > 0.5) {
+        toast.warn(`💰 ER bill ${eb.billNumber || ""} — ₹${Number(eb.balance).toFixed(2)} due. Billing Counter par collect karo.`, { autoClose: 10000 });
+      }
       if (["Discharged", "Referred", "Left Against Medical Advice"].includes(dispo)) {
         openPrint("er-summary", buildErSummaryReceipt({ ...visit, ...updated }, { ...f, disposition: dispo }));
       }
