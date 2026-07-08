@@ -516,6 +516,17 @@ const FinalBill = ({ settings, receipt = {} }) => {
                 </tr>
               ))}
             </tbody>
+            {/* R7hr(billing-audit R3) — Total Paid tie-out. The rows above now
+                carry every bill's payments, so this footer sums to the same
+                figure deducted as "Advances Received" in the totals block —
+                the discharge document self-reconciles (charges − paid =
+                balance, all visible in one place). */}
+            <tfoot>
+              <tr style={{ fontWeight: 800, background: "#f8fafc" }}>
+                <td colSpan={3} className="right">Total Paid</td>
+                <td className="right">{fmtINR(receipt.payments.reduce((s, p) => s + toNum(p.amount), 0))}</td>
+              </tr>
+            </tfoot>
           </table>
         </div>
       )}

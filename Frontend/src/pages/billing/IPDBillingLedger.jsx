@@ -793,12 +793,21 @@ export default function IPDBillingLedger() {
         net:        Number(linkedOpd.netAmount || 0),
         due:        Number(linkedOpd.balanceAmount || 0),
       } : null,
-      payments:         (data.bill?.payments || []).map(p => ({
-        date:   p.paidAt,
-        method: p.paymentMode,
-        refNo:  p.transactionId,
-        amount: toMoney(p.amount),
-      })),
+      // R7hr(billing-audit R3) — aggregate payment rows across EVERY bill of
+      // this admission, not just the active one. advanceReceived (= billSummary
+      // .advancePaid) already sums all bills, so a multi-bill admission would
+      // otherwise show a "paid" deduction larger than the Payment History
+      // listed. Aggregating every bill's rows makes the breakdown tie out to
+      // the deducted total. Sorted oldest-first.
+      payments:         ((data.bills?.length ? data.bills : [data.bill]).filter(Boolean))
+        .flatMap(b => b.payments || [])
+        .map(p => ({
+          date:   p.paidAt,
+          method: p.paymentMode,
+          refNo:  p.transactionId,
+          amount: toMoney(p.amount),
+        }))
+        .sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0)),
       // R7bh-F1 / META-1: PrintAudit anchor — final IPD bill maps to
       // PatientBill so the bill's printCount increments per print.
       printAudit: {
@@ -1302,12 +1311,21 @@ export default function IPDBillingLedger() {
                       || "Self-pay",
       discount:         totalDiscount,
       advanceReceived:  paid,
-      payments:         (data.bill?.payments || []).map(p => ({
-        date:   p.paidAt,
-        method: p.paymentMode,
-        refNo:  p.transactionId,
-        amount: toMoney(p.amount),
-      })),
+      // R7hr(billing-audit R3) — aggregate payment rows across EVERY bill of
+      // this admission, not just the active one. advanceReceived (= billSummary
+      // .advancePaid) already sums all bills, so a multi-bill admission would
+      // otherwise show a "paid" deduction larger than the Payment History
+      // listed. Aggregating every bill's rows makes the breakdown tie out to
+      // the deducted total. Sorted oldest-first.
+      payments:         ((data.bills?.length ? data.bills : [data.bill]).filter(Boolean))
+        .flatMap(b => b.payments || [])
+        .map(p => ({
+          date:   p.paidAt,
+          method: p.paymentMode,
+          refNo:  p.transactionId,
+          amount: toMoney(p.amount),
+        }))
+        .sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0)),
       // R7bh-F1 / META-1: PrintAudit anchor — interim bill prints
       // are tracked against the underlying PatientBill so all three
       // view-mode reprints (category/day/audit) share the same count.
