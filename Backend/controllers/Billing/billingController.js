@@ -3140,6 +3140,14 @@ exports.applyAdvanceToBill = async (req, res) => {
       bill: { _id: result.bill._id, billNumber: result.bill.billNumber, balanceAmount: result.bill.balanceAmount, billStatus: result.bill.billStatus },
     });
   } catch (e) {
+    // Honour typed service errors (status + code) so the cashier UI can tell
+    // apart e.g. ADVANCE_EARMARK_MISMATCH (409 — advance ring-fenced to another
+    // admission) and GENERATE_IN_FLIGHT (409 — bill finalizing) from a plain
+    // validation 400, and react programmatically (offer a general advance,
+    // retry, etc.). Mirrors refundAdvance's catch below.
+    if (e?.status && e?.code) {
+      return res.status(e.status).json({ success: false, message: e.message, code: e.code });
+    }
     res.status(400).json({ success: false, message: e?.message || "Advance apply failed" });
   }
 };
