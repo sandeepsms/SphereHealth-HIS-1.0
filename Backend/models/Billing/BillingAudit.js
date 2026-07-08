@@ -102,6 +102,19 @@ const BillingAuditSchema = new mongoose.Schema(
         "MASTER_DEPARTMENT_CREATED",
         "MASTER_DEPARTMENT_UPDATED",
         "MASTER_DRUG_PRICE_CHANGED",
+        // R7hr(NABH-P2.1) — audit blind spots closed. The NABH re-audit
+        // found three money-relevant flows missing from the chronological
+        // log (AAC.7 wants ONE auditable timeline):
+        //   • order complete/cancel on a GENERATED/PARTIAL bill changes the
+        //     patient's billable total but emitted nothing;
+        //   • TPA_REFUND_PENDING_INSURER was being emitted by recordRefund
+        //     but was absent from this enum, so validation silently DROPPED
+        //     every row (the one case an insurer-recovery marker mattered);
+        //   • pharmacy sale money-in only reached ClinicalAudit.
+        "BILL_ITEM_ORDER_COMPLETED", // completeBillItemOrder — line becomes payable
+        "BILL_ITEM_ORDER_CANCELLED", // cancelBillItemOrder — line excluded from payable
+        "TPA_REFUND_PENDING_INSURER",// recordRefund TPA_CLAIM leg (was silently dropped)
+        "PHARMACY_SALE_RECORDED",    // pharmacy dispense/sale money-in
       ],
       index: true,
     },

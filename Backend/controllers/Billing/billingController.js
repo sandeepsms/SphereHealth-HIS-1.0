@@ -187,7 +187,12 @@ exports.cancelItemOrder = async (req, res) => {
     const data = await billingService.cancelBillItemOrder(
       req.params.billId,
       req.params.itemId,
-      { cancelReason: req.body?.cancelReason || "" },
+      {
+        cancelReason: req.body?.cancelReason || "",
+        // R7hr(NABH-P2.1) — actor for the BILL_ITEM_ORDER_CANCELLED audit
+        // row; sourced from req.user (forge-proof), like completeItemOrder.
+        cancelledBy: req.user?.fullName || req.user?.employeeId || "",
+      },
     );
     res.json({ success: true, data });
   } catch (e) {

@@ -1476,6 +1476,24 @@ exports.dispense = async (req, res) => {
       });
     } catch (_) { /* silent — audit emit is non-blocking */ }
 
+    // R7hr(NABH-P2.1) — pharmacy sale money-in previously reached ONLY
+    // ClinicalAudit (above); the accountant's chronological money log
+    // (BillingAudit — NABH AAC.7 single timeline) never saw pharmacy
+    // revenue. Thin row: sale number + amount + mode + actor. Best-effort.
+    try {
+      const { emit } = require("../../models/Billing/BillingAudit");
+      await emit({
+        event:       "PHARMACY_SALE_RECORDED",
+        UHID:        sale.patientUHID || "",
+        billNumber:  sale.billNumber,
+        amount:      Number(sale.grandTotal || 0),
+        paymentMode: sale.paymentMode,
+        actorName:   req.user?.fullName || req.user?.employeeId || "Pharmacy",
+        actorId:     req.user?._id || null,
+        reason:      `Pharmacy sale ${sale.billNumber} (${sale.saleType}) — ${(sale.items || []).length} item(s)`,
+      });
+    } catch (_) { /* audit best-effort */ }
+
     // R7hr-29: NABH MOM.7 — Antimicrobial Use Register auto-population.
     // For every dispensed item whose Drug Master category falls in the
     // antimicrobial family {Antibiotic, Antiviral, Antifungal, Antiparasitic},

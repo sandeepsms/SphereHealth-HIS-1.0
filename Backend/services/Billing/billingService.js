@@ -626,6 +626,24 @@ class BillingService {
       item.completedBy = opts.completedBy || "";
       item.completedByRole = opts.completedByRole || "";
       await bill.save();
+      // R7hr(NABH-P2.1) — this flip CHANGES the bill's billable total (the
+      // line now counts toward what the patient owes) on a possibly
+      // GENERATED/PARTIAL bill, yet emitted no chronological audit row —
+      // one of the re-audit's "billable-value change without BillingAudit"
+      // blind spots. Best-effort emit, never blocks the clinician's click.
+      try {
+        const { emit } = require("../../models/Billing/BillingAudit");
+        await emit({
+          event:      "BILL_ITEM_ORDER_COMPLETED",
+          UHID:       bill.UHID,
+          patientId:  bill.patient,
+          billId:     bill._id,
+          billNumber: bill.billNumber,
+          amount:     toNum(item.netAmount) + toNum(item.taxAmount),
+          actorName:  opts.completedBy || "System",
+          reason:     `Order completed — ${item.serviceName || item.serviceCode || "line"} now payable`,
+        });
+      } catch (_) { /* audit best-effort */ }
       return bill;
     }, { label: "completeBillItemOrder" });
   }
@@ -671,6 +689,23 @@ class BillingService {
       item.cancelledAt = new Date();
       item.cancelReason = (opts.cancelReason || "").trim() || "Cancelled by clinician";
       await bill.save();
+      // R7hr(NABH-P2.1) — mirror of the complete-order emit: cancelling an
+      // Active order EXCLUDES the line's value from the billable total on a
+      // possibly GENERATED/PARTIAL bill, which previously left no
+      // chronological audit row. Best-effort, never blocks the cancel.
+      try {
+        const { emit } = require("../../models/Billing/BillingAudit");
+        await emit({
+          event:      "BILL_ITEM_ORDER_CANCELLED",
+          UHID:       bill.UHID,
+          patientId:  bill.patient,
+          billId:     bill._id,
+          billNumber: bill.billNumber,
+          amount:     toNum(item.netAmount) + toNum(item.taxAmount),
+          actorName:  opts.cancelledBy || "System",
+          reason:     `Order cancelled — ${item.serviceName || item.serviceCode || "line"}: ${item.cancelReason}`,
+        });
+      } catch (_) { /* audit best-effort */ }
       return bill;
     }, { label: "cancelBillItemOrder" });
   }
