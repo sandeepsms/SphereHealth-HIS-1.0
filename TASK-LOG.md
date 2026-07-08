@@ -9,13 +9,19 @@
 
 ## 🎯 ABHI YAHA HAI (resume point)
 
-**Abhi hua:** ER-P1 workflow arc **poora DONE** (4 commits, neeche table). Emergency ka clinical+money loop band. Billing NABH arc pehle se pushed hai.
+**Abhi hua:** ER-P1 (4 commits) + **DC-P1 + DC-P2-conversion DONE**. Emergency aur Day Care dono ke core loops band.
 
 **Sabse pehle karne layak (koi bhi ek):**
-1. **`git push`** — **5 commits unpushed** (`5f3f5d9c..49e6a00c` ER-P1 arc + TASK-LOG update). PR pe auto-add ho jayenge.
-2. **DC-P1 (Day Care)** — plan ready (is file me neeche): DC Today board, pre-procedure checklist, discharge-readiness score. User "do DC-P1" bole toh.
+1. **`git push`** — **~8 commits unpushed** (`5f3f5d9c..b6469107` — ER-P1 arc + DC-P1 board/checklist/readiness `57915ba0` + DC→IPD conversion `b6469107` + TASK-LOG). PR pe auto-add.
+2. **DC-P2 bacha hua**: NABH Day Care register (emitter pattern ready) + DC discharge-summary variant (procedure + readiness score + home advice).
 3. **ER-P2** — SBAR handover on Admit, referral-letter wiring, ER TAT tile.
 4. VPS Docker dry-run (Docker install/server chahiye) · Task #43 prints unification.
+
+### DC-P1 + P2-conversion (2026-07-09)
+| Commit | Kya hua |
+|---|---|
+| `57915ba0` | **/daycare board** (sidebar "Day Care Today"): stage chips (pre-proc pending → checklist ✓ → recovery score → ✅ READY ≥9/10 → ⏰ OVERDUE), Checklist modal (consent/NPO/site/high-risk-meds), Aldrete-style Readiness modal; `PATCH /admissions/:id/daycare` (vitals.write) |
+| `b6469107` | **DC→IPD conversion** `POST /:id/convert-to-ipd` (reason mandatory, trail stamped, 409 re-convert guard) — same admission, bed/bills/episode intact; board pe "→ IPD" button. Billing split R3 multi-bill gate handle karta hai |
 
 ### ER-P1 (2026-07-08 raat) — Emergency loop band
 | Commit | Kya hua |
