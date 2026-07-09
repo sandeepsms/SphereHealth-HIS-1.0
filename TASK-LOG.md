@@ -18,6 +18,8 @@
 
 **ER-P2 DONE (2026-07-09)** `6783318a`: SBAR er-handover printable (Admitted rows pe ⇄), Referred pe ReferralLetter auto-print wiring, `GET /api/reports/er-tat` (live-verified: count 4, avg 2min, max 8min). **ER + DC workflows: P1+P2 sab complete.**
 
+**TPA-P1 DONE (2026-07-09)** `9784d2d7`: `GET /api/reports/tpa-mis?from&to&staleDays` (tpa.claim) — status counts, approval %, submit→approve TAT, approved-vs-settled **realization %**, per-TPA breakdown, **staleClaims chase-list** (SUBMITTED > staleDays, ageingDays ke saath). Fixture-verified exact (TAT 2d, approval 100%, realization 80%, stale 10d). **TPA-P2 pending**: query→resubmission loop (schema tpaQueryNotes[] + endpoints + UI), pre-auth document attachments, TPA master CRUD UI, MIS ka frontend tile. Dev creds ab sab `123`.
+
 **DC-P2 DONE (2026-07-09):** `b6469107` DC→IPD conversion; `9e25ab56` NABH Day Care register (`DayCareRegisterModel` + `emitDayCare`, idempotent, gate-pass + conversion se emit) + `dc-summary` printable (checklist state + Aldrete breakdown + home advice, board pe 🖨). **Emergency + Day Care dono workflows ab complete** (ER-P2/P3 polish backlog me).
 
 ### DC-P1 + P2-conversion (2026-07-09)
