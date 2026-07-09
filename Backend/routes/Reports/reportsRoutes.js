@@ -57,6 +57,8 @@ router.get("/lab-tat",                 requireAction("reports.clinical"),  dash.
 router.get("/discharge-tat",           requireAction("reports.clinical"),  dash.getDischargeTat);
 // R7hr(ER-P2) — ER door-to-triage/doctor/disposition TAT (NABH AAC.1 CQI).
 router.get("/er-tat",                  requireAction("reports.clinical"),  dash.getErTat);
+// R7hr(TPA-P1) — TPA MIS: TAT, approval %, realization, stale-claims ageing.
+router.get("/tpa-mis",                 requireAction("tpa.claim"),         dash.getTpaMis);
 router.get("/diagnosis-frequency",     requireAction("reports.clinical"),  dash.getDiagnosisFrequency);
 
 module.exports = router;

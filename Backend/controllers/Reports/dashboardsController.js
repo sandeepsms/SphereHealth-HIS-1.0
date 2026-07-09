@@ -524,6 +524,109 @@ exports.getErTat = async (req, res, next) => {
 };
 
 // ════════════════════════════════════════════════════════════════════
+// R7hr(TPA-P1): TPA MIS — claim-desk performance from PatientBill TPA
+// fields: status counts, submit→approve TAT, approval %, approved-vs-
+// settled realization, per-TPA breakdown, and stale SUBMITTED claims
+// (ageing) so the desk chases insurers before claims rot.
+// ════════════════════════════════════════════════════════════════════
+exports.getTpaMis = async (req, res, next) => {
+  try {
+    let from, to;
+    try {
+      ({ from, to } = parseHospitalDateRange(req.query.from, req.query.to, { defaultDays: 90, maxDays: 366 }));
+    } catch (e) {
+      return sendErr(res, e, "VALIDATION", e.status || 400);
+    }
+    const staleDays = Math.max(1, Number(req.query.staleDays) || 7);
+    const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+
+    const [agg] = await PatientBill.aggregate([
+      { $match: {
+          paymentType: { $in: ["TPA", "CORPORATE"] },
+          tpaClaimStatus: { $ne: "NOT_APPLICABLE" },
+          createdAt: { $gte: from, $lt: to },
+      } },
+      { $addFields: {
+          _approveTatDays: { $cond: [
+            { $and: ["$tpaPreAuthSubmittedAt", "$tpaApprovedAt"] },
+            { $divide: [{ $subtract: ["$tpaApprovedAt", "$tpaPreAuthSubmittedAt"] }, 86400000] },
+            null,
+          ] },
+          _approved: { $toDouble: { $ifNull: ["$tpaApprovedAmount", 0] } },
+          _tpaPaid: { $reduce: {
+            input: { $ifNull: ["$payments", []] },
+            initialValue: 0,
+            in: { $add: ["$$value", { $cond: [
+              { $and: [{ $eq: ["$$this.paymentMode", "TPA_CLAIM"] }, { $gt: [{ $toDouble: "$$this.amount" }, 0] }] },
+              { $toDouble: "$$this.amount" }, 0,
+            ] }] },
+          } },
+      } },
+      { $facet: {
+          byStatus: [
+            { $group: { _id: "$tpaClaimStatus", n: { $sum: 1 } } },
+          ],
+          overall: [
+            { $group: {
+                _id: null, claims: { $sum: 1 },
+                avgApproveTatDays: { $avg: "$_approveTatDays" },
+                approvedAmt: { $sum: "$_approved" },
+                settledAmt:  { $sum: "$_tpaPaid" },
+            } },
+          ],
+          byTpa: [
+            { $group: {
+                _id: { $ifNull: ["$tpaName", "(unnamed TPA)"] },
+                claims: { $sum: 1 },
+                approvedAmt: { $sum: "$_approved" },
+                settledAmt:  { $sum: "$_tpaPaid" },
+                avgApproveTatDays: { $avg: "$_approveTatDays" },
+            } },
+            { $sort: { claims: -1 } }, { $limit: 25 },
+          ],
+          stale: [
+            { $match: {
+                tpaClaimStatus: "SUBMITTED",
+                tpaPreAuthSubmittedAt: { $lt: new Date(Date.now() - staleDays * 86400000) },
+            } },
+            { $project: {
+                _id: 0, billNumber: 1, UHID: 1, patientName: 1, tpaName: 1,
+                tpaClaimNumber: 1, tpaPreAuthSubmittedAt: 1,
+                ageingDays: { $round: [{ $divide: [{ $subtract: [new Date(), "$tpaPreAuthSubmittedAt"] }, 86400000] }, 0] },
+            } },
+            { $sort: { ageingDays: -1 } }, { $limit: 50 },
+          ],
+      } },
+    ]).option({ allowDiskUse: true, maxTimeMS: 20_000 });
+
+    const statusMap = Object.fromEntries((agg?.byStatus || []).map((s) => [s._id, s.n]));
+    const o = agg?.overall?.[0] || null;
+    const approvedN = statusMap.APPROVED || 0;
+    const rejectedN = statusMap.REJECTED || 0;
+    const round2 = (v) => Math.round((v || 0) * 100) / 100;
+    return sendOk(res, {
+      from: from.toISOString().slice(0, 10), to: to.toISOString().slice(0, 10), staleDays,
+      overall: {
+        claims: o?.claims || 0,
+        byStatus: statusMap,
+        approvalPct: approvedN + rejectedN ? Math.round((approvedN / (approvedN + rejectedN)) * 100) : null,
+        avgApproveTatDays: round2(o?.avgApproveTatDays),
+        approvedAmt: round2(o?.approvedAmt),
+        settledAmt:  round2(o?.settledAmt),
+        realizationPct: o?.approvedAmt ? Math.round(((o.settledAmt || 0) / o.approvedAmt) * 100) : null,
+      },
+      byTpa: (agg?.byTpa || []).map((t) => ({
+        tpa: t._id, claims: t.claims,
+        approvedAmt: round2(t.approvedAmt), settledAmt: round2(t.settledAmt),
+        realizationPct: t.approvedAmt ? Math.round((t.settledAmt / t.approvedAmt) * 100) : null,
+        avgApproveTatDays: round2(t.avgApproveTatDays),
+      })),
+      staleClaims: agg?.stale || [],
+    });
+  } catch (e) { next(e); }
+};
+
+// ════════════════════════════════════════════════════════════════════
 // A6-HIGH-6: inventory ABC analysis (12-month consumption value)
 // ════════════════════════════════════════════════════════════════════
 exports.getAbcAnalysis = async (req, res, next) => {
