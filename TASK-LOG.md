@@ -3,24 +3,26 @@
 > **Ye file kya hai:** Har session ka running task log. Naya session shuru karo toh **sirf ye file padho** — 2 minute me pata chal jayega kya chal raha tha, kaha se pick karna hai, aage kya karna hai.
 > **Rule:** Har work-session ke END pe ye file update karke commit karni hai.
 
-**Last updated:** 2026-07-08 (raat) · **Branch:** `claude/multi-hospital-deploy` · **Tree:** clean ✅ · **npm audit:** 0/0 ✅ · **Build:** green ✅
+**Last updated:** 2026-07-09 · **Branch:** `claude/multi-hospital-deploy` · **Tree:** clean ✅ · **npm audit:** 0/0 ✅ · **Build:** green ✅
 
 ---
 
 ## 🎯 ABHI YAHA HAI (resume point)
 
-**Abhi hua:** ER-P1 (4 commits) + **DC-P1 + DC-P2-conversion DONE**. Emergency aur Day Care dono ke core loops band.
+**Abhi hua:** **CLAIM-P1 + CLAIM-P2 DONE** — multi-payer claim forms ka poora loop band (private IRDAI Part A/B + Pre-Auth, aur govt CGHS-MRC/ESIC/universal docket, sab ek hi `buildClaimData` se auto-fill; registration me payerScheme dropdown). Isse pehle TPA-P1/P2, ER-P1/P2, DC-P1/P2 sab complete.
 
 **Sabse pehle karne layak (koi bhi ek):**
-1. **`git push`** — **~12 commits unpushed** (`5f3f5d9c..6783318a` — ER-P1 + DC-P1/P2 + ER-P2 + TASK-LOGs). PR pe auto-add.
-2. **Smoke check (agle session ki pehli cheez)**: `/print/er-handover` ka browser render — SBAR printable build-green hai par preview tab ne auth kho diya tha, pixel-check pending. 2 min ka kaam: login → ER board → Admitted row pe ⇄ button.
+1. **`git push`** — **4 commits unpushed** (`95cfbbd9..2f5433dc` — CLAIM-P1 + P2 + TASK-LOGs; TPA-P2 tak `c72a78cd` push ho chuka). PR pe auto-add.
+2. **CLAIM-P3** (agla claim step): ICD-10 diagnosis capture (abhi finalDiagnosis prose), editable print overlay (blank bank/occupation fields inline-fill), "Generate Claim Pack" one-click ZIP/bundle, config-driven state-scheme templates.
 3. VPS Docker dry-run (Docker install/server chahiye) · Task #43 prints unification.
 
 **ER-P2 DONE (2026-07-09)** `6783318a`: SBAR er-handover printable (Admitted rows pe ⇄), Referred pe ReferralLetter auto-print wiring, `GET /api/reports/er-tat` (live-verified: count 4, avg 2min, max 8min). **ER + DC workflows: P1+P2 sab complete.**
 
 **TPA-P1 DONE (2026-07-09)** `9784d2d7`: `GET /api/reports/tpa-mis?from&to&staleDays` (tpa.claim) — status counts, approval %, submit→approve TAT, approved-vs-settled **realization %**, per-TPA breakdown, **staleClaims chase-list**. Fixture-verified exact. Dev creds sab `123`.
 
-**CLAIM-P1 DONE (2026-07-09)** — multi-payer claim forms: `95cfbbd9` Patient `payerScheme` enum + `schemeIds` (CGHS/ESIC/ECHS/PMJAY/STATE ids) + `claimFormService.buildClaimData(billId)` (episode ke saare bills → insurer Part-B category buckets + hospital ROHINI/GSTIN + patient policy + preauth + docs-checklist) + `GET /billing/:billId/claim-data`; `d2c236dd` 3 printables — **ClaimFormPartB** (hospital, ~95% auto — ROHINI, category breakup, TPA-payable split), **ClaimFormPartA** (insured — known fields prefilled, bank/occupation dashed-blank), **PreAuthRequest** (cashless, estimatedCost se) + IPD Ledger pe **"Claim Pack"** button. Live-verified (endpoint 200 → Part B/A/PreAuth sab render). **Design: 1 data-builder, N templates — form payer se badalti hai product se nahi.** Registration UI me payerScheme dropdown + govt-scheme printables (CGHS-MRC/ESIC) + claim-docket = **CLAIM-P2 pending**.
+**CLAIM-P1 DONE (2026-07-09)** — multi-payer claim forms: `95cfbbd9` Patient `payerScheme` enum + `schemeIds` (CGHS/ESIC/ECHS/PMJAY/STATE ids) + `claimFormService.buildClaimData(billId)` (episode ke saare bills → insurer Part-B category buckets + hospital ROHINI/GSTIN + patient policy + preauth + docs-checklist) + `GET /billing/:billId/claim-data`; `d2c236dd` 3 printables — **ClaimFormPartB** (hospital, ~95% auto — ROHINI, category breakup, TPA-payable split), **ClaimFormPartA** (insured — known fields prefilled, bank/occupation dashed-blank), **PreAuthRequest** (cashless, estimatedCost se) + IPD Ledger pe **"Claim Pack"** button. Live-verified (endpoint 200 → Part B/A/PreAuth sab render). **Design: 1 data-builder, N templates — form payer se badalti hai product se nahi.** Registration UI me payerScheme dropdown + govt-scheme printables (CGHS-MRC/ESIC) + claim-docket = **CLAIM-P2 (niche)**.
+
+**CLAIM-P2 DONE (2026-07-09)** `2f5433dc`: **payer-scheme registration UI** — ReceptionConsole me "Payer Scheme" dropdown (CASH/RETAIL_TPA/CORPORATE/CGHS/ESIC/ECHS/PMJAY/STATE/OTHER) + conditional govt-scheme-ID fields (CGHS card+ward+PPO / ESIC IP+employer+dispensary / ECHS card / PMJAY id / state name+id) → `patient.schemeIds` (emptyPatient + existing-patient load + save payload sab wired). **3 naye govt printables** (sab `buildClaimData` se): **CghsMrc** (ek template, PPO ho toh MRC(P) pensioner warna MRC(S) serving; card/ward auto, bank boxes blank, Annexure-B enclosure checklist), **EsicClaim** (IP/employer/dispensary auto, treatment+amount, bank blank), **ClaimDocket** (universal cover-sheet — episode summary + scheme-payable vs patient-share + enclosed-docs grid; PMJAY/STATE ke liye "TMS portal pe file hoti hai, ye proof-pack hai" note). IPD Ledger **Claim Pack** ab payer-aware: CGHS→MRC+docket, ESIC→ESIC+docket, PMJAY/STATE/ECHS→docket, warna IRDAI Part B+A. Live-verified: CGHS payload→MRC(P) (card CG-778899, Semi-Private ward, Annexure-B), PMJAY payload→docket (PM-JAY + tms.pmjay.gov.in note + enclosures). **CLAIM-P3 pending** (ICD-10 capture, editable print overlay, one-click bundle, config-driven state templates).
 
 **TPA-P2 DONE (2026-07-09)** `3b1c7827`: **insurer query loop** — `tpaQueryLog[]` + POST `/:billId/tpa-query` & `/tpa-query/:queryId/reply` (ATOMIC updates — partial-select save() recalcTotals pe crash karta tha, E2E me pakda; OPEN-filter se double-reply 409), audit events `TPA_QUERY_RAISED/REPLIED`, tpa-mis me `openQueries` facet (ageing ke saath); **`/tpa-desk` page** (sidebar: Admin/TPA/AC) — KPI tiles, per-TPA table, stale + open-query chase-lists, Queries modal (raise/reply/REJECTED→Re-submit via existing preauth-submit). Full loop live-verified. TPA master CRUD backend+UI pehle se tha (AddTpa/TPAServiceManagement). **TPA-P3 pending**: pre-auth document attachments (upload-infra decision chahiye), courier/dispatch tracking.
 
@@ -114,7 +116,7 @@
 | Cheez | Value |
 |---|---|
 | Repo | `D:\Spherehealth` (Express+Mongoose backend, React+Vite frontend, MongoDB) |
-| Branch | `claude/multi-hospital-deploy` (**17 commits push pending**) |
+| Branch | `claude/multi-hospital-deploy` (**4 commits push pending** — `95cfbbd9..2f5433dc`) |
 | Dev servers | preview_start: "Backend (Express)" :5050 · "Frontend (Vite)" :5173 |
 | Dev login | **sabhi 27 users** ka password `123` (2026-07-09 se, owner request; admin@spherehealth.com bhi). Drift ho jaye toh bcrypt cost-12 reset script pattern use karo |
 | Backend verify | `node -c <file>` (build step nahi hai) |
