@@ -37,6 +37,31 @@ import { openPrint } from "../../Components/print/openPrint";   // R7hr(LAB-P1)
 
 import { API_BASE_URL as API } from "../../config/api";
 const authHdr = () => ({ headers: { Authorization: `Bearer ${(sessionStorage.getItem("his_token"))}` } });
+// R7hr(LAB-P3) — /uploads is served at the server ROOT (not under /api), so
+// strip the /api suffix to reach uploaded report files.
+const FILE_ORIGIN = String(API).replace(/\/api\/?$/, "");
+
+// R7hr(LAB-P3) — fetch a JWT-protected /uploads file as a blob and open it
+// (a plain <a>/<img> can't send the Bearer header the read route requires).
+async function openAttachment(url) {
+  try {
+    const res = await axios.get(`${FILE_ORIGIN}${url}`, { ...authHdr(), responseType: "blob" });
+    window.open(URL.createObjectURL(res.data), "_blank", "noopener");
+  } catch { toast.error("Could not open the file."); }
+}
+
+function AttachmentChip({ url, onDelete, canDelete }) {
+  const name = url.split("/").pop().replace(/^\d+-/, "");
+  const isImg = /\.(jpe?g|png|webp|gif)$/i.test(url);
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", border: `1px solid ${C.border}`, borderRadius: 8, background: "#fff" }}>
+      <i className={`pi ${isImg ? "pi-image" : "pi-file-pdf"}`} style={{ fontSize: 18, color: isImg ? "#2563eb" : "#dc2626" }} />
+      <button onClick={() => openAttachment(url)} title="Open in new tab"
+        style={{ border: "none", background: "none", color: C.blue, fontWeight: 700, fontSize: 12, cursor: "pointer", maxWidth: 190, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</button>
+      {canDelete && <button onClick={onDelete} title="Remove" style={{ border: "none", background: "none", color: C.red, fontWeight: 800, fontSize: 15, cursor: "pointer", lineHeight: 1 }}>×</button>}
+    </div>
+  );
+}
 
 const STATUS_BG = {
   normal:     { bg: "#d4edda", color: "#155724", border: "#c3e6cb" },
@@ -190,7 +215,7 @@ export default function LabResultsEntry() {
           accent={C.blue} accentL="#eef2ff"
           tabs={[
             { id: "trend",   label: "Trend Sheet",      icon: "pi-table" },
-            { id: "report",  label: "Imaging / Reports",icon: "pi-file" },
+            { id: "report",  label: "Imaging / Outside Reports", icon: "pi-file" },
             { id: "history", label: "History",          icon: "pi-history" },
           ]}
         />
@@ -517,6 +542,31 @@ function ReportTab({ uhid, patient }) {
     status: "reported",
   });
   const [saving, setSaving] = useState(false);
+  const [attachments, setAttachments] = useState([]);   // R7hr(LAB-P3)
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef(null);
+
+  const doUpload = async () => {
+    const files = fileRef.current?.files;
+    if (!files?.length) { toast.warn("Choose a PDF or image first."); return; }
+    if (!editingId) { toast.warn("Save the report first, then attach the scan."); return; }
+    const fd = new FormData();
+    Array.from(files).slice(0, 5).forEach((f) => fd.append("files", f));
+    setUploading(true);
+    try {
+      const r = await axios.post(`${API}/lab-records/reports/${editingId}/attachment`, fd, authHdr());
+      setAttachments(r.data?.data?.attachments || []);
+      if (fileRef.current) fileRef.current.value = "";
+      toast.success("Attached.");
+    } catch (e) { toast.error(e?.response?.data?.message || "Upload failed"); }
+    setUploading(false);
+  };
+  const delAtt = async (url) => {
+    try {
+      const r = await axios.delete(`${API}/lab-records/reports/${editingId}/attachment`, { ...authHdr(), data: { path: url } });
+      setAttachments(r.data?.data?.attachments || []);
+    } catch (e) { toast.error(e?.response?.data?.message || "Delete failed"); }
+  };
 
   useEffect(() => {
     axios.get(`${API}/lab-records/report-types`, authHdr()).then(r => setTypes(r.data?.data || []));
@@ -537,6 +587,7 @@ function ReportTab({ uhid, patient }) {
       specimen: "", organism: "", sensitivity: "",
       status: "reported",
     });
+    setAttachments([]);   // R7hr(LAB-P3)
   };
 
   const loadExisting = (r) => {
@@ -549,6 +600,7 @@ function ReportTab({ uhid, patient }) {
       specimen: r.specimen || "", organism: r.organism || "", sensitivity: r.sensitivity || "",
       status: r.status,
     });
+    setAttachments(r.attachments || []);   // R7hr(LAB-P3)
   };
 
   const save = async () => {
@@ -675,6 +727,36 @@ function ReportTab({ uhid, patient }) {
             <textarea value={form.recommendations} onChange={(e) => u("recommendations", e.target.value)} rows={2}
               style={{ width: "100%", padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 12.5, fontFamily: "inherit" }} />
           </Field>
+
+          {/* R7hr(LAB-P3) — attach the ORIGINAL scanned outside report (PDF / image). */}
+          <div style={{ marginTop: 14, padding: "12px 14px", background: "#f8fafc", border: `1px dashed ${C.border}`, borderRadius: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 800, color: C.text, marginBottom: 8 }}>
+              📎 Original scanned report — outside lab / imaging (PDF or JPG, up to 5 files · 5 MB each)
+            </div>
+            {!editingId ? (
+              <div style={{ fontSize: 11.5, color: C.muted }}>💡 Save the report first, then attach the scanned file(s).</div>
+            ) : (
+              <>
+                {canWrite && (
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <input ref={fileRef} type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.webp" style={{ fontSize: 12 }} />
+                    <button onClick={doUpload} disabled={uploading}
+                      style={{ padding: "6px 14px", borderRadius: 7, border: `1.5px solid ${C.green}`, background: "#fff", color: C.green, fontWeight: 800, fontSize: 11.5, cursor: uploading ? "default" : "pointer", opacity: uploading ? .6 : 1 }}>
+                      <i className="pi pi-upload" style={{ marginRight: 4 }} />{uploading ? "Uploading…" : "Upload"}
+                    </button>
+                  </div>
+                )}
+                {attachments.length > 0 && (
+                  <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
+                    {attachments.map((url, i) => <AttachmentChip key={i} url={url} canDelete={canWrite} onDelete={() => delAtt(url)} />)}
+                  </div>
+                )}
+                {attachments.length === 0 && canWrite && (
+                  <div style={{ marginTop: 8, fontSize: 11, color: C.muted }}>No files attached yet.</div>
+                )}
+              </>
+            )}
+          </div>
 
           <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end", gap: 8 }}>
             <button onClick={printReport} title="Print NABH diagnostic report"

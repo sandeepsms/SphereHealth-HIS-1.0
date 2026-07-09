@@ -291,6 +291,46 @@ exports.reportVerify = async (req, res) => {
   } catch (e) { res.status(400).json({ success: false, message: e.message }); }
 };
 
+/* R7hr(LAB-P3) — attach the ORIGINAL scanned outside report (PDF / image)
+   to a LabReport. The files land on disk via safeUpload (hardened multer,
+   uploads/lab-records/); we only ever store server-derived /uploads paths
+   in `attachments`, then re-validate them with filterSafeUrls so a crafted
+   filename can never smuggle a javascript:/data: URL into the array. */
+exports.reportAttachmentUpload = async (req, res) => {
+  try {
+    const files = req.files || [];
+    if (!files.length) return res.status(400).json({ success: false, message: "No files uploaded" });
+    const { filterSafeUrls } = require("../../utils/urlValidator");
+    const urls = filterSafeUrls(files.map((f) => `/uploads/lab-records/${f.filename}`));
+    const row = await LabReport.findByIdAndUpdate(
+      req.params.id,
+      { $push: { attachments: { $each: urls } } },
+      { new: true },
+    ).lean();
+    if (!row) return res.status(404).json({ success: false, message: "Report not found" });
+    res.status(201).json({ success: true, data: row, added: urls });
+  } catch (e) { res.status(400).json({ success: false, message: e.message }); }
+};
+
+exports.reportAttachmentDelete = async (req, res) => {
+  try {
+    const target = String(req.body?.path || req.query?.path || "");
+    if (!target) return res.status(400).json({ success: false, message: "path required" });
+    const row = await LabReport.findByIdAndUpdate(
+      req.params.id,
+      { $pull: { attachments: target } },
+      { new: true },
+    ).lean();
+    if (!row) return res.status(404).json({ success: false, message: "Report not found" });
+    // best-effort unlink — only within our own uploads/lab-records dir.
+    if (/^\/uploads\/lab-records\/[a-zA-Z0-9._-]+$/.test(target)) {
+      const fs = require("fs"), path = require("path");
+      fs.unlink(path.join(__dirname, "..", "..", target.replace(/^\//, "")), () => {});
+    }
+    res.json({ success: true, data: row });
+  } catch (e) { res.status(400).json({ success: false, message: e.message }); }
+};
+
 /* Expose presets to other modules without re-fetching */
 exports._PANELS = PANELS;
 exports._REPORT_TYPES = REPORT_TYPES;
