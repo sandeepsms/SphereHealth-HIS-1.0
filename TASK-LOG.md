@@ -12,9 +12,11 @@
 **Abhi hua:** ER-P1 (4 commits) + **DC-P1 + DC-P2-conversion DONE**. Emergency aur Day Care dono ke core loops band.
 
 **Sabse pehle karne layak (koi bhi ek):**
-1. **`git push`** — **~10 commits unpushed** (`5f3f5d9c..9e25ab56` — ER-P1 arc + DC-P1 + DC-P2 poora + TASK-LOGs). PR pe auto-add.
-2. **ER-P2** — SBAR handover on Admit, referral-letter wiring, ER TAT tile.
+1. **`git push`** — **~12 commits unpushed** (`5f3f5d9c..6783318a` — ER-P1 + DC-P1/P2 + ER-P2 + TASK-LOGs). PR pe auto-add.
+2. **Smoke check (agle session ki pehli cheez)**: `/print/er-handover` ka browser render — SBAR printable build-green hai par preview tab ne auth kho diya tha, pixel-check pending. 2 min ka kaam: login → ER board → Admitted row pe ⇄ button.
 3. VPS Docker dry-run (Docker install/server chahiye) · Task #43 prints unification.
+
+**ER-P2 DONE (2026-07-09)** `6783318a`: SBAR er-handover printable (Admitted rows pe ⇄), Referred pe ReferralLetter auto-print wiring, `GET /api/reports/er-tat` (live-verified: count 4, avg 2min, max 8min). **ER + DC workflows: P1+P2 sab complete.**
 
 **DC-P2 DONE (2026-07-09):** `b6469107` DC→IPD conversion; `9e25ab56` NABH Day Care register (`DayCareRegisterModel` + `emitDayCare`, idempotent, gate-pass + conversion se emit) + `dc-summary` printable (checklist state + Aldrete breakdown + home advice, board pe 🖨). **Emergency + Day Care dono workflows ab complete** (ER-P2/P3 polish backlog me).
 
