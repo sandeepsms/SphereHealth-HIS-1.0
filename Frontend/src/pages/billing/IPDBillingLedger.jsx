@@ -1930,6 +1930,27 @@ export default function IPDBillingLedger() {
             {isDischarged ? "Reprint Final Bill" : "Generate Final Bill"}
           </button>
         )}
+        {/* R7hr(CLAIM-P1.3) — Insurance Claim Pack: fetches the canonical
+            claim data for this bill's episode and prints IRDAI Part B
+            (hospital) + Part A (insured). Shown for TPA/insured patients. */}
+        {can("billing.read") && data?.bill?._id && (
+          <button
+            onClick={async () => {
+              try {
+                const r = await axios.get(`${API_ENDPOINTS.BILLING}/${data.bill._id}/claim-data`);
+                const cd = r.data?.data;
+                if (!cd) { toast.warn("Claim data unavailable"); return; }
+                openPrint("claim-part-b", cd);
+                openPrint("claim-part-a", cd);
+                toast.success("Claim pack: Part B + Part A opened");
+              } catch (e) { toast.error(e?.response?.data?.message || "Claim data fetch failed"); }
+            }}
+            title="Print IRDAI claim pack (Part B hospital + Part A insured)"
+            style={{ padding: "7px 14px", background: "#7c3aed", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 12 }}>
+            <i className="pi pi-shield" style={{ marginRight: 6 }} />
+            Claim Pack
+          </button>
+        )}
         <button onClick={load} style={{
           marginLeft: "auto",
           padding: "7px 12px", background: "#fff", color: C.muted, border: `1px solid ${C.border}`,

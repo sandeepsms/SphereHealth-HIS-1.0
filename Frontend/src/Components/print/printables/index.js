@@ -18,6 +18,9 @@ import TariffList        from "./TariffList";   // R7hr(NABH-P3.6) — PRE.4 pat
 import ERDischargeSummary from "./ERDischargeSummary"; // R7hr(ER-P1.2) — ER exit summary
 import DayCareSummary    from "./DayCareSummary";      // R7hr(DC-P2) — day-care discharge summary
 import ERHandoverSBAR    from "./ERHandoverSBAR";      // R7hr(ER-P2) — ER→ward SBAR handover
+import ClaimFormPartB    from "./ClaimFormPartB";      // R7hr(CLAIM-P1.3) — IRDAI Part B
+import ClaimFormPartA    from "./ClaimFormPartA";      // R7hr(CLAIM-P1.3) — IRDAI Part A
+import PreAuthRequest    from "./PreAuthRequest";      // R7hr(CLAIM-P1.3) — cashless pre-auth
 import RefundReceipt     from "./RefundReceipt";
 import ServiceReceipt    from "./ServiceReceipt";
 import ConsentForm       from "./ConsentForm";
@@ -107,6 +110,9 @@ export const PRINTABLES = {
   "er-summary":       { component: ERDischargeSummary,title: "Emergency Treatment Summary", defaultPaper: "a4"    },
   "dc-summary":       { component: DayCareSummary,    title: "Day Care Discharge Summary",  defaultPaper: "a4"    },
   "er-handover":      { component: ERHandoverSBAR,    title: "ER → Ward Handover (SBAR)",   defaultPaper: "a4"    },
+  "claim-part-b":     { component: ClaimFormPartB,    title: "Claim Form Part B (Hospital)",defaultPaper: "a4"    },
+  "claim-part-a":     { component: ClaimFormPartA,    title: "Claim Form Part A (Insured)", defaultPaper: "a4"    },
+  "pre-auth":         { component: PreAuthRequest,    title: "Cashless Pre-Authorisation",  defaultPaper: "a4"    },
   "final-bill":       { component: FinalBill,         title: "Final Bill (IPD)",          defaultPaper: "a4"      },
   // Interim Bill — same component, caller passes { isInterim: true } in
   // the receipt payload to flip the title + the "snapshot as of …" banner.
