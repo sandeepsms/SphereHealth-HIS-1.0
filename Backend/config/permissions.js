@@ -125,6 +125,11 @@ const ACTIONS = {
   "ipd.transfer":          ["Admin", "Doctor", "Nurse"],
   "ipd.delete":            ["Admin"],
   "ipd.discharge-summary": ["Admin", "Doctor"],
+  // R7hr(ICD-P1) — ICD-10 master. Search is a lookup any coder/clinician
+  // needs (doctor notes, discharge, claims, MRD coding, TPA desk); the
+  // yearly-file import stays with Admin + MRD (records custodians).
+  "icd10.read":            ["Admin", "Doctor", "Nurse", "MRD", "TPA Coordinator", "Accountant", "Receptionist"],
+  "icd10.manage":          ["Admin", "MRD"],
   "vitals.write":          ["Admin", "Nurse", "Doctor"],
   "mar.write":             ["Admin", "Nurse"],
   // R7hr-72-A2 — nurse-note amendment surface. Post-submission edits

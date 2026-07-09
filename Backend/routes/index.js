@@ -204,6 +204,9 @@ router.use("/insurers", require("./Billing/insurerRoutes"));
 // CLAIM-P4.3 — admin management of uploaded official insurer claim PDFs +
 // field-maps (the "fill the company's own form" overlay templates).
 router.use("/insurer-forms", require("./Billing/insurerFormTemplateRoutes"));
+// ICD-P1 — ICD-10-CM diagnosis-code master: typeahead search + yearly
+// CMS-file import (so descriptions auto-fill from a current codeset).
+router.use("/icd10", require("./Clinical/icd10Routes"));
 
 // nursing-notes alias (NABH Initial Assessment page uses /api/nursing-notes)
 router.use("/nursing-notes", nurseRoutes);

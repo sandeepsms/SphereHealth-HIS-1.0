@@ -20,6 +20,7 @@ import AutoSaveIndicator from "../../Components/signature/AutoSaveIndicator";
 import SignaturePad from "../../Components/signature/SignaturePad";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 import MLCAutoStamp from "../../Components/mlc/MLCAutoStamp";
+import Icd10Picker from "../../Components/clinical/Icd10Picker";   // R7hr(ICD-P1.3)
 import { confirm } from "../../Components/common/ConfirmDialog";
 import "../../Components/clinical/clinical-forms.css";
 
@@ -1937,7 +1938,21 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
               </F>
             </G2>
             <G2 gap={12}>
-              <F label="ICD-10 Code"><input className="his-field" value={form.icdCode} onChange={upd("icdCode")} placeholder="e.g. J18.0, I21.1" /></F>
+              {/* R7hr(ICD-P1.3) — typeahead off the 74k CMS master. Picking a
+                  code also fills Final Diagnosis if the doctor hasn't typed
+                  one yet (never clobbers existing text). */}
+              <F label="ICD-10 Code">
+                <Icd10Picker
+                  className="his-field"
+                  value={form.icdCode}
+                  onChange={v => setForm(p => ({ ...p, icdCode: v }))}
+                  onPick={({ code, description }) => setForm(p => ({
+                    ...p, icdCode: code,
+                    finalDiagnosis: p.finalDiagnosis ? p.finalDiagnosis : description,
+                  }))}
+                  placeholder="e.g. J18.0 or pneumonia"
+                />
+              </F>
               <F label="Co-morbidities / Background History">
                 <input className="his-field" value={form.comorbidities} onChange={upd("comorbidities")} placeholder="e.g. T2DM, HTN, CKD Stage 3" />
               </F>

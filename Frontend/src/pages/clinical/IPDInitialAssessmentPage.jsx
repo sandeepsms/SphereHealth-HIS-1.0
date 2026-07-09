@@ -31,6 +31,7 @@ import ClinicalExaminationCard, { clinExamSummary } from "../../Components/clini
 // IV bag builder UX instead of the legacy hand-built textarea/table.
 import PrescriptionPanel from "../../Components/clinical/PrescriptionPanel";
 import InfusionPanel     from "../../Components/clinical/InfusionPanel";
+import Icd10Picker       from "../../Components/clinical/Icd10Picker";   // R7hr(ICD-P1.3)
 // R7hr-174 (USER, 2026-06-09): auto-print Valuables Handover slip on
 // Nurse IA sign when N15.receiptIssued === true. Purely additive — the
 // existing sign+save+gate-flag flow is unchanged; this only opens an
@@ -4304,10 +4305,13 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
                   <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#8b5cf6", flexShrink: 0 }} />
                   <span style={{ fontSize: 10, fontWeight: 700, color: "#5b21b6", textTransform: "uppercase", letterSpacing: ".6px" }}>ICD-10 Code</span>
                 </div>
-                <input
+                {/* R7hr(ICD-P1.3) — typeahead off the 74k CMS master; picking
+                    a code also fills the official description alongside. */}
+                <Icd10Picker
                   value={icd10}
-                  onChange={e => setIcd10(e.target.value)}
-                  placeholder="e.g. J18.9"
+                  onChange={setIcd10}
+                  onPick={({ code, description }) => { setIcd10(code); setIcd10Description(description); }}
+                  placeholder="e.g. J18.9 or pneumonia"
                   style={{ width: "100%", border: "1.5px solid #c4b5fd", borderRadius: 8, padding: "9px 12px", fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 700, color: "#5b21b6", outline: "none", background: "#faf5ff", boxSizing: "border-box", letterSpacing: ".5px" }}
                 />
               </div>

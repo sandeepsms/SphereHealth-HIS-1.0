@@ -22,6 +22,7 @@ import { buildPrintShellHtml } from "@/templates/PrintShell";
 import FingerprintConsentModal from "../../Components/clinical/FingerprintConsentModal";
 import DrugAutocomplete, { parseStrength, drugDisplayName } from "../../Components/clinical/DrugAutocomplete";
 import ServiceAutocomplete from "../../Components/clinical/ServiceAutocomplete";
+import Icd10Picker from "../../Components/clinical/Icd10Picker";   // R7hr(ICD-P1.3)
 import InfusionPanel from "../../Components/clinical/InfusionPanel";
 import { useHospitalSettings } from "../../context/HospitalSettingsContext";
 // R7ar-P1-14/D4-aq-02: centralised Decimal128 unwrap.
@@ -2556,10 +2557,13 @@ export default function OPDAssessmentPage() {
                   <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#8b5cf6", flexShrink: 0 }} />
                   <span style={{ fontSize: 10, fontWeight: 700, color: "#5b21b6", textTransform: "uppercase", letterSpacing: ".6px" }}>ICD-10 Code</span>
                 </div>
-                <input
+                {/* R7hr(ICD-P1.3) — typeahead off the 74k CMS master; picking
+                    a code also fills the official description alongside. */}
+                <Icd10Picker
                   value={soap.icd10Code}
-                  onChange={e => setSoap(p => ({ ...p, icd10Code: e.target.value }))}
-                  placeholder="e.g. J18.9"
+                  onChange={v => setSoap(p => ({ ...p, icd10Code: v }))}
+                  onPick={({ code, description }) => setSoap(p => ({ ...p, icd10Code: code, icd10Description: description }))}
+                  placeholder="e.g. J18.9 or pneumonia"
                   style={{ width: "100%", border: "1.5px solid #c4b5fd", borderRadius: 8, padding: "9px 12px", fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 700, color: "#5b21b6", outline: "none", background: "#faf5ff", boxSizing: "border-box", letterSpacing: ".5px" }}
                 />
               </div>

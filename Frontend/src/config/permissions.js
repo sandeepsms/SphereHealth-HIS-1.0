@@ -169,6 +169,9 @@ export const ACTIONS = {
   "ipd.transfer":          ["Admin", "Doctor", "Nurse"],
   "ipd.delete":            ["Admin"],
   "ipd.discharge-summary": ["Admin", "Doctor"],
+  // R7hr(ICD-P1) — ICD-10 master (mirror of backend).
+  "icd10.read":            ["Admin", "Doctor", "Nurse", "MRD", "TPA Coordinator", "Accountant", "Receptionist"],
+  "icd10.manage":          ["Admin", "MRD"],
   "vitals.write":          ["Admin", "Nurse", "Doctor"],
   "mar.write":             ["Admin", "Nurse"],
   // R7ei — ICU Bundles of Care write surface (mirror of backend).
