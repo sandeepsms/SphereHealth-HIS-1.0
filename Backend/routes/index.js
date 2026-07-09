@@ -201,6 +201,9 @@ router.use("/cashier-sessions", cashierSessionRoutes);   // R7ap-F20
 // CLAIM-P4.1 — insurer registry (config-backed) for the registration insurer
 // picker + claim-form company selector. Read-only, JWT-gated.
 router.use("/insurers", require("./Billing/insurerRoutes"));
+// CLAIM-P4.3 — admin management of uploaded official insurer claim PDFs +
+// field-maps (the "fill the company's own form" overlay templates).
+router.use("/insurer-forms", require("./Billing/insurerFormTemplateRoutes"));
 
 // nursing-notes alias (NABH Initial Assessment page uses /api/nursing-notes)
 router.use("/nursing-notes", nurseRoutes);

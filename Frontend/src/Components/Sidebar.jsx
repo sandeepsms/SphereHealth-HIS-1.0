@@ -109,6 +109,7 @@ export const NAV = [
       { label: "Discharge Queue",     icon: "pi-sign-out",          path: "/discharge-queue",      nabh: true,  badge: "NEW",   roles: [ADMIN, RX] },
       { label: "TPA / Insurance",     icon: "pi-shield",            path: "/tpa-cases",            nabh: true,  badge: "NEW",   roles: [ADMIN, RX, TPA, AC] },
       { label: "TPA Desk (MIS)",      icon: "pi-briefcase",         path: "/tpa-desk",             nabh: true,  badge: "NEW",   roles: [ADMIN, TPA, AC] },   // R7hr(TPA-P2)
+      { label: "Insurer Claim Forms", icon: "pi-file-pdf",          path: "/insurer-forms",        nabh: true,  badge: "NEW",   roles: [ADMIN] },            // R7hr(CLAIM-P4.3)
       { label: "Visitor Passes",      icon: "pi-id-card",           path: "/visitor-passes",       nabh: true,  badge: "NEW",   roles: [ADMIN, RX] },
     ],
   },
