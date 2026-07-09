@@ -354,6 +354,29 @@ function DispositionModal({ visit, onClose, onSaved }) {
       if (["Discharged", "Referred", "Left Against Medical Advice"].includes(dispo)) {
         openPrint("er-summary", buildErSummaryReceipt({ ...visit, ...updated }, { ...f, disposition: dispo }));
       }
+      // R7hr(ER-P2) — Referred exit pe formal referral letter bhi (existing
+      // printable, ab wired): clinical summary ER data se auto-composed.
+      if (dispo === "Referred") {
+        const lastLog = Array.isArray(visit.vitalsLog) && visit.vitalsLog.length ? visit.vitalsLog[visit.vitalsLog.length - 1] : null;
+        openPrint("referral-letter", {
+          referralNo:        `REF-${visit.emergencyNumber}`,
+          date:              new Date().toISOString(),
+          patientName:       visit.patientId?.fullName || visit.patientName,
+          uhid:              visit.patientId?.UHID || visit.UHID,
+          age:               visit.patientId?.age ?? visit.age,
+          gender:            visit.patientId?.gender || visit.gender,
+          referToHospital:   f.referredToHospital,
+          reasonForReferral: f.referralReason,
+          urgency:           "Urgent",
+          provisionalDiagnosis: visit.provisionalDiagnosis || visit.presentingComplaints,
+          clinicalSummary:   `ER presentation: ${visit.presentingComplaints || "—"} (triage ${visit.triageCategory || "—"}). ` +
+                             (lastLog ? `Latest vitals: BP ${lastLog.bloodPressure || "—"}, pulse ${lastLog.pulse || "—"}, SpO₂ ${lastLog.oxygenSaturation || "—"}%. ` : "") +
+                             (f.dispositionNotes || ""),
+          treatmentGiven:    (visit.treatmentGiven?.medications || []).map((m) => `${m.medicineName} ${m.dosage || ""}`).join("; "),
+          investigationsDone:(visit.investigationsOrdered || []).map((iv) => iv.testName).join("; "),
+          doctorName:        visit.consultantIncharge || "",
+        });
+      }
       onSaved();
     } catch (err) {
       toast.error(err?.response?.data?.message || "Disposition save failed");
@@ -629,6 +652,28 @@ function ErRow({ e, navigate, onVitals, onDispo }) {
                   onClick={(ev) => { ev.stopPropagation(); openPrint("er-summary", buildErSummaryReceipt(e)); }}
                   title="Print ER treatment summary">
             <i className="pi pi-print" />
+          </button>
+        )}
+        {/* R7hr(ER-P2) — SBAR handover for Admitted cases (ward nurse copy) */}
+        {!isAdmission && e.disposition === "Admitted" && (
+          <button className="rx-action-btn"
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    const lastLog = Array.isArray(e.vitalsLog) && e.vitalsLog.length ? e.vitalsLog[e.vitalsLog.length - 1] : (e.vitals || {});
+                    openPrint("er-handover", {
+                      erNumber: e.emergencyNumber, patientName: e.patientId?.fullName || e.patientName,
+                      uhid: e.patientId?.UHID || e.UHID, age: e.patientId?.age ?? e.age, gender: e.patientId?.gender || e.gender,
+                      toWard: e.admittedToWard, toBed: e.admittedToBed, doctor: e.consultantIncharge,
+                      arrivalDate: e.arrivalDate, triageCategory: e.triageCategory, isMLC: e.isMLC, mlcNumber: e.mlcNumber,
+                      presentingComplaints: e.presentingComplaints, pastMedicalHistory: e.pastMedicalHistory,
+                      allergyHistory: e.allergyHistory, currentMedications: e.currentMedications,
+                      provisionalDiagnosis: e.provisionalDiagnosis, latestVitals: lastLog,
+                      treatmentSummary: (e.treatmentGiven?.medications || []).map((m) => m.medicineName).join(", "),
+                      pendingItems: (e.investigationsOrdered || []).filter((iv) => !iv.result).map((iv) => iv.testName).join(", "),
+                    });
+                  }}
+                  title="Print SBAR handover (ER → ward)">
+            <i className="pi pi-arrow-right-arrow-left" />
           </button>
         )}
         {uhid && (

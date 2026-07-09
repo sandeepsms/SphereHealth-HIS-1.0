@@ -484,6 +484,46 @@ exports.getDischargeTat = async (req, res, next) => {
 };
 
 // ════════════════════════════════════════════════════════════════════
+// R7hr(ER-P2): ER TAT — door-to-triage / door-to-doctor / door-to-
+// disposition minutes from the NABH Emergency register (rows carry the
+// pre-computed fields). Mirrors getLabTat/getDischargeTat.
+// ════════════════════════════════════════════════════════════════════
+exports.getErTat = async (req, res, next) => {
+  try {
+    let from, to;
+    try {
+      ({ from, to } = parseHospitalDateRange(req.query.from, req.query.to, { defaultDays: 30, maxDays: 366 }));
+    } catch (e) {
+      return sendErr(res, e, "VALIDATION", e.status || 400);
+    }
+    const EmergencyRegister = require("../../models/Compliance/EmergencyRegisterModel");
+    const rows = await EmergencyRegister.aggregate([
+      { $match: { createdAt: { $gte: from, $lt: to } } },
+      { $group: {
+          _id: null, count: { $sum: 1 },
+          avgTriageMins:      { $avg: "$doorToTriageMinutes" },
+          avgDoctorMins:      { $avg: "$doorToDoctorMinutes" },
+          avgDispositionMins: { $avg: "$doorToDispositionMinutes" },
+          maxDispositionMins: { $max: "$doorToDispositionMinutes" },
+      } },
+    ]).option({ allowDiskUse: true, maxTimeMS: 15_000 });
+    const o = rows[0] || null;
+    const fromStr = from.toISOString().slice(0, 10);
+    const toStr   = to.toISOString().slice(0, 10);
+    return sendOk(res, {
+      from: fromStr, to: toStr,
+      overall: o ? {
+        count: o.count,
+        avgTriageMins:      Math.round(o.avgTriageMins || 0),
+        avgDoctorMins:      Math.round(o.avgDoctorMins || 0),
+        avgDispositionMins: Math.round(o.avgDispositionMins || 0),
+        maxDispositionMins: Math.round(o.maxDispositionMins || 0),
+      } : { count: 0 },
+    }, { from: fromStr, to: toStr, count: o?.count || 0 });
+  } catch (e) { next(e); }
+};
+
+// ════════════════════════════════════════════════════════════════════
 // A6-HIGH-6: inventory ABC analysis (12-month consumption value)
 // ════════════════════════════════════════════════════════════════════
 exports.getAbcAnalysis = async (req, res, next) => {

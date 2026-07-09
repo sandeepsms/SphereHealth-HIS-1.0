@@ -17,6 +17,7 @@ import CostEstimate      from "./CostEstimate";
 import TariffList        from "./TariffList";   // R7hr(NABH-P3.6) — PRE.4 patient-facing tariff
 import ERDischargeSummary from "./ERDischargeSummary"; // R7hr(ER-P1.2) — ER exit summary
 import DayCareSummary    from "./DayCareSummary";      // R7hr(DC-P2) — day-care discharge summary
+import ERHandoverSBAR    from "./ERHandoverSBAR";      // R7hr(ER-P2) — ER→ward SBAR handover
 import RefundReceipt     from "./RefundReceipt";
 import ServiceReceipt    from "./ServiceReceipt";
 import ConsentForm       from "./ConsentForm";
@@ -105,6 +106,7 @@ export const PRINTABLES = {
   "tariff-list":      { component: TariffList,        title: "Hospital Tariff List",      defaultPaper: "a4"      },
   "er-summary":       { component: ERDischargeSummary,title: "Emergency Treatment Summary", defaultPaper: "a4"    },
   "dc-summary":       { component: DayCareSummary,    title: "Day Care Discharge Summary",  defaultPaper: "a4"    },
+  "er-handover":      { component: ERHandoverSBAR,    title: "ER → Ward Handover (SBAR)",   defaultPaper: "a4"    },
   "final-bill":       { component: FinalBill,         title: "Final Bill (IPD)",          defaultPaper: "a4"      },
   // Interim Bill — same component, caller passes { isInterim: true } in
   // the receipt payload to flip the title + the "snapshot as of …" banner.
