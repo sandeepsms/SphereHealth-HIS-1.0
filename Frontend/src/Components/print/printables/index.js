@@ -21,6 +21,9 @@ import ERHandoverSBAR    from "./ERHandoverSBAR";      // R7hr(ER-P2) — ER→w
 import ClaimFormPartB    from "./ClaimFormPartB";      // R7hr(CLAIM-P1.3) — IRDAI Part B
 import ClaimFormPartA    from "./ClaimFormPartA";      // R7hr(CLAIM-P1.3) — IRDAI Part A
 import PreAuthRequest    from "./PreAuthRequest";      // R7hr(CLAIM-P1.3) — cashless pre-auth
+import CghsMrc           from "./CghsMrc";             // R7hr(CLAIM-P2) — CGHS MRC(S)/(P)
+import EsicClaim         from "./EsicClaim";           // R7hr(CLAIM-P2) — ESIC reimbursement
+import ClaimDocket       from "./ClaimDocket";         // R7hr(CLAIM-P2) — universal docket
 import RefundReceipt     from "./RefundReceipt";
 import ServiceReceipt    from "./ServiceReceipt";
 import ConsentForm       from "./ConsentForm";
@@ -113,6 +116,9 @@ export const PRINTABLES = {
   "claim-part-b":     { component: ClaimFormPartB,    title: "Claim Form Part B (Hospital)",defaultPaper: "a4"    },
   "claim-part-a":     { component: ClaimFormPartA,    title: "Claim Form Part A (Insured)", defaultPaper: "a4"    },
   "pre-auth":         { component: PreAuthRequest,    title: "Cashless Pre-Authorisation",  defaultPaper: "a4"    },
+  "cghs-mrc":         { component: CghsMrc,           title: "CGHS Medical Reimbursement",  defaultPaper: "a4"    },
+  "esic-claim":       { component: EsicClaim,         title: "ESIC Reimbursement Claim",    defaultPaper: "a4"    },
+  "claim-docket":     { component: ClaimDocket,       title: "Claim Document Docket",       defaultPaper: "a4"    },
   "final-bill":       { component: FinalBill,         title: "Final Bill (IPD)",          defaultPaper: "a4"      },
   // Interim Bill — same component, caller passes { isInterim: true } in
   // the receipt payload to flip the title + the "snapshot as of …" banner.

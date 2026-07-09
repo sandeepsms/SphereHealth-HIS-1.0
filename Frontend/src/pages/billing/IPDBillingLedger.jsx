@@ -1940,9 +1940,12 @@ export default function IPDBillingLedger() {
                 const r = await axios.get(`${API_ENDPOINTS.BILLING}/${data.bill._id}/claim-data`);
                 const cd = r.data?.data;
                 if (!cd) { toast.warn("Claim data unavailable"); return; }
-                openPrint("claim-part-b", cd);
-                openPrint("claim-part-a", cd);
-                toast.success("Claim pack: Part B + Part A opened");
+                // R7hr(CLAIM-P2) — pick the form set by payer scheme.
+                const scheme = cd.patient?.payerScheme || "CASH";
+                if (scheme === "CGHS") { openPrint("cghs-mrc", cd); openPrint("claim-docket", cd); toast.success("CGHS MRC + docket opened"); }
+                else if (scheme === "ESIC") { openPrint("esic-claim", cd); openPrint("claim-docket", cd); toast.success("ESIC claim + docket opened"); }
+                else if (["PMJAY", "STATE", "ECHS"].includes(scheme)) { openPrint("claim-docket", cd); toast.success("Claim docket opened (portal-filed scheme)"); }
+                else { openPrint("claim-part-b", cd); openPrint("claim-part-a", cd); toast.success("Claim pack: Part B + Part A opened"); }
               } catch (e) { toast.error(e?.response?.data?.message || "Claim data fetch failed"); }
             }}
             title="Print IRDAI claim pack (Part B hospital + Part A insured)"

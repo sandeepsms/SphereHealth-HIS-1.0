@@ -61,6 +61,14 @@ const GENDERS        = ["Male", "Female", "Other"];
 const MARITAL        = ["Single", "Married", "Divorced", "Widowed"];
 const BLOOD_GROUPS   = ["A+", "A-", "B+", "B-", "O+", "O-", "AB+", "AB-", "Unknown"];
 const PAYMENT_TYPES  = ["Cash", "TPA", "Insurance", "Corporate"];
+// R7hr(CLAIM-P2) — payer scheme drives which claim form(s) apply + which
+// scheme IDs to capture (claim builder keys on this, not paymentType).
+const PAYER_SCHEMES = [
+  { v: "CASH", l: "Cash / Self-pay" }, { v: "RETAIL_TPA", l: "Retail health insurance (TPA)" },
+  { v: "CORPORATE", l: "Corporate / Group" }, { v: "CGHS", l: "CGHS" }, { v: "ESIC", l: "ESIC" },
+  { v: "ECHS", l: "ECHS (ex-servicemen)" }, { v: "PMJAY", l: "Ayushman / PM-JAY" },
+  { v: "STATE", l: "State scheme" }, { v: "OTHER", l: "Other" },
+];
 const TRIAGE_LEVELS  = ["Red (P1)", "Yellow (P2)", "Green (P3)", "Blue (P4)"];
 const ER_TYPES       = ["Medical", "Surgical", "Trauma", "Pediatric", "Obstetric", "Cardiac", "Stroke"];
 
@@ -100,6 +108,8 @@ const emptyPatient = {
   paymentType: "Cash",
   tpa: null,
   policyNumber: "", // mandatory when paymentType === "TPA" (backend validation)
+  payerScheme: "CASH",     // R7hr(CLAIM-P2) — claim-form axis
+  schemeIds: {},           // conditional govt-scheme ids (CGHS/ESIC/PMJAY/…)
   emergencyContact: { name: "", relation: "", phone: "" },
   UHID: "",
 };
@@ -571,6 +581,8 @@ export default function ReceptionConsole() {
       paymentType: p.paymentType || "Cash",
       tpa: p.tpa?._id || p.tpa || null,
       policyNumber: p.policyNumber || "",
+      payerScheme: p.payerScheme || "CASH",
+      schemeIds: p.schemeIds || {},
       emergencyContact: p.emergencyContact || { name: "", relation: "", phone: "" },
       UHID: p.UHID || "",
     });
@@ -810,6 +822,8 @@ export default function ReceptionConsole() {
         paymentType:     patient.paymentType,
         tpa:             patient.tpa || null,
         policyNumber:    patient.policyNumber || undefined,
+        payerScheme:     patient.payerScheme || "CASH",
+        schemeIds:       patient.schemeIds || {},
         // Patient model has NO `emergencyContact` field — it uses
         // `companionName / companionRelationship / companionContact`. The
         // old code silently dropped the receptionist's input on every save
@@ -1567,6 +1581,13 @@ export default function ReceptionConsole() {
                       {PAYMENT_TYPES.map(p => <option key={p}>{p}</option>)}
                     </select>
                   </div>
+                  {/* R7hr(CLAIM-P2) — payer scheme decides the claim form(s) */}
+                  <div className="his-field-group">
+                    <label className="his-label">Payer Scheme</label>
+                    <select className="his-select" value={patient.payerScheme} onChange={e => setP("payerScheme", e.target.value)}>
+                      {PAYER_SCHEMES.map(s => <option key={s.v} value={s.v}>{s.l}</option>)}
+                    </select>
+                  </div>
                   {patient.paymentType !== "Cash" && (
                     <>
                       <div className="his-field-group">
@@ -1589,6 +1610,29 @@ export default function ReceptionConsole() {
                     </>
                   )}
                 </div>
+                {/* R7hr(CLAIM-P2) — government-scheme IDs, shown per payerScheme.
+                    setSchemeId writes into patient.schemeIds so the claim
+                    builder + CGHS/ESIC printables have the right identifiers. */}
+                {["CGHS", "ESIC", "ECHS", "PMJAY", "STATE"].includes(patient.payerScheme) && (
+                  <div className="rc-grid-3" style={{ marginTop: 8 }}>
+                    {(() => {
+                      const setSchemeId = (k, v) => setPatient(p => ({ ...p, schemeIds: { ...(p.schemeIds || {}), [k]: v } }));
+                      const s = patient.schemeIds || {};
+                      const F = (k, label, ph) => (
+                        <div className="his-field-group">
+                          <label className="his-label">{label}</label>
+                          <input className="his-field" value={s[k] || ""} onChange={e => setSchemeId(k, e.target.value)} placeholder={ph} />
+                        </div>
+                      );
+                      if (patient.payerScheme === "CGHS") return <>{F("cghsCardNo", "CGHS Card No", "e.g. CG-12345")}{F("cghsWardEntitlement", "Ward Entitlement", "General / Semi-Pvt / Private")}{F("ppoNo", "PPO No (pensioner)", "optional")}</>;
+                      if (patient.payerScheme === "ESIC") return <>{F("esicIpNo", "ESIC IP No", "insurance number")}{F("esicEmployer", "Employer", "")}{F("esicDispensary", "Dispensary", "")}</>;
+                      if (patient.payerScheme === "ECHS") return <>{F("echsCardNo", "ECHS Card No", "")}{F("ppoNo", "PPO No", "")}</>;
+                      if (patient.payerScheme === "PMJAY") return <>{F("pmjayId", "Ayushman / PM-JAY ID", "")}</>;
+                      if (patient.payerScheme === "STATE") return <>{F("stateSchemeName", "Scheme Name", "e.g. MJPJAY")}{F("stateSchemeId", "Scheme ID", "")}</>;
+                      return null;
+                    })()}
+                  </div>
+                )}
               </div>
             </div>
           )}
