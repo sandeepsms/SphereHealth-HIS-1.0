@@ -86,6 +86,8 @@ router.get("/uhid/:UHID/summary", requireAction("billing.read"), ctrl.getUhidSum
 // R7hr(billing-audit P1.3) — previous PENDING dues (rule 1: surface prior
 // billing at the next visit only when still unpaid).
 router.get("/uhid/:UHID/previous-dues", requireAction("billing.read"), ctrl.getPreviousDues);
+// R7hr(CLAIM-P1.2) — canonical claim-form data for a bill's episode.
+router.get("/:billId/claim-data", requireAction("billing.read"), ctrl.getClaimData);
 // Front-desk bulk actions across every outstanding bill for a UHID.
 // collect-all distributes one lump-sum FIFO; bulk-settle applies a
 // uniform % or proportional ₹ discount. Both writes are audited

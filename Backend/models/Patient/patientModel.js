@@ -112,6 +112,29 @@ const PatientSchema = new mongoose.Schema(
     policyHolderName: String,
     sumInsured: Number,
 
+    // R7hr(CLAIM-P1.1) — payer scheme drives which claim form(s) apply +
+    // which scheme IDs to capture. paymentType above is the coarse cash-vs-
+    // TPA split kept for legacy billing; payerScheme is the finer axis the
+    // claim-form builder keys on (RETAIL_TPA/CORPORATE → IRDAI Part A/B;
+    // CGHS → MRC; ESIC → ESIC claim; PMJAY/STATE → cashless docket).
+    payerScheme: {
+      type: String,
+      enum: ["CASH", "RETAIL_TPA", "CORPORATE", "CGHS", "ESIC", "ECHS", "PMJAY", "STATE", "OTHER"],
+      default: "CASH",
+    },
+    schemeIds: {
+      cghsCardNo:      { type: String, trim: true },
+      cghsWardEntitlement: { type: String, trim: true },   // General / Semi-Private / Private
+      ppoNo:           { type: String, trim: true },        // pension payment order (CGHS/ECHS pensioners)
+      esicIpNo:        { type: String, trim: true },        // ESIC insurance number
+      esicEmployer:    { type: String, trim: true },
+      esicDispensary:  { type: String, trim: true },
+      pmjayId:         { type: String, trim: true },        // Ayushman / PMJAY card no
+      echsCardNo:      { type: String, trim: true },
+      stateSchemeName: { type: String, trim: true },        // e.g. MJPJAY / Aarogyasri
+      stateSchemeId:   { type: String, trim: true },
+    },
+
     isMLC: { type: Boolean, default: false },
     mlcNumber: String,
 

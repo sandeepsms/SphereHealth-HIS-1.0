@@ -57,6 +57,20 @@ exports.getBillsByUHID = async (req, res) => {
   }
 };
 
+// R7hr(CLAIM-P1.2) — GET /api/billing/:billId/claim-data
+// Canonical claim-form payload (hospital+patient+scheme+admission+category
+// bill breakup+preauth+docs). Every claim printable maps its fields off
+// this; the frontend picks the template by patient.payerScheme.
+exports.getClaimData = async (req, res, next) => {
+  try {
+    const { buildClaimData } = require("../../services/Billing/claimFormService");
+    const data = await buildClaimData(req.params.billId);
+    res.json({ success: true, data });
+  } catch (e) {
+    res.status(e.status || 500).json({ success: false, message: e.message });
+  }
+};
+
 // ── GET /api/billing/uhid/:UHID/previous-dues ─────────────────
 // R7hr(billing-audit P1.3) — rule 1: surface previous PENDING dues at the
 // next visit (registration + billing banner). Query params scope out the
