@@ -54,6 +54,7 @@ import ScheduleXRegisterPrint from "./ScheduleXRegisterPrint";
 // import it independently, but registered here so it routes via the
 // shared print shell + paper toolbar.
 import LabReport         from "../../lab/LabReport";
+import DiagnosticReport   from "./DiagnosticReport";      // R7hr(LAB-P1) — NABH narrative imaging/micro/histopath report
 
 // R7bj-F7: 14 new templates spanning Ward-Boy, Housekeeping, Security,
 // Dietary, Mortuary, BMW and Code-Response workflows. These close the
@@ -162,6 +163,7 @@ export const PRINTABLES = {
   "mar-sheet":        { component: MARSheet,          title: "MAR Sheet · Daily",         defaultPaper: "a4"      },
   "doctor-order":     { component: DoctorOrderSheet,  title: "Doctor's Order Sheet",      defaultPaper: "a4"      },
   "lab-report":       { component: LabReport,         title: "Laboratory Report",         defaultPaper: "a4"      },
+  "diagnostic-report":{ component: DiagnosticReport,  title: "Imaging / Diagnostic Report",defaultPaper: "a4"     },
 
   // ── Letters / certificates / authorizations ───────────
   "consent-form":     { component: ConsentForm,       title: "Consent Form",              defaultPaper: "a4"      },

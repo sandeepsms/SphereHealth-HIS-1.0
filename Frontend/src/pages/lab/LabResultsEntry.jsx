@@ -33,6 +33,7 @@ import {
   PrimaryButton, Modal, Field, KPI, C,
 } from "../../Components/admin-theme";
 import { useAuth } from "../../context/AuthContext";
+import { openPrint } from "../../Components/print/openPrint";   // R7hr(LAB-P1)
 
 import { API_BASE_URL as API } from "../../config/api";
 const authHdr = () => ({ headers: { Authorization: `Bearer ${(sessionStorage.getItem("his_token"))}` } });
@@ -54,6 +55,74 @@ function classify(value, refMin, refMax) {
   if (n < refMin * 0.8 || n > refMax * 1.2) return "critical";
   if (n < refMin || n > refMax) return "borderline";
   return "normal";
+}
+
+/* R7hr(LAB-P1) — directional flag for the NABH lab-report printable.
+   The grid's classify() is symmetric (normal/borderline/critical); the
+   printed report needs H/L/HH/LL so the clinician sees direction. Same
+   ±20% critical band as classify() so the two never disagree. */
+function flagFor(value, refMin, refMax) {
+  const n = parseFloat(value);
+  if (isNaN(n) || refMin == null || refMax == null) return "";
+  if (n > refMax * 1.2) return "HH";
+  if (n < refMin * 0.8) return "LL";
+  if (n > refMax) return "H";
+  if (n < refMin) return "L";
+  return "";
+}
+
+/* R7hr(LAB-P1) — adapt a trend sheet (in-memory or saved) + one date
+   column into the `lab-report` printable's receipt shape. Empty cells on
+   that date are skipped so a partially-filled panel still prints cleanly. */
+function buildLabReportPayload({ uhid, patientName, age, gender, panelName, tests, dates, dateIdx, notes, verifiedByName }) {
+  const dateISO = dates[dateIdx];
+  const rows = (tests || []).map((t) => {
+    const rd = (t.readings || [])[dateIdx];
+    const val = rd?.value;
+    if (val === "" || val == null) return null;
+    return {
+      name: t.name,
+      result: val,
+      unit: t.unit || "",
+      referenceRange: (t.refMin != null && t.refMax != null) ? `${t.refMin} – ${t.refMax}` : "",
+      flag: flagFor(val, t.refMin, t.refMax),
+    };
+  }).filter(Boolean);
+  const reportNo = `LAB/${uhid}/${dateISO}`;
+  return {
+    payload: {
+      patientName, uhid, age, gender,
+      reportNo, sampleType: panelName,
+      collectedAt: dateISO, reportedAt: dateISO, status: "Final",
+      interpretation: notes || "",
+      verifiedByName: verifiedByName || "",
+      tests: rows,
+      printAudit: { entityType: "LabReport", entityNumber: reportNo, UHID: uhid, patientName },
+    },
+    count: rows.length,
+  };
+}
+
+/* R7hr(LAB-P1) — adapt a narrative LabReport (imaging/micro/histopath/…)
+   into the `diagnostic-report` printable's receipt shape. */
+function buildDiagnosticPayload(src, patient, user) {
+  const uhid = patient?.UHID || src.UHID || "";
+  const dateKey = String(src.reportDate || "").slice(0, 10).replace(/-/g, "");
+  const reportNo = `DGX/${uhid}/${dateKey}`;
+  return {
+    patientName: patient?.patientName || src.patientName || "",
+    uhid, age: patient?.age, gender: patient?.gender,
+    reportType: src.reportType, testName: src.testName, bodyPart: src.bodyPart,
+    reportDate: src.reportDate,
+    clinicalDetails: src.clinicalDetails, findings: src.findings,
+    impression: src.impression, recommendations: src.recommendations,
+    specimen: src.specimen, organism: src.organism, sensitivity: src.sensitivity,
+    reportNo, status: src.status === "verified" ? "Final" : "Reported",
+    verifiedByName: src.verifiedByName || user?.fullName || "",
+    reportedByName: src.reportedByName || user?.fullName || "",
+    verifiedAt: src.verifiedAt,
+    printAudit: { entityType: "LabReport", entityNumber: reportNo, UHID: uhid, patientName: patient?.patientName || "" },
+  };
 }
 
 /* ──────────────────────────────────────────────────────────── */
@@ -140,7 +209,7 @@ export default function LabResultsEntry() {
    TREND TAB — grid like the HTML template
 ══════════════════════════════════════════════════════════════ */
 function TrendTab({ uhid, patient }) {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const canWrite = can("lab.records.write");
   const [panels, setPanels] = useState({});
   const [panelKey, setPanelKey] = useState("CBC");
@@ -150,6 +219,28 @@ function TrendTab({ uhid, patient }) {
   const [editingId, setEditingId] = useState(null);
   const [existing, setExisting] = useState([]);
   const [saving, setSaving] = useState(false);
+  const [printPick, setPrintPick] = useState(false);   // R7hr(LAB-P1) multi-date print picker
+
+  // R7hr(LAB-P1) — generate + open a printable NABH lab report for one date
+  // column of the current sheet. Prints from live state, so it works before
+  // the sheet is even saved.
+  const printDate = (dateIdx) => {
+    setPrintPick(false);
+    const { payload, count } = buildLabReportPayload({
+      uhid,
+      patientName: patient?.patientName || "",
+      age: patient?.age, gender: patient?.gender,
+      panelName: panels[panelKey]?.label || panelKey,
+      tests, dates, dateIdx, notes,
+      verifiedByName: user?.fullName || "",
+    });
+    if (!count) { toast.warn("No results entered for that date."); return; }
+    openPrint("lab-report", payload);
+  };
+  const onPrintClick = () => {
+    if (dates.length <= 1) printDate(0);
+    else setPrintPick((v) => !v);
+  };
 
   // Load panels once.
   useEffect(() => {
@@ -288,10 +379,26 @@ function TrendTab({ uhid, patient }) {
         <Card title={`${editingId ? "Editing" : "New"} — ${panels[panelKey]?.label || panelKey}`} color={C.blue} icon="pi-table"
           right={
             <div style={{ display: "flex", gap: 6 }}>
+              <button onClick={onPrintClick} title="Print NABL lab report for a date column"
+                style={{ padding: "6px 12px", borderRadius: 7, border: `1.5px solid ${C.purple}`, background: printPick ? C.purple + "15" : "#fff", color: C.purple, fontWeight: 800, fontSize: 11.5, cursor: "pointer" }}>
+                <i className="pi pi-print" style={{ marginRight: 4 }} />Print report
+              </button>
               <button onClick={addDate} style={{ padding: "6px 12px", borderRadius: 7, border: `1.5px solid ${C.green}`, background: "#fff", color: C.green, fontWeight: 800, fontSize: 11.5, cursor: "pointer" }}>+ Day</button>
               <button onClick={addTestRow} style={{ padding: "6px 12px", borderRadius: 7, border: `1.5px solid ${C.blue}`, background: "#fff", color: C.blue, fontWeight: 800, fontSize: 11.5, cursor: "pointer" }}>+ Test</button>
             </div>
           }>
+          {/* R7hr(LAB-P1) — which date column to print (skipped when single-date). */}
+          {printPick && dates.length > 1 && (
+            <div style={{ marginBottom: 10, padding: "8px 10px", background: C.purple + "0d", border: `1px solid ${C.purple}40`, borderRadius: 7, display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+              <span style={{ fontSize: 11, fontWeight: 800, color: C.purple, marginRight: 2 }}>PRINT WHICH DATE?</span>
+              {dates.map((d, i) => (
+                <button key={i} onClick={() => printDate(i)}
+                  style={{ padding: "5px 11px", borderRadius: 6, border: `1.5px solid ${C.purple}`, background: "#fff", color: C.purple, fontWeight: 700, fontSize: 11.5, cursor: "pointer" }}>
+                  {fmtDate(d)}
+                </button>
+              ))}
+            </div>
+          )}
           <div style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
@@ -393,8 +500,12 @@ function TrendTab({ uhid, patient }) {
    REPORT TAB — imaging / micro / histopath single-form
 ══════════════════════════════════════════════════════════════ */
 function ReportTab({ uhid, patient }) {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const canWrite = can("lab.records.write");
+  const printReport = () => {   // R7hr(LAB-P1)
+    if (!form.testName) { toast.warn("Enter the study / test name first."); return; }
+    openPrint("diagnostic-report", buildDiagnosticPayload(form, patient, user));
+  };
   const [types, setTypes] = useState([]);
   const [existing, setExisting] = useState([]);
   const [editingId, setEditingId] = useState(null);
@@ -565,11 +676,15 @@ function ReportTab({ uhid, patient }) {
               style={{ width: "100%", padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 12.5, fontFamily: "inherit" }} />
           </Field>
 
-          {canWrite && (
-            <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end" }}>
+          <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button onClick={printReport} title="Print NABH diagnostic report"
+              style={{ padding: "9px 16px", borderRadius: 8, border: `1.5px solid ${C.purple}`, background: "#fff", color: C.purple, fontWeight: 800, fontSize: 13, cursor: "pointer" }}>
+              <i className="pi pi-print" style={{ marginRight: 5 }} />Print report
+            </button>
+            {canWrite && (
               <PrimaryButton label={editingId ? "Update report" : "Save report"} icon={editingId ? "pi-save" : "pi-check"} color={C.blue} onClick={save} busy={saving} />
-            </div>
-          )}
+            )}
+          </div>
         </Card>
       </div>
     </>
@@ -580,9 +695,26 @@ function ReportTab({ uhid, patient }) {
    HISTORY TAB — combined list
 ══════════════════════════════════════════════════════════════ */
 function HistoryTab({ uhid }) {
+  const { user } = useAuth();
   const [trends, setTrends] = useState([]);
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(false);
+
+  // R7hr(LAB-P1) — reprint a saved trend's latest column as a NABL lab report.
+  const printTrend = (t) => {
+    const ds = (t.dates || []).map((d) => new Date(d).toISOString().slice(0, 10));
+    const { payload, count } = buildLabReportPayload({
+      uhid: t.UHID, patientName: t.patientName,
+      panelName: t.panelName || t.panelType,
+      tests: t.tests, dates: ds.length ? ds : [todayISO()],
+      dateIdx: (ds.length || 1) - 1, notes: t.notes,
+      verifiedByName: t.verifiedByName || t.createdByName || "",
+    });
+    if (!count) { toast.warn("No values to print in this sheet."); return; }
+    openPrint("lab-report", payload);
+  };
+  const printRpt = (r) =>
+    openPrint("diagnostic-report", buildDiagnosticPayload(r, { UHID: r.UHID, patientName: r.patientName }, user));
 
   const refresh = async () => {
     setLoading(true);
@@ -607,7 +739,7 @@ function HistoryTab({ uhid }) {
         ) : (
           <Table cols={[
             { label: "Date" }, { label: "Patient" }, { label: "Panel" },
-            { label: "Tests", align: "right" }, { label: "Days", align: "right" }, { label: "Status" }, { label: "Created by" },
+            { label: "Tests", align: "right" }, { label: "Days", align: "right" }, { label: "Status" }, { label: "Created by" }, { label: "" },
           ]}>
             {trends.map((t, i) => (
               <tr key={i}>
@@ -618,6 +750,8 @@ function HistoryTab({ uhid }) {
                 <td style={{ textAlign: "right" }}>{t.dates?.length || 0}</td>
                 <td><Badge value={(t.status || "").toUpperCase()} /></td>
                 <td style={{ color: C.muted, fontSize: 12 }}>{t.createdByName || "—"}</td>
+                <td><button onClick={() => printTrend(t)} title="Print latest column"
+                  style={{ padding: "3px 9px", borderRadius: 6, border: `1.5px solid ${C.purple}`, background: "#fff", color: C.purple, fontWeight: 700, fontSize: 11, cursor: "pointer" }}><i className="pi pi-print" /></button></td>
               </tr>
             ))}
           </Table>
@@ -631,7 +765,7 @@ function HistoryTab({ uhid }) {
           ) : (
             <Table cols={[
               { label: "Date" }, { label: "Patient" }, { label: "Type" }, { label: "Test" },
-              { label: "Impression" }, { label: "Status" }, { label: "Reported by" },
+              { label: "Impression" }, { label: "Status" }, { label: "Reported by" }, { label: "" },
             ]}>
               {reports.map((r, i) => (
                 <tr key={i}>
@@ -642,6 +776,8 @@ function HistoryTab({ uhid }) {
                   <td style={{ fontSize: 12, maxWidth: 300 }}>{(r.impression || "").slice(0, 120) || "—"}</td>
                   <td><Badge value={(r.status || "").toUpperCase()} /></td>
                   <td style={{ color: C.muted, fontSize: 12 }}>{r.reportedByName || "—"}</td>
+                  <td><button onClick={() => printRpt(r)} title="Print diagnostic report"
+                    style={{ padding: "3px 9px", borderRadius: 6, border: `1.5px solid ${C.purple}`, background: "#fff", color: C.purple, fontWeight: 700, fontSize: 11, cursor: "pointer" }}><i className="pi pi-print" /></button></td>
                 </tr>
               ))}
             </Table>
