@@ -1911,6 +1911,82 @@ exports.cancelBill = async (req, res, next) => {
   }
 };
 
+// R7hr(TPA-P2) — POST /api/billing/:billId/tpa-query  Body: { queryText }
+// Logs an insurer query against the claim (OPEN). Staff identity from
+// req.user; audited so follow-ups are on the chronological timeline.
+exports.tpaQueryRaise = async (req, res, next) => {
+  try {
+    const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+    const queryText = String(req.body?.queryText || "").trim();
+    if (!queryText) return res.status(400).json({ success: false, message: "queryText required (insurer's query, verbatim)" });
+    // Atomic $push — a partial-select doc.save() would run the bill's
+    // pre-save recalcTotals against unselected fields (payments/billItems
+    // undefined → crash); $push touches only the log and is race-safe.
+    const bill = await PatientBill.findOneAndUpdate(
+      { _id: req.params.billId, paymentType: { $in: ["TPA", "CORPORATE"] } },
+      { $push: { tpaQueryLog: {
+          queryText,
+          recordedBy:     req.user?.fullName || req.user?.employeeId || "TPA Desk",
+          recordedByRole: req.user?.role || "",
+      } } },
+      { new: true, select: "UHID patient billNumber tpaQueryLog" },
+    );
+    if (!bill) {
+      const exists = await PatientBill.exists({ _id: req.params.billId });
+      return res.status(exists ? 400 : 404).json({ success: false, message: exists ? "Queries apply to TPA/Corporate claims only" : "Bill not found" });
+    }
+    try {
+      const { emit } = require("../../models/Billing/BillingAudit");
+      await emit({
+        event: "TPA_QUERY_RAISED", UHID: bill.UHID, patientId: bill.patient,
+        billId: bill._id, billNumber: bill.billNumber,
+        actorName: req.user?.fullName, actorId: req.user?._id,
+        reason: `Insurer query logged: ${queryText.slice(0, 140)}`,
+      }, { req });
+    } catch (_) { /* audit best-effort */ }
+    res.json({ success: true, data: bill.tpaQueryLog });
+  } catch (e) { next(e); }
+};
+
+// R7hr(TPA-P2) — POST /api/billing/:billId/tpa-query/:queryId/reply
+// Body: { replyText }. Marks the query REPLIED. If the claim itself was
+// REJECTED, the desk re-submits via the existing tpa-preauth-submit route
+// (its ALLOWED_FROM already permits REJECTED → SUBMITTED).
+exports.tpaQueryReply = async (req, res, next) => {
+  try {
+    const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+    const replyText = String(req.body?.replyText || "").trim();
+    if (!replyText) return res.status(400).json({ success: false, message: "replyText required" });
+    // Atomic positional update (same partial-select save() hazard as raise;
+    // the OPEN filter also makes double-reply race-safe → clean 409).
+    const bill = await PatientBill.findOneAndUpdate(
+      { _id: req.params.billId, tpaQueryLog: { $elemMatch: { _id: req.params.queryId, status: "OPEN" } } },
+      { $set: {
+          "tpaQueryLog.$.replyText": replyText,
+          "tpaQueryLog.$.repliedBy": req.user?.fullName || req.user?.employeeId || "TPA Desk",
+          "tpaQueryLog.$.repliedAt": new Date(),
+          "tpaQueryLog.$.status":    "REPLIED",
+      } },
+      { new: true, select: "UHID patient billNumber tpaQueryLog" },
+    );
+    if (!bill) {
+      const parent = await PatientBill.findOne({ _id: req.params.billId, "tpaQueryLog._id": req.params.queryId }).select("_id").lean();
+      if (!parent) return res.status(404).json({ success: false, message: "Bill/query not found" });
+      return res.status(409).json({ success: false, message: "Query already replied" });
+    }
+    try {
+      const { emit } = require("../../models/Billing/BillingAudit");
+      await emit({
+        event: "TPA_QUERY_REPLIED", UHID: bill.UHID, patientId: bill.patient,
+        billId: bill._id, billNumber: bill.billNumber,
+        actorName: req.user?.fullName, actorId: req.user?._id,
+        reason: `Query replied: ${replyText.slice(0, 140)}`,
+      }, { req });
+    } catch (_) { /* audit best-effort */ }
+    res.json({ success: true, data: bill.tpaQueryLog });
+  } catch (e) { next(e); }
+};
+
 // POST /api/billing/:billId/tpa-deny  Body: { reason }
 // NOTE: the bill schema's tpaClaimStatus enum is
 // [NOT_APPLICABLE, PENDING, SUBMITTED, APPROVED, REJECTED, PARTIAL_APPROVED]

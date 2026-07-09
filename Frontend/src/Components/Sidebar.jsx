@@ -108,6 +108,7 @@ export const NAV = [
       { label: "Appointments",        icon: "pi-calendar-plus",     path: "/appointments",         nabh: true,  badge: "NEW",   roles: [ADMIN, RX] },
       { label: "Discharge Queue",     icon: "pi-sign-out",          path: "/discharge-queue",      nabh: true,  badge: "NEW",   roles: [ADMIN, RX] },
       { label: "TPA / Insurance",     icon: "pi-shield",            path: "/tpa-cases",            nabh: true,  badge: "NEW",   roles: [ADMIN, RX, TPA, AC] },
+      { label: "TPA Desk (MIS)",      icon: "pi-briefcase",         path: "/tpa-desk",             nabh: true,  badge: "NEW",   roles: [ADMIN, TPA, AC] },   // R7hr(TPA-P2)
       { label: "Visitor Passes",      icon: "pi-id-card",           path: "/visitor-passes",       nabh: true,  badge: "NEW",   roles: [ADMIN, RX] },
     ],
   },
@@ -125,6 +126,8 @@ export const NAV = [
       { label: "OPD Queue",          icon: "pi-list",      path: "/opd-queue",         roles: [ADMIN, DR, NR] },
       { label: "Doctor OPD Panel",   icon: "pi-desktop",   path: "/doctor-opd-panel",  roles: [ADMIN, DR] },
       { label: "Emergency Cases",    icon: "pi-bolt",      path: "/emergency",         roles: [ADMIN, DR, NR] },
+      // R7hr(DC-P1) — Day Care Today board (checklist + readiness + overdue)
+      { label: "Day Care Today",     icon: "pi-sun",       path: "/daycare",           roles: [ADMIN, DR, NR, RX] },
     ],
   },
 

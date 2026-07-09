@@ -94,6 +94,8 @@ const OPDDetails = lazy(() => import("./pages/OPD/OPDDetails"));
 const Emergencylist = lazy(() => import("./pages/emergency/EmergencyList"));
 const EmergencyDetails = lazy(() => import("./pages/emergency/EmergencyDetails"));
 const EmergencyAssessmentPage = lazy(() => import("./pages/emergency/EmergencyAssessmentPage"));
+// R7hr(DC-P1) — Day Care Today board
+const DayCareBoard = lazy(() => import("./pages/daycare/DayCareBoard"));
 
 // Doctors
 const DoctorFormPage = lazy(() => import("./pages/doctor/DoctorFormPage"));
@@ -164,6 +166,7 @@ const ReceptionDashboard = lazy(() => import("./pages/reception/ReceptionDashboa
 const DischargeQueue        = lazy(() => import("./pages/reception/DischargeQueue"));
 const VisitorPasses         = lazy(() => import("./pages/reception/VisitorPasses"));
 const TPACases              = lazy(() => import("./pages/reception/TPACases"));
+const TpaDeskPage           = lazy(() => import("./pages/tpa/TpaDeskPage"));   // R7hr(TPA-P2)
 // R7bb-FIX-E-6 / D6-CRIT-3: Receptionist-facing cashier shift / closing
 // report. Wraps the Accounts ShiftTab so a Receptionist can open + close
 // their drawer without holding Admin/Accountant access to /accounts.
@@ -567,6 +570,8 @@ function AppLayout({ collapsed, setCollapsed }) {
               <RoleGuard action="doctor-orders.write"><EmergencyAssessmentPage /></RoleGuard>
             } />
             <Route path="/emergency" element={<Emergencylist />} />
+            {/* R7hr(DC-P1) — Day Care Today board (ipd.read tier) */}
+            <Route path="/daycare" element={<DayCareBoard />} />
             {/* R7bb-E/D5-HIGH-2 — MLC sees PHI + writes medico-legal records;
                 gate by mlc.read (Admin/Doctor/Nurse). The page itself further
                 gates the "issue MLR" CTA by mlc.write. */}
@@ -965,6 +970,10 @@ function AppLayout({ collapsed, setCollapsed }) {
             } />
             <Route path="/tpa-cases" element={
               <RoleGuard allow={["Admin", "TPA Coordinator", "Receptionist", "Accountant"]}><TPACases /></RoleGuard>
+            } />
+            {/* R7hr(TPA-P2) — TPA Desk: MIS + stale/ query chase-lists + query loop */}
+            <Route path="/tpa-desk" element={
+              <RoleGuard allow={["Admin", "TPA Coordinator", "Accountant"]}><TpaDeskPage /></RoleGuard>
             } />
             {/* R7bb-FIX-E-6 / D6-CRIT-3: Receptionist closing report (cashier shift) */}
             <Route path="/reception/closing-report" element={

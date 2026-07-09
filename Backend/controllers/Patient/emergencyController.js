@@ -360,6 +360,25 @@ class EmergencyController {
     }
   }
 
+  // R7hr(ER-P1.1) — serial vitals. Actor from req.user (forge-proof);
+  // body carries only the readings. Service validates + refreshes the
+  // arrival snapshot to the latest values.
+  async addVitals(req, res) {
+    try {
+      const visit = await emergencyService.addVitalsEntry(
+        req.params.emergencyNumber,
+        req.body || {},
+        {
+          recordedBy:     req.user?.fullName || req.user?.employeeId || "Staff",
+          recordedByRole: req.user?.role || "",
+        },
+      );
+      res.status(200).json({ success: true, message: "Vitals recorded", data: visit });
+    } catch (error) {
+      res.status(error.status || 400).json({ success: false, message: error.message });
+    }
+  }
+
   async updateDisposition(req, res) {
     try {
       // Pass through req.user as the implicit actor for nursing-note
@@ -386,10 +405,52 @@ class EmergencyController {
         }).catch((e) => console.error("ER NABH disposition error:", e.message));
       } catch (e) { /* never block */ }
 
+      // R7hr(ER-P1.3) — billing closure on non-admitted exits. A walk-out
+      // ER patient's EMERGENCY DRAFT (triage fee + Step-3 orders, keyed on
+      // the synthetic admission=visit._id) previously just sat open — the
+      // patient left, nobody was told money was due, and the draft
+      // lingered forever (dev DB had months-old ER drafts). Now: on a
+      // terminal non-Admitted disposition, finalise the draft through the
+      // sanctioned generateFinalBill (numbered → surfaces in the register
+      // + P1.3 previous-pending-dues at any future visit) and return the
+      // due so the UI prompts collection at the exit itself. Empty drafts
+      // are left alone (generateFinalBill rejects them). Best-effort —
+      // billing must never block a disposition. (Admitted exits are
+      // handled by the P1.1/P2 bridge: bill rebinds to the stub and the
+      // discharge gate collects it.)
+      let erBill = null;
+      const NON_ADMIT_TERMINAL = ["Discharged", "Referred", "Left Against Medical Advice", "Absconded", "Expired"];
+      if (NON_ADMIT_TERMINAL.includes(body.disposition)) {
+        try {
+          const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+          const { toNum } = require("../../utils/money");
+          let draft = await PatientBill.findOne({ admission: visit._id, visitType: "EMERGENCY", billStatus: "DRAFT" });
+          if (!draft && visit.UHID) {
+            draft = await PatientBill.findOne({ UHID: visit.UHID, visitType: "EMERGENCY", billStatus: "DRAFT" })
+              .sort({ createdAt: -1 });
+          }
+          if (draft && (draft.billItems || []).length > 0) {
+            const billingSvc = require("../../services/Billing/billingService");
+            const generated = await billingSvc.generateFinalBill(draft._id, "System (ER exit)");
+            erBill = {
+              billId:     generated._id,
+              billNumber: generated.billNumber,
+              netAmount:  toNum(generated.netAmount),
+              balance:    toNum(generated.balanceAmount),
+            };
+          } else if (draft) {
+            erBill = { billId: draft._id, billNumber: null, netAmount: 0, balance: 0, empty: true };
+          }
+        } catch (be) {
+          console.error(`[ER exit-billing] finalize failed for ${visit.emergencyNumber}:`, be.message);
+        }
+      }
+
       res.status(200).json({
         success: true,
         message: "Disposition updated successfully",
         data: visit,
+        ...(erBill ? { erBill } : {}),
       });
     } catch (error) {
       // R7z: service throws with `error.status` for typed errors

@@ -48,6 +48,10 @@ router.get("/discharge-queue",                    requireAction("ipd.read"), ctr
 router.post("/:id/doctor-approve-discharge",      idGuard, authenticate, requireAction("ipd.discharge"), ctrl.doctorApproveDischarge);
 router.post("/:id/clear-final-bill",              idGuard, authenticate, requireAction("reception.discharge"), ctrl.clearFinalBill);
 router.post("/:id/issue-gate-pass",               idGuard, authenticate, requireAction("reception.discharge"), ctrl.issueGatePass);
+// R7hr(DC-P1) — day-care checklist + discharge-readiness (nurse tier).
+router.patch("/:id/daycare",                      idGuard, authenticate, requireAction("vitals.write"), ctrl.updateDayCare);
+// R7hr(DC-P2) — day-care → IPD conversion (doctor/discharge tier; reason mandatory).
+router.post("/:id/convert-to-ipd",                idGuard, authenticate, requireAction("ipd.discharge"), ctrl.convertDayCareToIpd);
 
 // R7i: Same-day discharge undo — Admin only, time-gated by the controller
 // (≤ 24h since actualDischargeDate). The action permission is the trust

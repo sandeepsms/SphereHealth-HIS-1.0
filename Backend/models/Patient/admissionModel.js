@@ -296,6 +296,38 @@ const AdmissionSchema = new mongoose.Schema(
       reactivationReason:  String,
     },
 
+    // R7hr(DC-P1) — Day Care unit workflow. Only used when admissionType
+    // is Day Care: pre-procedure safety checklist (NABH day-care core) and
+    // an Aldrete-style discharge-readiness score (0-2 × 5 criteria; ≥9 of
+    // 10 = fit for same-day discharge). The board derives the stage:
+    // checklist pending → procedure/recovery → READY; expectedDischargeTime
+    // past + still Active → OVERDUE.
+    dayCare: {
+      preProcChecklist: {
+        consentVerified: { type: Boolean, default: false },
+        npoConfirmed:    { type: Boolean, default: false },
+        siteMarked:      { type: Boolean, default: false },
+        highRiskMedsReviewed: { type: Boolean, default: false },
+        completedBy:     String,
+        completedAt:     Date,
+      },
+      readiness: {
+        consciousness: { type: Number, min: 0, max: 2 },   // Aldrete-style
+        oxygenation:   { type: Number, min: 0, max: 2 },
+        ambulation:    { type: Number, min: 0, max: 2 },
+        pain:          { type: Number, min: 0, max: 2 },
+        bleeding:      { type: Number, min: 0, max: 2 },
+        total:         { type: Number, min: 0, max: 10 },
+        recordedBy:    String,
+        recordedAt:    Date,
+      },
+      // R7hr(DC-P2) — DC→IPD conversion trail (complication → overnight;
+      // the SAME admission flips to admissionType Planned).
+      convertedToIpdAt:     Date,
+      convertedToIpdBy:     String,
+      convertedToIpdReason: String,
+    },
+
     // ── Cancel ───────────────────────────────────────────────
     cancelReason: String,
     cancelledAt: Date,

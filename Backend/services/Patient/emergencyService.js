@@ -220,6 +220,60 @@ class EmergencyService {
     );
   }
 
+  // R7hr(ER-P1.1) — serial vitals entry. Pushes a timestamped row onto
+  // vitalsLog AND refreshes the arrival-snapshot `vitals` to the latest
+  // reading (only the fields supplied — an entry without GCS must not
+  // blank the snapshot's GCS), so every existing consumer of `vitals`
+  // (reception board, assessment page, prints) shows current values
+  // without changes. Numeric fields sanitised; empty entries rejected.
+  async addVitalsEntry(emergencyNumber, entry = {}, { recordedBy, recordedByRole } = {}) {
+    const num = (v) => (v === "" || v == null || Number.isNaN(Number(v)) ? undefined : Number(v));
+    const row = {
+      recordedAt:       new Date(),
+      recordedBy:       recordedBy || "Staff",
+      recordedByRole:   recordedByRole || "",
+      temperature:      num(entry.temperature),
+      bloodPressure:    entry.bloodPressure ? String(entry.bloodPressure).trim() : undefined,
+      pulse:            num(entry.pulse),
+      respiratoryRate:  num(entry.respiratoryRate),
+      oxygenSaturation: num(entry.oxygenSaturation),
+      painScore:        num(entry.painScore),
+      glasgowComaScale: num(entry.glasgowComaScale),
+      note:             entry.note ? String(entry.note).trim() : undefined,
+    };
+    const hasClinicalValue = ["temperature", "bloodPressure", "pulse", "respiratoryRate", "oxygenSaturation", "painScore", "glasgowComaScale"]
+      .some((k) => row[k] !== undefined);
+    if (!hasClinicalValue) {
+      const err = new Error("At least one vital reading is required");
+      err.status = 400;
+      throw err;
+    }
+    // Snapshot refresh — only supplied fields.
+    const snapSet = {};
+    for (const k of ["temperature", "bloodPressure", "pulse", "respiratoryRate", "oxygenSaturation", "painScore", "glasgowComaScale"]) {
+      if (row[k] !== undefined) snapSet[`vitals.${k}`] = row[k];
+    }
+    // R7hr(ER-P1.4) — recording vitals IS the observation re-assessment:
+    // reset the review clock for Under-Observation patients. Harmless for
+    // others (nextReviewDue only renders on observation cards).
+    const existing = await Emergency.findOne({ emergencyNumber }).select("status").lean();
+    if (existing?.status === "Under Observation") {
+      const hrs = Number(process.env.ER_OBS_REVIEW_HOURS) || 2;
+      snapSet.nextReviewDue = new Date(Date.now() + hrs * 3600 * 1000);
+    }
+    const updated = await Emergency.findOneAndUpdate(
+      { emergencyNumber },
+      { $push: { vitalsLog: row }, $set: snapSet },
+      { new: true, runValidators: true },
+    );
+    if (!updated) {
+      const err = new Error("Emergency visit not found");
+      err.status = 404;
+      throw err;
+    }
+    return updated;
+  }
+
   /**
    * R7z: ER disposition is the legal exit point of an ER stay. Every
    * branch has NABH-mandated attestation that this method now enforces
@@ -549,6 +603,14 @@ class EmergencyService {
              dispositionData.actor || "ER");
       } else if (newDisp === "Observation") {
         visit.status = "Under Observation";
+        // R7hr(ER-P1.4) — start the review clock. Re-assessment cadence is
+        // ER_OBS_REVIEW_HOURS (default 2h); each vitalsLog entry resets it
+        // (recording vitals IS the re-assessment). Board flags overdue.
+        const hrs = Number(process.env.ER_OBS_REVIEW_HOURS) || 2;
+        if (!visit.observationStartedAt) visit.observationStartedAt = now;
+        visit.nextReviewDue = new Date(now.getTime() + hrs * 3600 * 1000);
+        note(`Under Observation — next review due in ${hrs}h (${visit.nextReviewDue.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}).`,
+             dispositionData.actor || "ER");
       } else {
         visit.status = dispositionData.status || visit.status;
       }

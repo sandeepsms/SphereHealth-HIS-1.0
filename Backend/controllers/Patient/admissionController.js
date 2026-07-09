@@ -845,6 +845,82 @@ class AdmissionController {
     return res.json({ success: true, data: adm.dischargeWorkflow });
   });
 
+  // R7hr(DC-P1) — PATCH /api/admissions/:id/daycare
+  // Day-care workflow updates: pre-procedure checklist (all four safety
+  // ticks) and/or the Aldrete-style discharge-readiness score. Nurse tier
+  // (vitals.write). Actor stamped from req.user. Day Care admissions only.
+  updateDayCare = handle(async (req, res) => {
+    const Admission = require("../../models/Patient/admissionModel");
+    const adm = await Admission.findById(req.params.id).select("admissionType dayCare status");
+    if (!adm) return res.status(404).json({ success: false, message: "Admission not found" });
+    if (!/day ?care/i.test(adm.admissionType || "")) {
+      return res.status(400).json({ success: false, message: "Day-care workflow applies to Day Care admissions only" });
+    }
+    const actor = req.user?.fullName || req.user?.employeeId || "Staff";
+    const set = {};
+    const { checklist, readiness } = req.body || {};
+    if (checklist && typeof checklist === "object") {
+      for (const k of ["consentVerified", "npoConfirmed", "siteMarked", "highRiskMedsReviewed"]) {
+        if (k in checklist) set[`dayCare.preProcChecklist.${k}`] = !!checklist[k];
+      }
+      set["dayCare.preProcChecklist.completedBy"] = actor;
+      set["dayCare.preProcChecklist.completedAt"] = new Date();
+    }
+    if (readiness && typeof readiness === "object") {
+      const crit = ["consciousness", "oxygenation", "ambulation", "pain", "bleeding"];
+      let total = 0;
+      for (const k of crit) {
+        const v = Math.max(0, Math.min(2, Number(readiness[k]) || 0));
+        set[`dayCare.readiness.${k}`] = v;
+        total += v;
+      }
+      set["dayCare.readiness.total"] = total;
+      set["dayCare.readiness.recordedBy"] = actor;
+      set["dayCare.readiness.recordedAt"] = new Date();
+    }
+    if (!Object.keys(set).length) {
+      return res.status(400).json({ success: false, message: "Nothing to update — pass checklist and/or readiness" });
+    }
+    const updated = await Admission.findByIdAndUpdate(req.params.id, { $set: set }, { new: true, runValidators: true })
+      .select("admissionNumber dayCare admissionType");
+    return res.json({ success: true, data: updated });
+  });
+
+  // R7hr(DC-P2) — POST /api/admissions/:id/convert-to-ipd
+  // Day-care complication → overnight stay. Flips the SAME admission to
+  // IPD (admissionType "Planned") so the episode/bed/bills continue —
+  // no new admission, no re-registration. Billing note: the existing
+  // DAYCARE-typed draft stays as-is; post-flip accrual mints IPD-typed
+  // charges on a sibling draft for the same admission — the multi-bill
+  // discharge gate + payment waterfall (R3) and getIPDLedger's all-bills
+  // read already handle that split correctly. Reason mandatory (audit).
+  convertDayCareToIpd = handle(async (req, res) => {
+    const Admission = require("../../models/Patient/admissionModel");
+    const reason = String(req.body?.reason || "").trim();
+    if (!reason) return res.status(400).json({ success: false, message: "Conversion reason is required (e.g. post-op complication, observation needed overnight)" });
+    const actor = req.user?.fullName || req.user?.employeeId || "Staff";
+    const adm = await Admission.findOneAndUpdate(
+      { _id: req.params.id, status: "Active", admissionType: { $in: ["Day Care", "Daycare"] } },
+      { $set: {
+          admissionType: "Planned",
+          "dayCare.convertedToIpdAt": new Date(),
+          "dayCare.convertedToIpdBy": actor,
+          "dayCare.convertedToIpdReason": reason,
+        } },
+      { new: true, runValidators: true },
+    );
+    if (!adm) {
+      return res.status(409).json({ success: false, message: "Convert failed — admission must be an ACTIVE Day Care admission" });
+    }
+    // R7hr(DC-P2) — Day Care register: conversion is a registrable outcome.
+    try {
+      const emitter = require("../../services/Compliance/nabhRegisterEmitter");
+      emitter.emitDayCare({ admission: adm, actor: req.user, outcome: "ConvertedToIPD", remarks: reason })
+        .catch((e) => console.error("DC register emit error:", e.message));
+    } catch (_) { /* never block conversion */ }
+    return res.json({ success: true, message: "Converted to IPD — same admission continues (bed, bills, episode intact)", data: adm });
+  });
+
   // POST /api/admissions/:id/clear-final-bill
   // Receptionist clears the final bill (after payment collected).
   // Body: { finalBillNumber, finalBillAmount, clearedBy, paymentMode?, transactionId? }
@@ -1244,6 +1320,15 @@ class AdmissionController {
         success: false,
         message: `Final bill must be cleared before issuing gate pass (current stage: ${stage})`,
       });
+    }
+
+    // R7hr(DC-P2) — NABH Day Care register row at exit (best-effort).
+    if (/day ?care/i.test(adm.admissionType || "")) {
+      try {
+        const emitter = require("../../services/Compliance/nabhRegisterEmitter");
+        emitter.emitDayCare({ admission: adm, actor: req.user, outcome: "SameDayDischarge" })
+          .catch((e) => console.error("DC register emit error:", e.message));
+      } catch (_) { /* never block gate pass */ }
     }
 
     // Free the bed so the next admission can use it. Mirrors

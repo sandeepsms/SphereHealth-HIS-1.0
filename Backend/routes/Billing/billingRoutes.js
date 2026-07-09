@@ -69,6 +69,10 @@ router.get ("/tpa-cases",                requireAction("billing.read"), ctrl.get
 router.post("/:billId/tpa-preauth-submit", vBill, requireAction("tpa.pre-auth"), ctrl.tpaPreAuthSubmit);
 router.post("/:billId/tpa-approve",        vBill, requireAction("tpa.claim"),    ctrl.tpaApprove);
 router.post("/:billId/tpa-deny",           vBill, requireAction("tpa.claim"),    ctrl.tpaDeny);
+// R7hr(TPA-P2) — insurer query loop: raise (OPEN) + reply (REPLIED); a
+// REJECTED claim re-submits via tpa-preauth-submit (ALLOWED_FROM covers it).
+router.post("/:billId/tpa-query",                vBill, requireAction("tpa.claim"), ctrl.tpaQueryRaise);
+router.post("/:billId/tpa-query/:queryId/reply", vBill, requireAction("tpa.claim"), ctrl.tpaQueryReply);
 // R7z: short-pay reconciliation — TPA settles less than approved, this
 // endpoint posts the actual remittance + handles the shortfall (default:
 // bump patientPayableAmount; alt: write off via extraDiscount).

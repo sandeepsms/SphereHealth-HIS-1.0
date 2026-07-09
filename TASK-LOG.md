@@ -3,18 +3,42 @@
 > **Ye file kya hai:** Har session ka running task log. Naya session shuru karo toh **sirf ye file padho** — 2 minute me pata chal jayega kya chal raha tha, kaha se pick karna hai, aage kya karna hai.
 > **Rule:** Har work-session ke END pe ye file update karke commit karni hai.
 
-**Last updated:** 2026-07-08 (late evening) · **Branch:** `claude/multi-hospital-deploy` · **Tree:** clean ✅ · **npm audit:** 0/0 dono ✅ · **Build:** green ✅
+**Last updated:** 2026-07-08 (raat) · **Branch:** `claude/multi-hospital-deploy` · **Tree:** clean ✅ · **npm audit:** 0/0 ✅ · **Build:** green ✅
 
 ---
 
 ## 🎯 ABHI YAHA HAI (resume point)
 
-**Chal raha tha:** NABH-standards billing re-audit → **P1 (4) + P2 (5) + P3 (6 commits) SAB DONE**. Billing audit poora band — teeno tiers NABH-solid.
+**Abhi hua:** ER-P1 (4 commits) + **DC-P1 + DC-P2-conversion DONE**. Emergency aur Day Care dono ke core loops band.
 
 **Sabse pehle karne layak (koi bhi ek):**
-1. **`git push`** — **~24 commits unpushed hain** (`bac0bc73..e0c5ca48`, poora billing arc + TASK-LOG). Push karke PR-compare link owner ko dena. *(gh CLI authed nahi — `https://github.com/<owner>/<repo>/pull/new/claude/multi-hospital-deploy` URL.)*
-2. **VPS Docker dry-run** — user ke server ki zaroorat, unke bolne pe.
-3. **Task #43** — clinical prints unification verify+close (audit bola mostly done).
+1. **`git push`** — **~12 commits unpushed** (`5f3f5d9c..6783318a` — ER-P1 + DC-P1/P2 + ER-P2 + TASK-LOGs). PR pe auto-add.
+2. **Smoke check (agle session ki pehli cheez)**: `/print/er-handover` ka browser render — SBAR printable build-green hai par preview tab ne auth kho diya tha, pixel-check pending. 2 min ka kaam: login → ER board → Admitted row pe ⇄ button.
+3. VPS Docker dry-run (Docker install/server chahiye) · Task #43 prints unification.
+
+**ER-P2 DONE (2026-07-09)** `6783318a`: SBAR er-handover printable (Admitted rows pe ⇄), Referred pe ReferralLetter auto-print wiring, `GET /api/reports/er-tat` (live-verified: count 4, avg 2min, max 8min). **ER + DC workflows: P1+P2 sab complete.**
+
+**TPA-P1 DONE (2026-07-09)** `9784d2d7`: `GET /api/reports/tpa-mis?from&to&staleDays` (tpa.claim) — status counts, approval %, submit→approve TAT, approved-vs-settled **realization %**, per-TPA breakdown, **staleClaims chase-list**. Fixture-verified exact. Dev creds sab `123`.
+
+**TPA-P2 DONE (2026-07-09)** `3b1c7827`: **insurer query loop** — `tpaQueryLog[]` + POST `/:billId/tpa-query` & `/tpa-query/:queryId/reply` (ATOMIC updates — partial-select save() recalcTotals pe crash karta tha, E2E me pakda; OPEN-filter se double-reply 409), audit events `TPA_QUERY_RAISED/REPLIED`, tpa-mis me `openQueries` facet (ageing ke saath); **`/tpa-desk` page** (sidebar: Admin/TPA/AC) — KPI tiles, per-TPA table, stale + open-query chase-lists, Queries modal (raise/reply/REJECTED→Re-submit via existing preauth-submit). Full loop live-verified. TPA master CRUD backend+UI pehle se tha (AddTpa/TPAServiceManagement). **TPA-P3 pending**: pre-auth document attachments (upload-infra decision chahiye), courier/dispatch tracking.
+
+**DC-P2 DONE (2026-07-09):** `b6469107` DC→IPD conversion; `9e25ab56` NABH Day Care register (`DayCareRegisterModel` + `emitDayCare`, idempotent, gate-pass + conversion se emit) + `dc-summary` printable (checklist state + Aldrete breakdown + home advice, board pe 🖨). **Emergency + Day Care dono workflows ab complete** (ER-P2/P3 polish backlog me).
+
+### DC-P1 + P2-conversion (2026-07-09)
+| Commit | Kya hua |
+|---|---|
+| `57915ba0` | **/daycare board** (sidebar "Day Care Today"): stage chips (pre-proc pending → checklist ✓ → recovery score → ✅ READY ≥9/10 → ⏰ OVERDUE), Checklist modal (consent/NPO/site/high-risk-meds), Aldrete-style Readiness modal; `PATCH /admissions/:id/daycare` (vitals.write) |
+| `b6469107` | **DC→IPD conversion** `POST /:id/convert-to-ipd` (reason mandatory, trail stamped, 409 re-convert guard) — same admission, bed/bills/episode intact; board pe "→ IPD" button. Billing split R3 multi-bill gate handle karta hai |
+
+### ER-P1 (2026-07-08 raat) — Emergency loop band
+| Commit | Kya hua |
+|---|---|
+| `5f3f5d9c` | Serial vitals: `vitalsLog[]` + POST /:erNo/vitals + board pe heart-button modal (snapshot bhi refresh) |
+| `d1d10de4` | **Disposition modal** (R7z attestation ka pehla UI!) + `ERDischargeSummary` printable — Discharged/Referred/LAMA pe auto-print |
+| `3f4270cb` | **Walk-in ER bill latent bug fix** (synthetic visit._id pe bill kabhi banta hi nahi tha — pending-review me atakta) + exit pe DRAFT→generateFinalBill + "₹X due" prompt |
+| `49e6a00c` | Observation mode: 2h review clock (`ER_OBS_REVIEW_HOURS`), vitals entry se reset, board pe ⏰ OVERDUE chip |
+
+**Emergency + Day Care workflow plans** conversation me diye gaye the (2026-07-08) — DC-P1/P2/P3 aur ER-P2/P3 ki phased list wahi hai; DC plan: DC Today board + pre-procedure checklist + Aldrete-style discharge-readiness (P1), DC→IPD conversion + DC register (P2).
 
 ---
 
@@ -90,7 +114,7 @@
 | Repo | `D:\Spherehealth` (Express+Mongoose backend, React+Vite frontend, MongoDB) |
 | Branch | `claude/multi-hospital-deploy` (**17 commits push pending**) |
 | Dev servers | preview_start: "Backend (Express)" :5050 · "Frontend (Vite)" :5173 |
-| Dev login | `admin@spherehealth.com` / `Welcome@123` (drift ho jaye toh bcrypt cost-12 reset — ho chuka hai ek baar) |
+| Dev login | **sabhi 27 users** ka password `123` (2026-07-09 se, owner request; admin@spherehealth.com bhi). Drift ho jaye toh bcrypt cost-12 reset script pattern use karo |
 | Backend verify | `node -c <file>` (build step nahi hai) |
 | Frontend verify | `npm run build` (~20-40s) |
 | Sequence audit | `GET /api/billing/sequence-audit` (`reports.audit`) — FY-start year param |

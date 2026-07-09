@@ -124,6 +124,11 @@ const BillingAuditSchema = new mongoose.Schema(
         // or invoice-cancel leg) previously left only a console line; this
         // marker puts the missing-CN gap on the timeline for re-raising.
         "CN_CREATE_FAILED",
+        // R7hr(TPA-P2) — insurer query loop on submitted claims: the raise/
+        // reply exchange lands on the chronological timeline so claim-desk
+        // follow-ups are auditable (who logged the query, who replied, when).
+        "TPA_QUERY_RAISED",
+        "TPA_QUERY_REPLIED",
       ],
       index: true,
     },
