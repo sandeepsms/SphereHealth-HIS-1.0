@@ -88,6 +88,9 @@ router.get("/uhid/:UHID/summary", requireAction("billing.read"), ctrl.getUhidSum
 router.get("/uhid/:UHID/previous-dues", requireAction("billing.read"), ctrl.getPreviousDues);
 // R7hr(CLAIM-P1.2) — canonical claim-form data for a bill's episode.
 router.get("/:billId/claim-data", requireAction("billing.read"), ctrl.getClaimData);
+// R7hr(CLAIM-P4.2) — streamed PDF of the insurer's claim form (overlay onto an
+// uploaded official template if present, else a generated standard-format form).
+router.get("/:billId/insurer-form.pdf", requireAction("billing.read"), ctrl.getInsurerForm);
 // Front-desk bulk actions across every outstanding bill for a UHID.
 // collect-all distributes one lump-sum FIFO; bulk-settle applies a
 // uniform % or proportional ₹ discount. Both writes are audited

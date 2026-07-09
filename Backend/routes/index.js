@@ -198,6 +198,9 @@ router.use("/hospital-charges", hospitalChargesRoutes);
 router.use("/services", serviceMasterRoutes);
 router.use("/billing", newBillingRoutes);
 router.use("/cashier-sessions", cashierSessionRoutes);   // R7ap-F20
+// CLAIM-P4.1 — insurer registry (config-backed) for the registration insurer
+// picker + claim-form company selector. Read-only, JWT-gated.
+router.use("/insurers", require("./Billing/insurerRoutes"));
 
 // nursing-notes alias (NABH Initial Assessment page uses /api/nursing-notes)
 router.use("/nursing-notes", nurseRoutes);

@@ -108,6 +108,11 @@ const PatientSchema = new mongoose.Schema(
       default: "Cash",
     },
     tpa: { type: mongoose.Schema.Types.ObjectId, ref: "TPA" },
+    // R7hr(CLAIM-P4.1) — the INSURER that issued the policy (Star Health,
+    // HDFC Ergo…), distinct from the `tpa` administrator above. Drives which
+    // company's claim form the PDF engine fills. Code maps to config/insurers.
+    insurerCode: { type: String, trim: true, uppercase: true, default: "" },
+    insurerName: { type: String, trim: true, default: "" },
     policyNumber: String,
     policyHolderName: String,
     sumInsured: Number,

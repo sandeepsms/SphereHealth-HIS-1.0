@@ -71,6 +71,42 @@ exports.getClaimData = async (req, res, next) => {
   }
 };
 
+// R7hr(CLAIM-P4.2) — GET /api/billing/:billId/insurer-form.pdf?insurerCode=CODE
+// Streams the filled insurer claim form as a PDF. When the hospital has an
+// uploaded official blank template for that insurer (CLAIM-P4.3), the engine
+// overlays claim data onto THAT pdf; otherwise it generates a standard-format
+// branded form. Either way the fill comes from buildClaimData(billId).
+exports.getInsurerForm = async (req, res) => {
+  try {
+    const { fillInsurerForm } = require("../../services/Billing/insurerFormService");
+    const insurerCode = (req.query.insurerCode || "").trim();
+
+    // CLAIM-P4.3 — look up an uploaded official template for this insurer (if
+    // the model/collection exists). Soft: any failure falls back to generated.
+    let template = null;
+    try {
+      const InsurerFormTemplate = require("../../models/Billing/insurerFormTemplateModel");
+      if (insurerCode) {
+        const doc = await InsurerFormTemplate.findOne({
+          insurerCode: insurerCode.toUpperCase(), formType: req.query.formType || "CLAIM", isActive: true,
+        }).sort({ version: -1 }).lean();
+        if (doc && doc.pdf && doc.pdf.length) {
+          template = { bytes: doc.pdf.buffer || doc.pdf, fieldMap: doc.fieldMap || [] };
+        }
+      }
+    } catch { /* model not present / no template — use generated form */ }
+
+    const { bytes, filename } = await fillInsurerForm(req.params.billId, insurerCode, { template });
+    const buf = Buffer.from(bytes);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
+    res.setHeader("Content-Length", buf.length);
+    res.send(buf);
+  } catch (e) {
+    res.status(e.status || 500).json({ success: false, message: e.message });
+  }
+};
+
 // ── GET /api/billing/uhid/:UHID/previous-dues ─────────────────
 // R7hr(billing-audit P1.3) — rule 1: surface previous PENDING dues at the
 // next visit (registration + billing banner). Query params scope out the

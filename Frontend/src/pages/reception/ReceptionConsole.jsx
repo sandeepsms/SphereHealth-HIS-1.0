@@ -108,6 +108,8 @@ const emptyPatient = {
   paymentType: "Cash",
   tpa: null,
   policyNumber: "", // mandatory when paymentType === "TPA" (backend validation)
+  insurerCode: "",         // CLAIM-P4.1 — which insurer's form to fill
+  insurerName: "",
   payerScheme: "CASH",     // R7hr(CLAIM-P2) — claim-form axis
   schemeIds: {},           // conditional govt-scheme ids (CGHS/ESIC/PMJAY/…)
   emergencyContact: { name: "", relation: "", phone: "" },
@@ -185,6 +187,7 @@ export default function ReceptionConsole() {
   const [departments, setDepartments] = useState([]);
   const [doctors,     setDoctors]     = useState([]);
   const [tpaList,     setTpaList]     = useState([]);
+  const [insurerList, setInsurerList] = useState([]);   // CLAIM-P4.1 — insurer registry
   const [allServices, setAllServices] = useState([]);
 
   /* ── Patient search ── */
@@ -279,6 +282,11 @@ export default function ReceptionConsole() {
         if (tpaRes?.success) {
           setTpaList(tpaRes.data.map(t => ({ label: t.tpaName, value: t._id })));
         }
+        // CLAIM-P4.1 — insurer registry for the company picker (non-fatal).
+        try {
+          const insRes = await axios.get(`${API_ENDPOINTS.BASE}/insurers`);
+          if (insRes?.data?.success) setInsurerList(insRes.data.data || []);
+        } catch { /* picker just stays empty if this fails */ }
       } catch (e) {
         console.error("Reference data load error:", e);
       }
@@ -581,6 +589,8 @@ export default function ReceptionConsole() {
       paymentType: p.paymentType || "Cash",
       tpa: p.tpa?._id || p.tpa || null,
       policyNumber: p.policyNumber || "",
+      insurerCode: p.insurerCode || "",
+      insurerName: p.insurerName || "",
       payerScheme: p.payerScheme || "CASH",
       schemeIds: p.schemeIds || {},
       emergencyContact: p.emergencyContact || { name: "", relation: "", phone: "" },
@@ -822,6 +832,8 @@ export default function ReceptionConsole() {
         paymentType:     patient.paymentType,
         tpa:             patient.tpa || null,
         policyNumber:    patient.policyNumber || undefined,
+        insurerCode:     patient.insurerCode || undefined,
+        insurerName:     patient.insurerName || undefined,
         payerScheme:     patient.payerScheme || "CASH",
         schemeIds:       patient.schemeIds || {},
         // Patient model has NO `emergencyContact` field — it uses
@@ -1590,6 +1602,29 @@ export default function ReceptionConsole() {
                   </div>
                   {patient.paymentType !== "Cash" && (
                     <>
+                      {/* CLAIM-P4.1 — the INSURER (company that issued the policy),
+                          distinct from the TPA administrator below. Drives which
+                          company's claim form the PDF engine fills. */}
+                      <div className="his-field-group">
+                        <label className="his-label">Insurance Company</label>
+                        <select className="his-select" value={patient.insurerCode || ""}
+                          onChange={e => {
+                            const code = e.target.value;
+                            const name = insurerList.find(i => i.code === code)?.name || "";
+                            setPatient(p => ({ ...p, insurerCode: code, insurerName: name }));
+                          }}>
+                          <option value="">— Select Insurer —</option>
+                          {["STANDALONE_HEALTH", "PRIVATE_GENERAL", "PSU", "DIGITAL"].map(grp => {
+                            const items = insurerList.filter(i => i.type === grp);
+                            if (!items.length) return null;
+                            return (
+                              <optgroup key={grp} label={items[0].typeLabel}>
+                                {items.map(i => <option key={i.code} value={i.code}>{i.name}</option>)}
+                              </optgroup>
+                            );
+                          })}
+                        </select>
+                      </div>
                       <div className="his-field-group">
                         <label className="his-label">TPA / Insurance Provider{TPA_MANDATORY(visitType) && <span className="rc-req">*</span>}</label>
                         <select className={`his-select ${errors.tpa ? "his-field--err" : ""}`} value={patient.tpa || ""}
