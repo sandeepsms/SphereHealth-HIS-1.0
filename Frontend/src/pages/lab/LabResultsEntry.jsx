@@ -41,6 +41,12 @@ const authHdr = () => ({ headers: { Authorization: `Bearer ${(sessionStorage.get
 // strip the /api suffix to reach uploaded report files.
 const FILE_ORIGIN = String(API).replace(/\/api\/?$/, "");
 
+// R7hr(LAB-P3) — the scanned-report UPLOAD surface. The backend endpoint is
+// live and future-ready, but for now the lab staff transcribe outside
+// reports by hand (owner call). Keep the UI off; flip this to re-enable the
+// upload control without any rewrite.
+const SHOW_OUTSIDE_UPLOAD = false;
+
 // R7hr(LAB-P3) — fetch a JWT-protected /uploads file as a blob and open it
 // (a plain <a>/<img> can't send the Bearer header the read route requires).
 async function openAttachment(url) {
@@ -728,7 +734,10 @@ function ReportTab({ uhid, patient }) {
               style={{ width: "100%", padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 12.5, fontFamily: "inherit" }} />
           </Field>
 
-          {/* R7hr(LAB-P3) — attach the ORIGINAL scanned outside report (PDF / image). */}
+          {/* R7hr(LAB-P3) — original scanned-report upload. Backend is wired
+              and future-ready; the UI is gated OFF for now (lab staff do
+              manual entry only). Flip SHOW_OUTSIDE_UPLOAD to re-enable. */}
+          {SHOW_OUTSIDE_UPLOAD && (
           <div style={{ marginTop: 14, padding: "12px 14px", background: "#f8fafc", border: `1px dashed ${C.border}`, borderRadius: 8 }}>
             <div style={{ fontSize: 12, fontWeight: 800, color: C.text, marginBottom: 8 }}>
               📎 Original scanned report — outside lab / imaging (PDF or JPG, up to 5 files · 5 MB each)
@@ -757,6 +766,7 @@ function ReportTab({ uhid, patient }) {
               </>
             )}
           </div>
+          )}
 
           <div style={{ marginTop: 12, display: "flex", justifyContent: "flex-end", gap: 8 }}>
             <button onClick={printReport} title="Print NABH diagnostic report"
