@@ -110,7 +110,7 @@
 | Repo | `D:\Spherehealth` (Express+Mongoose backend, React+Vite frontend, MongoDB) |
 | Branch | `claude/multi-hospital-deploy` (**17 commits push pending**) |
 | Dev servers | preview_start: "Backend (Express)" :5050 · "Frontend (Vite)" :5173 |
-| Dev login | `admin@spherehealth.com` / `Welcome@123` (drift ho jaye toh bcrypt cost-12 reset — ho chuka hai ek baar) |
+| Dev login | **sabhi 27 users** ka password `123` (2026-07-09 se, owner request; admin@spherehealth.com bhi). Drift ho jaye toh bcrypt cost-12 reset script pattern use karo |
 | Backend verify | `node -c <file>` (build step nahi hai) |
 | Frontend verify | `npm run build` (~20-40s) |
 | Sequence audit | `GET /api/billing/sequence-audit` (`reports.audit`) — FY-start year param |
