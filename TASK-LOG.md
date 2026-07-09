@@ -9,13 +9,14 @@
 
 ## 🎯 ABHI YAHA HAI (resume point)
 
-**Abhi hua:** **CLAIM-P4 DONE** — system ab **us specific insurance company ka apna claim form** bharke deta hai (Star Health → Star ka form, HDFC Ergo → HDFC ka), asli **PDF** ke roop me. Registry me ~28 major Indian insurers; patient pe insurer capture; PDF-fill engine (pdf-lib) jo ya toh insurer ki uploaded official blank PDF pe overlay kare ya ek generated standard-format branded form de. Isse pehle CLAIM-P1/P2/P3 (multi-payer forms + ICD-10 + editable + combined pack) + TPA/ER/DC sab complete.
+**Abhi hua:** **ICD-P1 DONE** `f979aed4` — **ICD-10 master hamesha updated** (owner: "manually description na dalna pde"). Poora CMS/NCHS ICD-10-CM FY2026 release (74,719 billable codes, public domain) repo me shipped (`Backend/data/icd10cm-codes-2026.txt.gz`) + dev DB seeded. **Typeahead coding** teeno coding surfaces pe: OPD Assessment, IPD Initial Assessment, Discharge Summary — code YA words type karo ("J18" / "pneumonia" / "diabetes type 2") → coded list → pick pe **code + official description dono auto-fill**. Yearly refresh: `node scripts/importIcd10.js <file>` ya **POST /api/icd10/import** (Admin/MRD, browser se CMS file upload) — dropped codes deactivate hote hain (delete nahi), <1000-row file reject (bad upload master wipe nahi kar sakta). Search: `GET /api/icd10/search` code-prefix/dotted/multi-word (17ms), `/api/icd10/meta` freshness. E2E: discharge form pe "appendicitis" → K35.80 pick → code + Final Diagnosis auto-filled, 0 console errors. Isse pehle CLAIM-P1→P4 (company-specific PDF forms) sab complete.
 
 **Sabse pehle karne layak (koi bhi ek):**
-1. **`git push`** — **3 commits unpushed** (`a631fa29..52e6fa7d` — CLAIM-P4.1/P2/P3 + is TASK-LOG; CLAIM-P3 tak `3cd2a8cf` push ho chuka). PR pe auto-add.
+1. **`git push`** — **4 commits unpushed** (CLAIM-P4 arc `a631fa29..52e6fa7d` + ICD-P1 `f979aed4`; CLAIM-P3 tak `3cd2a8cf` push ho chuka). PR pe auto-add.
 2. **Insurer PDFs plug-in karna:** har insurer ki official blank claim PDF **/insurer-forms** page pe upload karna (Admin) — fillable PDF auto-map ho jaati hai; bina upload ke bhi generated standard form chalta hai.
-3. **CLAIM-P5 (optional):** flat/scanned PDFs ke liye visual coordinate-mapper (abhi x/y manually), Pre-Auth ke liye alag template type.
-4. VPS Docker dry-run (Docker install/server chahiye) · Task #43 prints unification.
+3. **ICD-P2 (optional):** claim-pack/Part-B pe picker-driven multi-diagnosis editor (abhi discharge se aata hai), ICD-10-PCS procedure codes, India-specific NAMASTE/Ayush codes agar owner bole.
+4. **CLAIM-P5 (optional):** flat/scanned PDFs ke liye visual coordinate-mapper (abhi x/y manually), Pre-Auth ke liye alag template type.
+5. VPS Docker dry-run (Docker install/server chahiye) · Task #43 prints unification.
 
 **ER-P2 DONE (2026-07-09)** `6783318a`: SBAR er-handover printable (Admitted rows pe ⇄), Referred pe ReferralLetter auto-print wiring, `GET /api/reports/er-tat` (live-verified: count 4, avg 2min, max 8min). **ER + DC workflows: P1+P2 sab complete.**
 
