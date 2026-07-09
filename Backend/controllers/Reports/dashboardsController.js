@@ -596,6 +596,18 @@ exports.getTpaMis = async (req, res, next) => {
             } },
             { $sort: { ageingDays: -1 } }, { $limit: 50 },
           ],
+          // R7hr(TPA-P2) — unanswered insurer queries (the other rot vector:
+          // claim technically SUBMITTED/APPROVED but a query sits unreplied).
+          openQueries: [
+            { $unwind: "$tpaQueryLog" },
+            { $match: { "tpaQueryLog.status": "OPEN" } },
+            { $project: {
+                _id: 0, billId: "$_id", billNumber: 1, UHID: 1, patientName: 1, tpaName: 1,
+                queryText: "$tpaQueryLog.queryText", raisedAt: "$tpaQueryLog.raisedAt",
+                ageingDays: { $round: [{ $divide: [{ $subtract: [new Date(), "$tpaQueryLog.raisedAt"] }, 86400000] }, 0] },
+            } },
+            { $sort: { ageingDays: -1 } }, { $limit: 50 },
+          ],
       } },
     ]).option({ allowDiskUse: true, maxTimeMS: 20_000 });
 
@@ -622,6 +634,7 @@ exports.getTpaMis = async (req, res, next) => {
         avgApproveTatDays: round2(t.avgApproveTatDays),
       })),
       staleClaims: agg?.stale || [],
+      openQueries: agg?.openQueries || [],   // R7hr(TPA-P2)
     });
   } catch (e) { next(e); }
 };

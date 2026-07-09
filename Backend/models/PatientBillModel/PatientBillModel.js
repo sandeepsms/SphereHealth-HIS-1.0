@@ -429,6 +429,24 @@ const PatientBillSchema = new mongoose.Schema(
     // vs approved" side by side.
     tpaPreAuthNumber: { type: String, trim: true, default: "" },
     tpaPreAuthAmount: { type: Dec, default: () => toDec(0) },
+    // R7hr(TPA-P2) — insurer query → reply loop. Insurers raise queries on
+    // submitted claims (missing docs, clarification); pre-P2 that exchange
+    // lived in phone calls and the claim silently rotted. Each query is a
+    // row here; replying logs the response; a REJECTED claim re-submits via
+    // the existing tpa-preauth-submit route (ALLOWED_FROM includes
+    // REJECTED). Open queries surface on the TPA Desk + MIS.
+    tpaQueryLog: [
+      {
+        raisedAt:   { type: Date, default: Date.now },
+        queryText:  { type: String, trim: true },
+        recordedBy: String,            // staff who logged the insurer's query
+        recordedByRole: String,
+        repliedAt:  Date,
+        replyText:  { type: String, trim: true },
+        repliedBy:  String,
+        status:     { type: String, enum: ["OPEN", "REPLIED"], default: "OPEN" },
+      },
+    ],
     // R7bb-FIX-E-15 / D3-HIGH-2: maker-checker on TPA approval. The
     // user who SUBMITTED the preauth cannot also APPROVE the claim —
     // otherwise a single TPA Coordinator can move from preauth straight

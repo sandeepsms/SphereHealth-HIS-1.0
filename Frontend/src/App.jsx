@@ -166,6 +166,7 @@ const ReceptionDashboard = lazy(() => import("./pages/reception/ReceptionDashboa
 const DischargeQueue        = lazy(() => import("./pages/reception/DischargeQueue"));
 const VisitorPasses         = lazy(() => import("./pages/reception/VisitorPasses"));
 const TPACases              = lazy(() => import("./pages/reception/TPACases"));
+const TpaDeskPage           = lazy(() => import("./pages/tpa/TpaDeskPage"));   // R7hr(TPA-P2)
 // R7bb-FIX-E-6 / D6-CRIT-3: Receptionist-facing cashier shift / closing
 // report. Wraps the Accounts ShiftTab so a Receptionist can open + close
 // their drawer without holding Admin/Accountant access to /accounts.
@@ -969,6 +970,10 @@ function AppLayout({ collapsed, setCollapsed }) {
             } />
             <Route path="/tpa-cases" element={
               <RoleGuard allow={["Admin", "TPA Coordinator", "Receptionist", "Accountant"]}><TPACases /></RoleGuard>
+            } />
+            {/* R7hr(TPA-P2) — TPA Desk: MIS + stale/ query chase-lists + query loop */}
+            <Route path="/tpa-desk" element={
+              <RoleGuard allow={["Admin", "TPA Coordinator", "Accountant"]}><TpaDeskPage /></RoleGuard>
             } />
             {/* R7bb-FIX-E-6 / D6-CRIT-3: Receptionist closing report (cashier shift) */}
             <Route path="/reception/closing-report" element={
