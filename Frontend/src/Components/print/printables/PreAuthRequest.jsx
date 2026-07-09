@@ -4,6 +4,7 @@
 // estimated cost; clinical justification from the diagnosis.
 import React from "react";
 import PrintShell from "../PrintShell";
+import { dxText, Fill } from "./claimBits";  // R7hr(CLAIM-P3)
 import { fmtINR } from "../amountWords";
 import { toNum } from "../../../utils/printUtils";
 
@@ -11,7 +12,7 @@ const fmtD = (d) => d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit"
 const Row = ({ label, value, blank }) => (
   <div style={{ display: "flex", fontSize: 11, marginBottom: 4 }}>
     <div style={{ width: 185, color: "#64748b", fontWeight: 600 }}>{label}</div>
-    <div style={{ flex: 1, fontWeight: 600, color: blank ? "#cbd5e1" : "#0f172a", borderBottom: blank ? "1px dashed #cbd5e1" : "none", minHeight: blank ? 15 : "auto" }}>{blank ? "" : (value || "—")}</div>
+    <div style={{ flex: 1, fontWeight: 600, color: blank ? "#cbd5e1" : "#0f172a", borderBottom: blank ? "1px dashed #cbd5e1" : "none", minHeight: blank ? 15 : "auto" }}>{blank ? <Fill value={value} /> : (value || "—")}</div>
   </div>
 );
 
@@ -54,7 +55,7 @@ const PreAuthRequest = ({ settings, receipt = {} }) => {
           <Row label="Admission Type" value={a.type} />
           <Row label="Room Category Requested" value={a.roomCategory} />
           <Row label="Treating Consultant" value={a.consultant} />
-          <Row label="Provisional Diagnosis" value={a.provisionalDiagnosis || a.finalDiagnosis} />
+          <Row label="Provisional Diagnosis (ICD-10)" value={dxText(a) || a.provisionalDiagnosis} />
           <Row label="Proposed Line of Treatment" value={a.reasonForAdmission} />
           <Row label="Nature of Illness" value={a.isMLC ? "Accident / MLC" : "Illness"} />
         </div>

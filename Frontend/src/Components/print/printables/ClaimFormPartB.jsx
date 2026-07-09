@@ -6,6 +6,7 @@
 // data builder; only signature/seal is manual.
 import React from "react";
 import PrintShell from "../PrintShell";
+import { dxText, DiagnosisTable } from "./claimBits";  // R7hr(CLAIM-P3.1)
 import { fmtINR } from "../amountWords";
 import { toNum } from "../../../utils/printUtils";
 
@@ -74,7 +75,8 @@ const ClaimFormPartB = ({ settings, receipt = {} }) => {
           </div>
           <Row label="Treating Consultant" value={a.consultant} />
           <Row label="Provisional Diagnosis" value={a.provisionalDiagnosis} />
-          <Row label="Final Diagnosis" value={a.finalDiagnosis} />
+          <Row label="Final Diagnosis (ICD-10)" value={dxText(a)} />
+          <DiagnosisTable diagnoses={a.diagnoses} />
           <Row label="Line of Treatment / Reason" value={a.reasonForAdmission} />
           {a.isMLC && <Row label="MLC No" value={a.mlcNumber || "Yes"} />}
           <Row label="Nature of Illness (Accident/Illness)" value={a.isMLC ? "Accident / MLC" : "Illness"} />

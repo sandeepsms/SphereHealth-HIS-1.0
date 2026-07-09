@@ -1930,9 +1930,11 @@ export default function IPDBillingLedger() {
             {isDischarged ? "Reprint Final Bill" : "Generate Final Bill"}
           </button>
         )}
-        {/* R7hr(CLAIM-P1.3) — Insurance Claim Pack: fetches the canonical
-            claim data for this bill's episode and prints IRDAI Part B
-            (hospital) + Part A (insured). Shown for TPA/insured patients. */}
+        {/* R7hr(CLAIM-P1.3 → P3.3) — Insurance Claim Pack: fetches the
+            canonical claim data for this bill's episode and opens ONE
+            combined pack (the payer's whole form set, page-broken) so the
+            claims desk gets a single print / PDF. Scheme→forms routing now
+            lives in ClaimPackBundle. Shown for TPA/insured patients. */}
         {can("billing.read") && data?.bill?._id && (
           <button
             onClick={async () => {
@@ -1940,15 +1942,16 @@ export default function IPDBillingLedger() {
                 const r = await axios.get(`${API_ENDPOINTS.BILLING}/${data.bill._id}/claim-data`);
                 const cd = r.data?.data;
                 if (!cd) { toast.warn("Claim data unavailable"); return; }
-                // R7hr(CLAIM-P2) — pick the form set by payer scheme.
                 const scheme = cd.patient?.payerScheme || "CASH";
-                if (scheme === "CGHS") { openPrint("cghs-mrc", cd); openPrint("claim-docket", cd); toast.success("CGHS MRC + docket opened"); }
-                else if (scheme === "ESIC") { openPrint("esic-claim", cd); openPrint("claim-docket", cd); toast.success("ESIC claim + docket opened"); }
-                else if (["PMJAY", "STATE", "ECHS"].includes(scheme)) { openPrint("claim-docket", cd); toast.success("Claim docket opened (portal-filed scheme)"); }
-                else { openPrint("claim-part-b", cd); openPrint("claim-part-a", cd); toast.success("Claim pack: Part B + Part A opened"); }
+                openPrint("claim-pack", cd);
+                const label = scheme === "CGHS" ? "CGHS MRC + docket"
+                  : scheme === "ESIC" ? "ESIC claim + docket"
+                  : ["PMJAY", "STATE", "ECHS"].includes(scheme) ? "claim docket (portal-filed)"
+                  : "IRDAI Part B + Part A";
+                toast.success(`Claim Pack opened — ${label}`);
               } catch (e) { toast.error(e?.response?.data?.message || "Claim data fetch failed"); }
             }}
-            title="Print IRDAI claim pack (Part B hospital + Part A insured)"
+            title="Open the complete insurance Claim Pack (one print — all forms for this payer)"
             style={{ padding: "7px 14px", background: "#7c3aed", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 12 }}>
             <i className="pi pi-shield" style={{ marginRight: 6 }} />
             Claim Pack

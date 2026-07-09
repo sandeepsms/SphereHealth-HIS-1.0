@@ -5,6 +5,7 @@
 // proof-pack: what's attached, the bill totals, and a sign-off grid.
 import React from "react";
 import PrintShell from "../PrintShell";
+import { dxText } from "./claimBits";  // R7hr(CLAIM-P3.1)
 import { fmtINR } from "../amountWords";
 
 const fmtD = (d) => d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
@@ -44,7 +45,7 @@ const ClaimDocket = ({ settings, receipt = {} }) => {
         <div className="pr-section__body">
           <Row label="Admission No" value={a.admissionNumber} />
           <Row label="Admission → Discharge" value={`${fmtD(a.admissionDate)} → ${fmtD(a.dischargeDate)}`} />
-          <Row label="Diagnosis" value={a.finalDiagnosis} />
+          <Row label="Diagnosis (ICD-10)" value={dxText(a)} />
           <Row label="Total Billed (Net)" value={fmtINR(t.net)} />
           <Row label="Scheme / Insurer Payable" value={fmtINR(t.tpaPayable)} />
           <Row label="Patient Share" value={fmtINR(t.patientPayable)} />

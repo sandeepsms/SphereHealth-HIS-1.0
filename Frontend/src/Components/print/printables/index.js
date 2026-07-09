@@ -24,6 +24,7 @@ import PreAuthRequest    from "./PreAuthRequest";      // R7hr(CLAIM-P1.3) — c
 import CghsMrc           from "./CghsMrc";             // R7hr(CLAIM-P2) — CGHS MRC(S)/(P)
 import EsicClaim         from "./EsicClaim";           // R7hr(CLAIM-P2) — ESIC reimbursement
 import ClaimDocket       from "./ClaimDocket";         // R7hr(CLAIM-P2) — universal docket
+import ClaimPackBundle   from "./ClaimPackBundle";     // R7hr(CLAIM-P3.3) — combined pack
 import RefundReceipt     from "./RefundReceipt";
 import ServiceReceipt    from "./ServiceReceipt";
 import ConsentForm       from "./ConsentForm";
@@ -119,6 +120,7 @@ export const PRINTABLES = {
   "cghs-mrc":         { component: CghsMrc,           title: "CGHS Medical Reimbursement",  defaultPaper: "a4"    },
   "esic-claim":       { component: EsicClaim,         title: "ESIC Reimbursement Claim",    defaultPaper: "a4"    },
   "claim-docket":     { component: ClaimDocket,       title: "Claim Document Docket",       defaultPaper: "a4"    },
+  "claim-pack":       { component: ClaimPackBundle,   title: "Claim Pack (Complete)",       defaultPaper: "a4"    },
   "final-bill":       { component: FinalBill,         title: "Final Bill (IPD)",          defaultPaper: "a4"      },
   // Interim Bill — same component, caller passes { isInterim: true } in
   // the receipt payload to flip the title + the "snapshot as of …" banner.

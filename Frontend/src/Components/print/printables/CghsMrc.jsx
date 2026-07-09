@@ -5,13 +5,14 @@
 // ward entitlement, PPO). Pensioner-only fields box blank when serving.
 import React from "react";
 import PrintShell from "../PrintShell";
+import { dxText, Fill } from "./claimBits";  // R7hr(CLAIM-P3)
 import { fmtINR } from "../amountWords";
 
 const fmtD = (d) => d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "—";
 const Row = ({ label, value, blank }) => (
   <div style={{ display: "flex", fontSize: 11, marginBottom: 4 }}>
     <div style={{ width: 200, color: "#64748b", fontWeight: 600 }}>{label}</div>
-    <div style={{ flex: 1, fontWeight: 600, color: blank ? "#cbd5e1" : "#0f172a", borderBottom: blank ? "1px dashed #cbd5e1" : "none", minHeight: blank ? 15 : "auto" }}>{blank ? "" : (value || "—")}</div>
+    <div style={{ flex: 1, fontWeight: 600, color: blank ? "#cbd5e1" : "#0f172a", borderBottom: blank ? "1px dashed #cbd5e1" : "none", minHeight: blank ? 15 : "auto" }}>{blank ? <Fill value={value} /> : (value || "—")}</div>
   </div>
 );
 
@@ -52,7 +53,7 @@ const CghsMrc = ({ settings, receipt = {} }) => {
           <Row label="Hospital" value={receipt.hospital?.name} />
           <Row label="Date of Admission" value={fmtD(a.admissionDate)} />
           <Row label="Date of Discharge" value={fmtD(a.dischargeDate)} />
-          <Row label="Diagnosis" value={a.finalDiagnosis} />
+          <Row label="Diagnosis (ICD-10)" value={dxText(a)} />
           <Row label="Referred by (CMO / Specialist)" blank />
           <Row label="Permission / Referral No" blank />
           <Row label="Total Amount Claimed (₹)" value={fmtINR(receipt.totals?.net)} />
