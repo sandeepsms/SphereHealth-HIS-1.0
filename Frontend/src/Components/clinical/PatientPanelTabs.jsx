@@ -22,6 +22,7 @@ import axios from "axios";
 import { API_ENDPOINTS } from "../../config/api";
 import SecureImage from "../SecureImage";
 import { useInlinedUploadsHtml } from "../../utils/secureUploads";
+import { buildChronologicalLabNarrative } from "../../utils/labNarrative";   // R7hr(LAB-P2)
 import "./patient-panel-tabs.css";
 // R7gn — Reuse the SAME per-type card builders that the Complete File
 // (Narrative.jsx) prints. The patient panel was showing a generic
@@ -1990,6 +1991,7 @@ export function InvestigationsSummaryTab({ admission, patient }) {
   const [data, setData]       = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState("");
+  const [labNarr, setLabNarr] = useState("");   // R7hr(LAB-P2) — range-aware chronological narrative
 
   const UHID = patient?.UHID || admission?.UHID || "";
   const admissionId = admission?._id || "";
@@ -2008,13 +2010,26 @@ export function InvestigationsSummaryTab({ admission, patient }) {
     return () => { cancelled = true; };
   }, [UHID, admissionId]);
 
+  // R7hr(LAB-P2) — the aggregate above drops units + reference ranges, so
+  // pull the raw trend sheets and build the chronological, range-aware
+  // narrative from them (the "same values, paragraph form, with a light
+  // explanation" the Investigations section is meant to read as).
+  useEffect(() => {
+    if (!UHID) { setLabNarr(""); return; }
+    let cancelled = false;
+    axios.get(`${API_ENDPOINTS.BASE}/lab-records/trends?UHID=${encodeURIComponent(UHID)}`)
+      .then((r) => { if (!cancelled) setLabNarr(buildChronologicalLabNarrative(r.data?.data || [])); })
+      .catch(() => { if (!cancelled) setLabNarr(""); });
+    return () => { cancelled = true; };
+  }, [UHID]);
+
   if (loading) return <div className="ppt-empty" style={{ padding: 24, color: "#64748b" }}>Loading investigations…</div>;
   if (error)   return <div className="ppt-empty" style={{ padding: 24, color: "#b91c1c" }}>⚠ {error}</div>;
 
   const days   = data?.days   || [];
   const trends = data?.trends || [];
   const para   = (data?.paragraph || "").trim();
-  if (!para && days.length === 0) {
+  if (!para && days.length === 0 && !labNarr) {
     return <div className="ppt-empty" style={{ padding: 28, textAlign: "center", color: "#64748b" }}>
       🧪 No investigations recorded for this admission yet.
     </div>;
@@ -2031,6 +2046,16 @@ export function InvestigationsSummaryTab({ admission, patient }) {
           {data?.counts?.days || 0} day{(data?.counts?.days || 0) === 1 ? "" : "s"} · {data?.counts?.panels || 0} lab panel{(data?.counts?.panels || 0) === 1 ? "" : "s"} · {data?.counts?.reports || 0} report{(data?.counts?.reports || 0) === 1 ? "" : "s"}
         </span>
       </div>
+
+      {/* R7hr(LAB-P2) — chronological, reference-range-aware narrative built
+          from the raw trend sheets: the same values, in date order, phrased
+          in plain language with a light explanation of each abnormal result. */}
+      {labNarr && (
+        <div style={{ ...card, borderLeft: "4px solid #7c3aed" }}>
+          <div style={head("#f5f3ff", "#6d28d9")}>Chronological summary · with reference ranges</div>
+          <p style={{ margin: 0, padding: "12px 16px", fontSize: 13, lineHeight: 1.65, color: "#0f172a", whiteSpace: "pre-wrap" }}>{labNarr}</p>
+        </div>
+      )}
 
       {/* The narrative paragraph (same text that flows to the discharge summary) */}
       {para && (
