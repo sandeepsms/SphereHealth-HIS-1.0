@@ -366,15 +366,6 @@ const Para = ({ children, style }) => (
   <p style={{ ...PARA, ...(style || {}) }}>{children}</p>
 );
 
-const DayLabel = ({ n, date, totalDays }) => (
-  <div style={DAY_LABEL}>
-    Day {n}{totalDays ? `/${totalDays}` : ""} — {dayHeading(date)}
-  </div>
-);
-
-// R7hr — MiniTable drops any column whose every cell is empty, so a table
-// never prints a phantom "—" column (e.g. SpO₂/RR when the vital sheet didn't
-// capture them). Column 0 (the row anchor — date/time/no.) is always kept.
 const _cellEmpty = (c) => c == null || c === "" || c === "—";
 const MiniTable = ({ headers, rows, widths }) => {
   const keep = headers.map((_, ci) => ci === 0 || rows.some((cells) => !_cellEmpty(cells[ci])));

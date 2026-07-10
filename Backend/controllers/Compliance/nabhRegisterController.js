@@ -14,6 +14,7 @@
 "use strict";
 
 const BloodSugarRegister = require("../../models/Compliance/BloodSugarRegisterModel");
+const sendErr = require("../../utils/sendErr");
 const EmergencyRegister = require("../../models/Compliance/EmergencyRegisterModel");
 const BloodTransfusionRegister = require("../../models/Compliance/BloodTransfusionRegisterModel");
 const PainAssessmentRegister = require("../../models/Compliance/PainAssessmentRegisterModel");
@@ -69,7 +70,7 @@ exports.listBloodSugar = async (req, res) => {
     ]);
     res.json({ success: true, data: rows, pagination: { page, limit, total } });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -92,7 +93,7 @@ exports.createBloodSugar = async (req, res) => {
     if (!row) return res.status(400).json({ success: false, message: "Could not write register row" });
     res.status(201).json({ success: true, data: row });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -117,7 +118,7 @@ exports.listEmergency = async (req, res) => {
     ]);
     res.json({ success: true, data: rows, pagination: { page, limit, total } });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -156,7 +157,7 @@ exports.createBloodTransfusion = async (req, res) => {
     if (!row) return res.status(400).json({ success: false, message: "Could not write register row" });
     res.status(201).json({ success: true, data: row });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -177,7 +178,7 @@ exports.listBloodTransfusion = async (req, res) => {
     ]);
     res.json({ success: true, data: rows, pagination: { page, limit, total } });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -206,7 +207,7 @@ function _listRegister(Model, dateField) {
       ]);
       res.json({ success: true, data: rows, pagination: { page, limit, total } });
     } catch (e) {
-      res.status(500).json({ success: false, message: e.message });
+      sendErr(res, e);
     }
   };
 }
@@ -235,7 +236,7 @@ exports.listDVT = async (req, res) => {
     ]);
     res.json({ success: true, data: rows, pagination: { page, limit, total } });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -273,7 +274,7 @@ exports.listOT = async (req, res) => {
     ]);
     res.json({ success: true, data: rows, total, pagination: { page, limit, total } });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -296,7 +297,7 @@ exports.listASA = async (req, res) => {
     ]);
     res.json({ success: true, data: rows, total, pagination: { page, limit, total } });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -319,7 +320,7 @@ exports.listReadmission = async (req, res) => {
     ]);
     res.json({ success: true, data: rows, total, pagination: { page, limit, total } });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -343,7 +344,7 @@ exports.listMortality = async (req, res) => {
     ]);
     res.json({ success: true, data: rows, total, pagination: { page, limit, total } });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -366,7 +367,7 @@ exports.listRestraint = async (req, res) => {
     ]);
     res.json({ success: true, data: rows, total, pagination: { page, limit, total } });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -391,7 +392,7 @@ exports.listAntimicrobial = async (req, res) => {
     ]);
     res.json({ success: true, data: rows, total, pagination: { page, limit, total } });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -455,6 +456,6 @@ exports.dashboardSummary = async (req, res) => {
       ],
     });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };

@@ -1171,25 +1171,6 @@ const parseSize = (s) => {
 
 /* ============ HELPER COMPONENTS ============ */
 
-const HospitalBadge = ({ hospital, compact = false }) => (
-  <div className="inline-flex items-center gap-2 rounded-xl px-2 py-1 bg-white" style={{ border: `1.5px solid ${hospital.primaryColor}` }}>
-    <div className="rounded-md bg-white flex items-center justify-center overflow-hidden flex-shrink-0" style={{ width: compact ? 26 : 32, height: compact ? 26 : 32 }}>
-      {hospital.logoDataUrl
-        ? <img src={hospital.logoDataUrl} className="w-full h-full object-contain" alt="logo" />
-        : <Shield size={compact ? 18 : 22} style={{ color: hospital.primaryColor }} fill={hospital.accentColor} strokeWidth={2.5} />}
-    </div>
-    <div className="leading-tight">
-      <div className="font-black uppercase tracking-tight" style={{ color: hospital.primaryColor, fontSize: compact ? '0.72rem' : '0.82rem', fontFamily: 'Georgia, serif' }}>
-        {hospital.name.split(' ')[0]}
-      </div>
-      <div className="font-bold text-slate-500" style={{ fontSize: '1rem' }}>
-        {hospital.name.split(' ').slice(1, 4).join(' ')}
-      </div>
-    </div>
-  </div>
-);
-
-// THE signature pattern: teal pill bulges into blue field
 const CurvedStrip = ({ icon: Icon, accentText, primaryText, hindiText, trailingNumber, primary, accent, height = 70 }) => {
   const iconSz = height * 0.42;
   const leftWidth = height * 1.4;

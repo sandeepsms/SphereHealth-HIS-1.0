@@ -62,9 +62,6 @@ const blankRx = () => ({
 
 const ORDER_TYPES = ["medication", "iv_fluid", "blood", "lab", "radiology", "procedure", "nursing", "consultation"];
 const ROUTES = ["IV", "IM", "SC", "Oral", "Inhaled", "Nasal", "Topical", "PR"];
-const PRIORITIES = ["STAT", "URGENT", "ROUTINE"];
-
-/* ── Section card ── */
 function Section({ title, icon, color = C.red, badge, children }) {
   const [open, setOpen] = useState(true);
   return (

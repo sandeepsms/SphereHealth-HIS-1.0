@@ -22,10 +22,10 @@
 | M6 | **Clinical** | BE 16.6k + FE 13.4k | A: BE models · B: BE ctrl/services · C: FE pages | ✅ 2026-07-10 (34 catches→sendErr, dead locals; ~35 LOC) |
 | M7 | **Doctor** | BE 7.7k + FE 11.6k | A: BE · B: FE assessment pages · C: FE panels/notes | ✅ 2026-07-10 (**621 LOC removed** — superseded panel tabs + orphans) |
 | M8 | **Nursing** | FE 11.5k + nurse 4.4k | A: nursing pages · B: nurse panels · C: shared clinical components | ✅ 2026-07-10 (**1,117 LOC removed** — R7gn leftovers) |
-| M9 | **Patient/Reception** | BE 9.5k + FE 10.9k | A: BE · B: ReceptionConsole · C: patient pages | ⬜ |
-| M10 | **Prints** | 24.2k | A: shell/infra/openPrint · B: printables ½ · C: printables ½ + themes | ⬜ |
-| M11 | **Auth/User/RBAC/HR** | BE ~2.5k | A: auth/middleware · B: user/HR/credentials | ⬜ |
-| M12 | **Admin/Compliance/ER/DC/misc FE** | FE ~20k | A: compliance · B: admin · C: emergency+services+quality | ⬜ |
+| M9 | **Patient/Reception** | BE 9.5k + FE 10.9k | A: BE · B: ReceptionConsole · C: patient pages | ✅ 2026-07-11 (1 catch; baaki clean) |
+| M10 | **Prints** | 24.2k | A: shell/infra/openPrint · B: printables ½ · C: printables ½ + themes | ✅ 2026-07-11 (DayLabel 9; registry-pattern clean) |
+| M11 | **Auth/User/RBAC/HR** | BE ~2.5k | A: auth/middleware · B: user/HR/credentials | ✅ 2026-07-11 (audit-clean) |
+| M12 | **Admin/Compliance/ER/DC/misc FE** | FE ~20k | A: compliance · B: admin · C: emergency+services+quality | ✅ 2026-07-11 (14 catches→sendErr; HospitalBadge+PRIORITIES) |
 
 **Order:** M1→M12 seedha. Ek baar me EK part (1A → 1B → 1C → 2A …). Part complete = build green + smoke green + commit + module-log updated.
 
@@ -36,4 +36,4 @@
 - **Left as-is:** risky cheezein jaanbूझkar nahi chhedi + wajah
 
 ## Status board yahin update hota rahega
-Current: **M9-A pending** (Patient/Reception BE 9.5k)
+## 🎉 PROGRAM COMPLETE — 12/12 modules (2026-07-11). Total ~1,900 dead LOC removed, 73 raw catches → shared sendErr, har removal build/browser/API-verified, money math untouched.

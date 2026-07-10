@@ -1,4 +1,5 @@
 const opdService = require("../../services/Patient/OPDService");
+const sendErr = require("../../utils/sendErr");
 
 // R7hr-226 (security audit) — the doctor's ASSESSMENT output fields. The
 // generic OPD update (PUT /:visitNumber) is gated reception.register (Admin +
@@ -424,7 +425,7 @@ class OPDController {
       }
       return res.status(200).json({ success: true, message: "Note added", data: visit });
     } catch (e) {
-      res.status(500).json({ success: false, message: e.message });
+      sendErr(res, e);
     }
   }
 
