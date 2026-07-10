@@ -35,6 +35,7 @@ const TestRowSchema = new Schema({
   unit:   { type: String, default: "" },           // "g/dL", "mg/dL"
   refMin: { type: Number, default: null },         // null = no range
   refMax: { type: Number, default: null },
+  method: { type: String, default: "" },           // R7hr(LAB-P4) — NABL: examination method ("Photometry", "ELISA")
   readings: { type: [ReadingSchema], default: [] },
 }, { _id: false });
 
@@ -61,6 +62,17 @@ const LabTrendSchema = new Schema({
   // independent from gaps in individual test rows.
   dates:         { type: [Date], default: [] },
 
+  // R7hr(LAB-P4) — NABL / ISO 15189 report-content fields. A compliant
+  // report must state the primary-sample identity, collection and lab-
+  // receipt date+time, the requesting clinician and the analyser used —
+  // none of which the grid captured before. All optional (old sheets and
+  // quick entries still save); the print shows "—" for what's missing.
+  sampleId:          { type: String, default: "" },   // barcode / lab accession no
+  sampleCollectedAt: { type: Date, default: null },   // primary sample collection date+time
+  sampleReceivedAt:  { type: Date, default: null },   // received in lab date+time
+  referringDoctor:   { type: String, default: "" },   // requesting clinician
+  equipmentId:       { type: String, default: "" },   // analyser / asset tag (sheet-level)
+
   notes:         { type: String, default: "" },
   status:        { type: String, enum: ["draft", "reported", "verified"], default: "draft", index: true },
 
@@ -69,6 +81,7 @@ const LabTrendSchema = new Schema({
   updatedBy:     { type: Schema.Types.ObjectId, ref: "User" },
   updatedByName: { type: String, default: "" },
   verifiedBy:    { type: Schema.Types.ObjectId, ref: "User" },
+  verifiedByName:{ type: String, default: "" },       // R7hr(LAB-P4) — authorizing signatory shown on the NABL print
   verifiedAt:    { type: Date, default: null },
 }, { timestamps: true });
 
@@ -114,6 +127,7 @@ const LabReportSchema = new Schema({
   reportedBy:   { type: Schema.Types.ObjectId, ref: "User" },
   reportedByName: { type: String, default: "" },
   verifiedBy:   { type: Schema.Types.ObjectId, ref: "User" },
+  verifiedByName: { type: String, default: "" },      // R7hr(LAB-P4) — authorizing signatory on the print
   verifiedAt:   { type: Date, default: null },
 
   // R7bh-F1 / R7bg-7-CRIT-2: PrintAudit infrastructure $incs this on

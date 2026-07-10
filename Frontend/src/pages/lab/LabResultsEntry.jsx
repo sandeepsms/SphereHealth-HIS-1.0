@@ -102,10 +102,19 @@ function flagFor(value, refMin, refMax) {
   return "";
 }
 
-/* R7hr(LAB-P1) — adapt a trend sheet (in-memory or saved) + one date
-   column into the `lab-report` printable's receipt shape. Empty cells on
-   that date are skipped so a partially-filled panel still prints cleanly. */
-function buildLabReportPayload({ uhid, patientName, age, gender, panelName, tests, dates, dateIdx, notes, verifiedByName }) {
+/* R7hr(LAB-P1, hardened LAB-P4) — adapt a trend sheet (in-memory or saved)
+   + one date column into the `lab-report` printable's receipt shape. Empty
+   cells on that date are skipped so a partially-filled panel still prints.
+
+   NABL / ISO 15189 content rules enforced here:
+   • collection + receipt date-time, sample ID, requesting clinician and
+     analyser come from the sheet's NABL meta (LAB-P4 fields);
+   • status prints FINAL only when the sheet is doctor-verified — anything
+     else is PROVISIONAL (the template shows the amber strip);
+   • the authorizing signatory is the VERIFIER stamped at verification —
+     never whoever happens to click Print;
+   • a verified sheet edited after release prints the AMENDED strip. */
+function buildLabReportPayload({ uhid, patientName, age, gender, panelName, tests, dates, dateIdx, notes, meta = {}, sheet = null }) {
   const dateISO = dates[dateIdx];
   const rows = (tests || []).map((t) => {
     const rd = (t.readings || [])[dateIdx];
@@ -117,16 +126,30 @@ function buildLabReportPayload({ uhid, patientName, age, gender, panelName, test
       unit: t.unit || "",
       referenceRange: (t.refMin != null && t.refMax != null) ? `${t.refMin} – ${t.refMax}` : "",
       flag: flagFor(val, t.refMin, t.refMax),
+      method: t.method || "",
+      equipmentId: meta.equipmentId || "",
     };
   }).filter(Boolean);
-  const reportNo = `LAB/${uhid}/${dateISO}`;
+  const verified = sheet?.status === "verified";
+  // amended = verified sheet touched after release (5s grace: the verify
+  // write itself bumps updatedAt).
+  const amended = !!(verified && sheet?.verifiedAt && sheet?.updatedAt
+    && (new Date(sheet.updatedAt) - new Date(sheet.verifiedAt)) > 5000);
+  const reportNo = meta.sampleId ? `LAB/${meta.sampleId}` : `LAB/${uhid}/${dateISO}`;
   return {
     payload: {
       patientName, uhid, age, gender,
       reportNo, sampleType: panelName,
-      collectedAt: dateISO, reportedAt: dateISO, status: "Final",
+      sampleId: meta.sampleId || "",
+      referringDoctor: meta.referringDoctor || "",
+      collectedAt: meta.sampleCollectedAt || dateISO,
+      receivedAt: meta.sampleReceivedAt || "",
+      reportedAt: new Date().toISOString(),
+      status: verified ? "Final" : "Provisional",
+      amended,
       interpretation: notes || "",
-      verifiedByName: verifiedByName || "",
+      verifiedByName: verified ? (sheet?.verifiedByName || "") : "",
+      verifiedAt: verified ? sheet?.verifiedAt : undefined,
       tests: rows,
       printAudit: { entityType: "LabReport", entityNumber: reportNo, UHID: uhid, patientName },
     },
@@ -251,19 +274,25 @@ function TrendTab({ uhid, patient }) {
   const [existing, setExisting] = useState([]);
   const [saving, setSaving] = useState(false);
   const [printPick, setPrintPick] = useState(false);   // R7hr(LAB-P1) multi-date print picker
+  // R7hr(LAB-P4) — NABL sample meta (collection/receipt datetimes, sample
+  // id, requesting clinician, analyser). Sheet-level; prints on the report.
+  const BLANK_META = { sampleId: "", sampleCollectedAt: "", sampleReceivedAt: "", referringDoctor: "", equipmentId: "" };
+  const [meta, setMeta] = useState(BLANK_META);
+  const uMeta = (k, v) => setMeta((m) => ({ ...m, [k]: v }));
 
-  // R7hr(LAB-P1) — generate + open a printable NABH lab report for one date
+  // R7hr(LAB-P1) — generate + open a printable NABL lab report for one date
   // column of the current sheet. Prints from live state, so it works before
-  // the sheet is even saved.
+  // the sheet is even saved; FINAL status + signatory come from the saved
+  // sheet's verification stamps only (LAB-P4).
   const printDate = (dateIdx) => {
     setPrintPick(false);
+    const sheet = editingId ? existing.find((e) => e._id === editingId) : null;
     const { payload, count } = buildLabReportPayload({
       uhid,
       patientName: patient?.patientName || "",
       age: patient?.age, gender: patient?.gender,
       panelName: panels[panelKey]?.label || panelKey,
-      tests, dates, dateIdx, notes,
-      verifiedByName: user?.fullName || "",
+      tests, dates, dateIdx, notes, meta, sheet,
     });
     if (!count) { toast.warn("No results entered for that date."); return; }
     openPrint("lab-report", payload);
@@ -300,6 +329,15 @@ function TrendTab({ uhid, patient }) {
     setTests(t.tests || []);
     setDates((t.dates || []).map(d => new Date(d).toISOString().slice(0,10)));
     setNotes(t.notes || "");
+    // R7hr(LAB-P4) — NABL meta round-trip (datetime-local wants "YYYY-MM-DDTHH:mm")
+    const dt = (d) => d ? new Date(d).toISOString().slice(0, 16) : "";
+    setMeta({
+      sampleId: t.sampleId || "",
+      sampleCollectedAt: dt(t.sampleCollectedAt),
+      sampleReceivedAt: dt(t.sampleReceivedAt),
+      referringDoctor: t.referringDoctor || "",
+      equipmentId: t.equipmentId || "",
+    });
   };
 
   const newSheet = () => {
@@ -307,6 +345,7 @@ function TrendTab({ uhid, patient }) {
     setPanelKey("CBC");
     setDates([todayISO()]);
     setNotes("");
+    setMeta(BLANK_META);   // R7hr(LAB-P4)
   };
 
   const addDate = () => {
@@ -350,6 +389,12 @@ function TrendTab({ uhid, patient }) {
         panelName: panels[panelKey]?.label || panelKey,
         tests, dates: dates.map(d => new Date(d)), notes,
         status: "reported",
+        // R7hr(LAB-P4) — NABL sample meta
+        sampleId: meta.sampleId,
+        sampleCollectedAt: meta.sampleCollectedAt ? new Date(meta.sampleCollectedAt) : null,
+        sampleReceivedAt: meta.sampleReceivedAt ? new Date(meta.sampleReceivedAt) : null,
+        referringDoctor: meta.referringDoctor,
+        equipmentId: meta.equipmentId,
       };
       if (editingId) {
         await axios.put(`${API}/lab-records/trends/${editingId}`, body, authHdr());
@@ -405,6 +450,39 @@ function TrendTab({ uhid, patient }) {
         )}
       </Card>
 
+      {/* R7hr(LAB-P4) — NABL / ISO 15189 sample details. These print on the
+          report header: primary-sample id, collection + lab-receipt date-time,
+          requesting clinician, analyser. */}
+      <div style={{ marginTop: 12 }}>
+        <Card title="Sample details (NABL report header)" color={C.purple} icon="pi-id-card">
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+            <Field label="Sample ID / Accession No">
+              <input value={meta.sampleId} onChange={(e) => uMeta("sampleId", e.target.value)} placeholder="e.g. S-2026-01432"
+                style={{ width: "100%", padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 12.5, fontFamily: "monospace", fontWeight: 700 }} />
+            </Field>
+            <Field label="Sample collected at">
+              <input type="datetime-local" value={meta.sampleCollectedAt} onChange={(e) => uMeta("sampleCollectedAt", e.target.value)}
+                style={{ width: "100%", padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 12.5 }} />
+            </Field>
+            <Field label="Received in lab at">
+              <input type="datetime-local" value={meta.sampleReceivedAt} onChange={(e) => uMeta("sampleReceivedAt", e.target.value)}
+                style={{ width: "100%", padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 12.5 }} />
+            </Field>
+            <Field label="Referring doctor">
+              <input value={meta.referringDoctor} onChange={(e) => uMeta("referringDoctor", e.target.value)} placeholder="Dr…"
+                style={{ width: "100%", padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 12.5 }} />
+            </Field>
+            <Field label="Analyser / Equipment ID">
+              <input value={meta.equipmentId} onChange={(e) => uMeta("equipmentId", e.target.value)} placeholder="e.g. SYSMEX-XN550 / EQ-07"
+                style={{ width: "100%", padding: "8px 10px", border: `1.5px solid ${C.border}`, borderRadius: 7, fontSize: 12.5, fontFamily: "monospace" }} />
+            </Field>
+          </div>
+          <div style={{ marginTop: 8, fontSize: 10.5, color: C.muted }}>
+            Report prints <b>PROVISIONAL</b> until a doctor verifies the sheet (History → verify); the verifier becomes the authorized signatory on the print.
+          </div>
+        </Card>
+      </div>
+
       {/* Grid */}
       <div style={{ marginTop: 12 }}>
         <Card title={`${editingId ? "Editing" : "New"} — ${panels[panelKey]?.label || panelKey}`} color={C.blue} icon="pi-table"
@@ -436,6 +514,7 @@ function TrendTab({ uhid, patient }) {
                 <tr style={{ background: "#f2f2f2", borderBottom: `2px solid ${C.border}` }}>
                   <th style={{ padding: "8px 10px", textAlign: "left", minWidth: 200, position: "sticky", left: 0, background: "#f2f2f2", zIndex: 1 }}>Test</th>
                   <th style={{ padding: "8px 6px", width: 60 }}>Unit</th>
+                  <th style={{ padding: "8px 6px", width: 95 }} title="NABL: examination method (Photometry, ELISA…)">Method</th>
                   <th style={{ padding: "8px 6px", width: 80 }}>Ref Min</th>
                   <th style={{ padding: "8px 6px", width: 80 }}>Ref Max</th>
                   {dates.map((d, i) => (
@@ -463,6 +542,10 @@ function TrendTab({ uhid, patient }) {
                         style={{ width: "100%", padding: "5px 6px", border: `1px solid ${C.border}`, borderRadius: 4, fontSize: 11 }} />
                     </td>
                     <td style={{ padding: 4 }}>
+                      <input value={t.method || ""} onChange={(e) => updateTest(ti, { method: e.target.value })} placeholder="Photometry"
+                        style={{ width: "100%", padding: "5px 6px", border: `1px solid ${C.border}`, borderRadius: 4, fontSize: 10.5 }} />
+                    </td>
+                    <td style={{ padding: 4 }}>
                       <input type="number" step="any" value={t.refMin ?? ""} onChange={(e) => updateTest(ti, { refMin: e.target.value === "" ? null : Number(e.target.value) })}
                         style={{ width: "100%", padding: "5px 6px", border: `1px solid ${C.border}`, borderRadius: 4, fontSize: 11 }} />
                     </td>
@@ -488,7 +571,7 @@ function TrendTab({ uhid, patient }) {
                   </tr>
                 ))}
                 {tests.length === 0 && (
-                  <tr><td colSpan={dates.length + 5} style={{ padding: 20, textAlign: "center", color: C.muted, fontSize: 12 }}>
+                  <tr><td colSpan={dates.length + 6} style={{ padding: 20, textAlign: "center", color: C.muted, fontSize: 12 }}>
                     No tests yet. Pick a preset or click + Test.
                   </td></tr>
                 )}
@@ -792,7 +875,8 @@ function HistoryTab({ uhid }) {
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  // R7hr(LAB-P1) — reprint a saved trend's latest column as a NABL lab report.
+  // R7hr(LAB-P1, LAB-P4) — reprint a saved trend's latest column as a NABL
+  // lab report: sample meta + FINAL/PROVISIONAL + amended come off the doc.
   const printTrend = (t) => {
     const ds = (t.dates || []).map((d) => new Date(d).toISOString().slice(0, 10));
     const { payload, count } = buildLabReportPayload({
@@ -800,7 +884,12 @@ function HistoryTab({ uhid }) {
       panelName: t.panelName || t.panelType,
       tests: t.tests, dates: ds.length ? ds : [todayISO()],
       dateIdx: (ds.length || 1) - 1, notes: t.notes,
-      verifiedByName: t.verifiedByName || t.createdByName || "",
+      meta: {
+        sampleId: t.sampleId || "", referringDoctor: t.referringDoctor || "",
+        sampleCollectedAt: t.sampleCollectedAt || "", sampleReceivedAt: t.sampleReceivedAt || "",
+        equipmentId: t.equipmentId || "",
+      },
+      sheet: t,
     });
     if (!count) { toast.warn("No values to print in this sheet."); return; }
     openPrint("lab-report", payload);

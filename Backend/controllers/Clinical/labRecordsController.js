@@ -211,7 +211,14 @@ exports.trendCreate = async (req, res) => {
 
 exports.trendUpdate = async (req, res) => {
   try {
-    const body = req.body || {};
+    const body = { ...(req.body || {}) };
+    // R7hr(LAB-P4) — same guard as reportUpdate (R7hr-233): verification is
+    // the lab.records.verify transition; a generic write must never forge
+    // the verified status or the signatory stamps on a NABL report.
+    if (body.status === "verified") delete body.status;
+    delete body.verifiedBy;
+    delete body.verifiedByName;
+    delete body.verifiedAt;
     if (body.tests) applyClassification(body.tests);
     body.updatedBy     = req.user?.id;
     body.updatedByName = await resolveUserName(req);
@@ -223,8 +230,10 @@ exports.trendUpdate = async (req, res) => {
 
 exports.trendVerify = async (req, res) => {
   try {
+    // R7hr(LAB-P4) — stamp the authorizing signatory's NAME too: the NABL
+    // print must show who released the report, not just an ObjectId.
     const row = await LabTrend.findByIdAndUpdate(req.params.id,
-      { $set: { status: "verified", verifiedBy: req.user?.id, verifiedAt: new Date() } },
+      { $set: { status: "verified", verifiedBy: req.user?.id, verifiedByName: await resolveUserName(req), verifiedAt: new Date() } },
       { new: true }).lean();
     if (!row) return res.status(404).json({ success: false, message: "Not found" });
     res.json({ success: true, data: row });
@@ -284,7 +293,7 @@ exports.reportUpdate = async (req, res) => {
 exports.reportVerify = async (req, res) => {
   try {
     const row = await LabReport.findByIdAndUpdate(req.params.id,
-      { $set: { status: "verified", verifiedBy: req.user?.id, verifiedAt: new Date() } },
+      { $set: { status: "verified", verifiedBy: req.user?.id, verifiedByName: await resolveUserName(req), verifiedAt: new Date() } },
       { new: true }).lean();
     if (!row) return res.status(404).json({ success: false, message: "Not found" });
     res.json({ success: true, data: row });
