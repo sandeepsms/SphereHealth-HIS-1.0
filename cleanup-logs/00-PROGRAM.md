@@ -15,7 +15,7 @@
 | # | Module | Scope | Parts | Status |
 |---|--------|-------|-------|--------|
 | M1 | **Pharmacy** (fresh 20/20 E2E — safest start) | BE 12.5k + FE 8.7k | A: BE models+services · B: pharmacyController+routes · C: FE pages | ✅ 2026-07-10 (61 LOC removed; layer already tight — R7 cycles) |
-| M2 | **Accounts/Finance/Tax** (20/20 E2E) | BE ~4.5k + FE 1.8k | A: BE reports/tax/cashier · B: FE console+pages | ⬜ |
+| M2 | **Accounts/Finance/Tax** (20/20 E2E) | BE ~4.5k + FE 1.8k | A: BE reports/tax/cashier · B: FE console+pages | ✅ 2026-07-10 (3 LOC; dono layers already tight) |
 | M3 | **Billing** (NABH-audited) | BE 14.7k + FE 3.6k | A: models+money/counter utils · B: controllers+services · C: FE + autoBilling | ⬜ |
 | M4 | **Lab/Investigation** | BE ~3.2k + FE lab | A: BE · B: FE + printables | ⬜ |
 | M5 | **TPA/Claims** | BE 1.5k + FE | A: BE · B: FE + claim printables | ⬜ |
@@ -36,4 +36,4 @@
 - **Left as-is:** risky cheezein jaanbूझkar nahi chhedi + wajah
 
 ## Status board yahin update hota rahega
-Current: **M2-A pending** (Accounts/Finance backend — reports/tax/cashier)
+Current: **M3-A pending** (Billing — models + money/counter utils; RULE 3 STRICT: money math bina before/after test ke NAHI chhedna)

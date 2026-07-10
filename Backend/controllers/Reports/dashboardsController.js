@@ -46,14 +46,11 @@
 
 "use strict";
 
-const mongoose       = require("mongoose");
 const PatientBill    = require("../../models/PatientBillModel/PatientBillModel");
 const Admission      = require("../../models/Patient/admissionModel");
 const OPD            = require("../../models/Patient/OPDModels");
 const Bed            = require("../../models/bedMgmt/bedsModel");
 const PharmacySale   = require("../../models/Pharmacy/PharmacySaleModel");
-const DrugBatch      = require("../../models/Pharmacy/DrugBatchModel");
-const Drug           = require("../../models/Pharmacy/DrugModel");
 const Investigation  = require("../../models/Investigation/InvestigationOrderModel");
 const BillingTrigger = require("../../models/Billing/BillingTrigger");
 const Appointment    = require("../../models/Appointment/appointmentModel");
