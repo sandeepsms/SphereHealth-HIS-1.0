@@ -4469,9 +4469,7 @@ exports.searchHSN = async (req, res) => {
     const rows = await HSNMaster.find(where, "code description gstRate category")
       .sort({ code: 1 }).limit(25).lean();
     res.status(200).json({ success: true, data: rows });
-  } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
-  }
+  } catch (e) { sendErr(res, e); }
 };
 
 // GET /api/pharmacy/hsn/:code — exact code lookup. Returns 404 if not in
@@ -4484,9 +4482,7 @@ exports.getHSNByCode = async (req, res) => {
     const row = await HSNMaster.findOne({ code, isActive: true }).lean();
     if (!row) return res.status(404).json({ success: false, message: "HSN code not found in master", code });
     res.status(200).json({ success: true, data: row });
-  } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
-  }
+  } catch (e) { sendErr(res, e); }
 };
 
 // POST /api/pharmacy/hsn — admin adds a new HSN entry when an invoice

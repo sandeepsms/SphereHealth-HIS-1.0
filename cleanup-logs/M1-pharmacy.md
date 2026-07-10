@@ -15,6 +15,8 @@
 ## Changes
 | Part | File | Kya tha → kya hua | LOC saved | Verified |
 |---|---|---|---|---|
+| A | models/Pharmacy/* + services/Pharmacy/* (5,949 LOC) | **Audit-clean — kuch nahi hataya.** Scans: duplicate helpers=0, unused exports=0, unused requires=0. R7 review cycles ne pehle hi tight kar rakha hai. Comments = institutional memory, jaanbujhkar untouched. | 0 | 3 automated scans |
+| B | controllers/Pharmacy/pharmacyController.js | 2 raw `catch → 500` (searchHSN, getHSNByCode) → `sendErr()` — ab ValidationError/CastError 400 dete hain, 500 nahi. Baaki controller sendErr idiom pe already hai. | 4 | node -c + HSN/stock/alerts smoke 200 |
 
 ## Security / NABH-NABL notes
 
