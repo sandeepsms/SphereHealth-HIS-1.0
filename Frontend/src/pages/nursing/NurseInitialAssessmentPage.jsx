@@ -128,28 +128,6 @@ const ta = {
 };
 
 /* ── Pill toggle for Yes/No ── */
-function YesNo({ value, onChange }) {
-  return (
-    <div style={{ display: "flex", gap: 6, marginTop: 2 }}>
-      {["Yes", "No"].map(v => (
-        <button
-          key={v}
-          onClick={() => onChange(v)}
-          style={{
-            padding: "6px 18px", borderRadius: 20, border: "1.5px solid",
-            borderColor: value === v ? (v === "Yes" ? C.green : C.red) : C.border,
-            background: value === v ? (v === "Yes" ? C.greenL : C.redL) : "white",
-            color: value === v ? (v === "Yes" ? C.green : C.red) : C.muted,
-            fontWeight: value === v ? 700 : 500, fontSize: 12, cursor: "pointer",
-            fontFamily: "'DM Sans',sans-serif", transition: "all .15s",
-          }}
-        >{v}</button>
-      ))}
-    </div>
-  );
-}
-
-/* ── Pain scale 0-10 ── */
 function PainScale({ value, onChange }) {
   const getColor = (n) => {
     if (n <= 3) return C.green;

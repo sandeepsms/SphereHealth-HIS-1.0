@@ -21,7 +21,7 @@
 | M5 | **TPA/Claims** | BE 1.5k + FE | A: BE · B: FE + claim printables | ✅ 2026-07-10 (audit-clean dono parts) |
 | M6 | **Clinical** | BE 16.6k + FE 13.4k | A: BE models · B: BE ctrl/services · C: FE pages | ✅ 2026-07-10 (34 catches→sendErr, dead locals; ~35 LOC) |
 | M7 | **Doctor** | BE 7.7k + FE 11.6k | A: BE · B: FE assessment pages · C: FE panels/notes | ✅ 2026-07-10 (**621 LOC removed** — superseded panel tabs + orphans) |
-| M8 | **Nursing** | FE 11.5k + nurse 4.4k | A: nursing pages · B: nurse panels · C: shared clinical components | ⬜ |
+| M8 | **Nursing** | FE 11.5k + nurse 4.4k | A: nursing pages · B: nurse panels · C: shared clinical components | ✅ 2026-07-10 (**1,117 LOC removed** — R7gn leftovers) |
 | M9 | **Patient/Reception** | BE 9.5k + FE 10.9k | A: BE · B: ReceptionConsole · C: patient pages | ⬜ |
 | M10 | **Prints** | 24.2k | A: shell/infra/openPrint · B: printables ½ · C: printables ½ + themes | ⬜ |
 | M11 | **Auth/User/RBAC/HR** | BE ~2.5k | A: auth/middleware · B: user/HR/credentials | ⬜ |
@@ -36,4 +36,4 @@
 - **Left as-is:** risky cheezein jaanbूझkar nahi chhedi + wajah
 
 ## Status board yahin update hota rahega
-Current: **M8-A pending** (Nursing FE 11.5k)
+Current: **M9-A pending** (Patient/Reception BE 9.5k)
