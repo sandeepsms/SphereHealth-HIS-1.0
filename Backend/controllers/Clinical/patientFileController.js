@@ -12,6 +12,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 const Patient            = require("../../models/Patient/patientModel");
+const sendErr = require("../../utils/sendErr");
 const Admission          = require("../../models/Patient/admissionModel");
 // OPDRegistration — the canonical store for every saved OPD visit
 // (chief complaint, HOPI, vitals, examination, diagnosis, prescription,
@@ -572,7 +573,7 @@ exports.getCompleteFile = async (req, res) => {
     });
   } catch (e) {
     console.error("[patientFile] getCompleteFile error:", e);
-    return res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };
 
@@ -647,7 +648,7 @@ exports.getFhirBundle = async (req, res) => {
     return res.json(bundle);
   } catch (e) {
     console.error("[patientFile] getFhirBundle error:", e);
-    return res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };
 
@@ -672,7 +673,7 @@ exports.signStatus = async (req, res) => {
       hint: probe.error,
     });
   } catch (e) {
-    return res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };
 
@@ -705,7 +706,7 @@ exports.verifyAuditChain = async (req, res) => {
     }
     return res.json({ success: true, checked: rows.length, tampered: bad.length, rows: bad });
   } catch (e) {
-    return res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };
 
@@ -737,7 +738,7 @@ exports.getActivityFeed = async (req, res) => {
     ]);
     return res.json({ success: true, data: rows, pagination: { page, limit, total } });
   } catch (e) {
-    return res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };
 
@@ -785,7 +786,7 @@ exports.logEvent = async (req, res) => {
     });
     return res.json({ success: true, data: row });
   } catch (e) {
-    return res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };
 
@@ -868,6 +869,6 @@ exports.getAuditBundle = async (req, res) => {
       },
     });
   } catch (e) {
-    return res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };

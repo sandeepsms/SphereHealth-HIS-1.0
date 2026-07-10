@@ -26,6 +26,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 const crypto = require("crypto");
+const sendErr = require("../../utils/sendErr");
 
 // token → { hash, expiresAt, used, purpose, userId }
 const otpStore = new Map();
@@ -105,7 +106,7 @@ exports.requestOtp = async (req, res) => {
       ...(process.env.NODE_ENV !== "production" && !process.env.SMS_PROVIDER ? { devOtp: otp } : {}),
     });
   } catch (e) {
-    return res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };
 
@@ -136,7 +137,7 @@ exports.verifyOtp = async (req, res) => {
     });
     return res.json({ success: true, nonce, expiresAt: Date.now() + NONCE_TTL_MS, purpose: row.purpose });
   } catch (e) {
-    return res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };
 

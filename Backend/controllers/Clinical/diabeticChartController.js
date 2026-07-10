@@ -11,6 +11,7 @@
  *   DELETE /:id/entry/:entryId    — soft-remove an entry
  */
 const DiabeticChart = require("../../models/Clinical/DiabeticChartModel");
+const sendErr = require("../../utils/sendErr");
 const Admission     = require("../../models/Patient/admissionModel");
 
 const todayStr = () => {
@@ -32,7 +33,7 @@ exports.getByUhidDate = async (req, res) => {
     const sheet = await DiabeticChart.findOne({ UHID: uhid, date }).lean();
     return res.json({ success: true, data: sheet || null });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -51,7 +52,7 @@ exports.listByUhid = async (req, res) => {
     }));
     res.json({ success: true, data: summary });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -99,7 +100,7 @@ exports.upsertSheet = async (req, res) => {
     );
     res.json({ success: true, data: sheet });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -114,7 +115,7 @@ exports.updateScale = async (req, res) => {
     if (!sheet) return res.status(404).json({ success: false, message: "Sheet not found" });
     res.json({ success: true, data: sheet });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -152,7 +153,7 @@ exports.addOrReplaceEntry = async (req, res) => {
     await sheet.save();
     res.json({ success: true, data: sheet });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -177,7 +178,7 @@ exports.patchEntry = async (req, res) => {
     await sheet.save();
     res.json({ success: true, data: sheet });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -192,7 +193,7 @@ exports.deleteEntry = async (req, res) => {
     await sheet.save();
     res.json({ success: true, data: sheet });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -205,6 +206,6 @@ exports.recommendDose = async (req, res) => {
     if (!sheet) return res.status(404).json({ success: false, message: "Sheet not found" });
     res.json({ success: true, data: recommend(sheet.slidingScale, bg) });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };

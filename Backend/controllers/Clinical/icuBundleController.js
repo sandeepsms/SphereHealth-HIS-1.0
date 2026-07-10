@@ -14,6 +14,7 @@
  *   - ClinicalAudit emit on save + finalize + per-bundle non-compliance signal
  */
 const mongoose       = require("mongoose");
+const sendErr = require("../../utils/sendErr");
 const ICUBundle      = require("../../models/Clinical/ICUBundleModel");
 const Admission      = require("../../models/Patient/admissionModel");
 const retryVersionError = require("../../utils/retryVersionError");
@@ -134,7 +135,7 @@ exports.listByUhid = async (req, res) => {
 
     res.json({ success: true, data: summary });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -213,7 +214,7 @@ exports.listByAdmission = async (req, res) => {
 
     res.json({ success: true, data });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -227,7 +228,7 @@ exports.getByDateShift = async (req, res) => {
     const sheet = await ICUBundle.findOne({ UHID: uhid, date, shift }).lean();
     res.json({ success: true, data: sheet || null });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -316,7 +317,7 @@ exports.upsertSheet = async (req, res) => {
 
     res.json({ success: true, data: sheet });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 

@@ -208,7 +208,6 @@ class MARController {
       // Confirm the witness holds mar.write.
       try {
         const User = require("../../models/User/userModel");
-        const { roleCan } = require("../../config/permissions");
         const wUser = await User.findById(witnessUserId).select("role fullName employeeId").lean();
         if (!wUser) {
           return res.status(400).json({ success: false, code: "HAM_WITNESS_NOT_FOUND", message: "Witness user not found" });

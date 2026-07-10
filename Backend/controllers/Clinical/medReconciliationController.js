@@ -16,6 +16,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 const MedReconciliation = require("../../models/Clinical/MedReconciliationModel");
+const sendErr = require("../../utils/sendErr");
 const Admission         = require("../../models/Patient/admissionModel");
 const Patient           = require("../../models/Patient/patientModel");
 const DoctorOrder       = require("../../models/Doctor/DoctorOrderModel");
@@ -68,7 +69,7 @@ exports.getReconciliation = async (req, res) => {
     }).lean();
     return res.json({ success: true, data: { ...doc, inpatient } });
   } catch (e) {
-    return res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };
 
@@ -145,7 +146,7 @@ exports.seedReconciliation = async (req, res) => {
 
     return res.json({ success: true, data: doc });
   } catch (e) {
-    return res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };
 
@@ -171,7 +172,7 @@ exports.updateReconciliation = async (req, res) => {
     }).catch(logErr("MedRecon", "activity-log"));
     return res.json({ success: true, data: doc });
   } catch (e) {
-    return res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };
 
@@ -198,7 +199,7 @@ exports.updateRow = async (req, res) => {
     }).catch(logErr("MedRecon", "activity-log"));
     return res.json({ success: true, data: doc });
   } catch (e) {
-    return res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };
 
@@ -250,7 +251,7 @@ async function reviewPhase(phase, req, res) {
     }).catch(logErr("MedRecon", "activity-log"));
     return res.json({ success: true, data: doc });
   } catch (e) {
-    return res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 }
 exports.reviewAdmit     = (req, res) => reviewPhase("ADMIT",     req, res);

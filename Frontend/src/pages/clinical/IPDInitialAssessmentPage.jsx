@@ -96,12 +96,6 @@ function Section({ title, icon, color = C.accent, badge, children, defaultOpen =
 function Grid2({ children, gap = 14 }) {
   return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap }}>{children}</div>;
 }
-function Grid3({ children }) {
-  return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>{children}</div>;
-}
-function Grid4({ children }) {
-  return <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>{children}</div>;
-}
 
 function Field({ label, required, children, hint }) {
   return (
@@ -474,7 +468,6 @@ const blankRx = () => ({
 });
 
 const ROUTES = ["Oral", "IV", "IM", "SC", "SL", "Topical", "Inhaled", "PR", "Nasal"];
-const FREQS  = ["OD", "BD", "TDS", "QID", "SOS", "Stat", "HS", "Alternate days", "Weekly"];
 
 /* ════════════════════════════════════════════════════════════════ */
 // R7ev — Named export so DoctorNotesPage can mount this inline (mirrors
