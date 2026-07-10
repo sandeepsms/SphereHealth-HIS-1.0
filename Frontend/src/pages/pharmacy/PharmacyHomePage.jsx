@@ -16,7 +16,6 @@ import { API_ENDPOINTS } from "../../config/api";
 import { openPrint } from "../../Components/print/openPrint";
 import { TabStrip } from "../../Components/admin-theme";
 import { useAuth } from "../../context/AuthContext";
-import TEMPLATES from "../../Components/print/printables/PharmacyBillTemplates";
 import PharmacyBill from "../../Components/print/printables/PharmacyBill";
 import PharmacyRegister, { REGISTER_HEADERS } from "../../Components/print/printables/PharmacyRegister";
 import PharmacyIndentsPage from "./PharmacyIndentsPage";
@@ -3565,62 +3564,6 @@ function RegisterPreviewModal({ headerId, isActive, settingsDoc, onClose, onUse 
                 background: isActive ? "#86efac" : "#0d9488", color: "#fff",
                 fontWeight: 800, fontSize: 12, cursor: isActive ? "default" : "pointer" }}>
               {isActive ? <><i className="pi pi-check" style={{ marginRight: 6 }} />Currently selected</> : <><i className="pi pi-check-circle" style={{ marginRight: 6 }} />Use this header</>}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function TemplatePreviewModal({ tplId, isActive, settingsDoc, onClose, onUse }) {
-  const tpl = TEMPLATES.find(t => t.id === tplId) || TEMPLATES[0];
-  const isInh = tpl.audience === "in-house";
-  // Build a "pharmacySettings" snapshot from the in-progress settings doc so the
-  // preview reflects the manager's outsourced identity in real time.
-  const phSettings = settingsDoc ? { ...settingsDoc, billTemplate: tplId } : null;
-  return (
-    <div onClick={onClose} style={{
-      position: "fixed", inset: 0, background: "rgba(15,23,42,.65)", zIndex: 1000,
-      display: "flex", alignItems: "center", justifyContent: "center", padding: 14,
-    }}>
-      <div onClick={e => e.stopPropagation()} style={{
-        background: "#fff", borderRadius: 14, width: "min(1100px, 98vw)",
-        maxHeight: "94vh", display: "flex", flexDirection: "column",
-        boxShadow: "0 20px 60px rgba(0,0,0,.35)",
-      }}>
-        <div style={{
-          padding: "12px 18px", display: "flex", alignItems: "center", gap: 10,
-          background: "linear-gradient(135deg,#7c3aed,#5b21b6)", color: "#fff",
-          borderTopLeftRadius: 14, borderTopRightRadius: 14,
-        }}>
-          <div style={{ width: 30, height: 30, borderRadius: 8, background: "rgba(255,255,255,.22)", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 800 }}>#{tpl.id}</div>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 800, fontSize: 15 }}>{tpl.label}</div>
-            <div style={{ fontSize: 11, opacity: .85 }}>{tpl.sub} · {isInh ? "In-house" : "Outsourced"}</div>
-          </div>
-          <button onClick={onClose} style={{ width: 30, height: 30, borderRadius: 8, border: "none", background: "rgba(255,255,255,.18)", color: "#fff", cursor: "pointer" }}><i className="pi pi-times" /></button>
-        </div>
-        <div style={{ flex: 1, overflow: "auto", background: "#e2e8f0", padding: 18 }}>
-          <div style={{ background: "#fff", boxShadow: "0 6px 22px rgba(15,23,42,.18)", maxWidth: 880, margin: "0 auto" }}>
-            <PharmacyBill
-              settings={DEMO_SETTINGS}
-              receipt={{ ...DEMO_BILL, template: tplId, pharmacySettings: phSettings }}
-            />
-          </div>
-        </div>
-        <div style={{ padding: "10px 18px", borderTop: `1px solid ${C.border}`, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10 }}>
-          <div style={{ fontSize: 11, color: C.muted }}>
-            <i className="pi pi-info-circle" style={{ marginRight: 5 }} />
-            Sample data shown — your real bills will use this template with actual patient and item data.
-          </div>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={onClose} style={{ padding: "8px 14px", borderRadius: 7, border: `1.5px solid ${C.border}`, background: "#fff", color: C.muted, fontWeight: 700, fontSize: 12, cursor: "pointer" }}>Close</button>
-            <button onClick={onUse} disabled={isActive}
-              style={{ padding: "8px 20px", borderRadius: 7, border: "none",
-                background: isActive ? "#86efac" : "#7c3aed", color: "#fff",
-                fontWeight: 800, fontSize: 12, cursor: isActive ? "default" : "pointer" }}>
-              {isActive ? <><i className="pi pi-check" style={{ marginRight: 6 }} />Currently selected</> : <><i className="pi pi-check-circle" style={{ marginRight: 6 }} />Use this template</>}
             </button>
           </div>
         </div>
