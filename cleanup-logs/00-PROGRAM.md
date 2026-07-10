@@ -18,7 +18,7 @@
 | M2 | **Accounts/Finance/Tax** (20/20 E2E) | BE ~4.5k + FE 1.8k | A: BE reports/tax/cashier · B: FE console+pages | ✅ 2026-07-10 (3 LOC; dono layers already tight) |
 | M3 | **Billing** (NABH-audited) | BE 14.7k + FE 3.6k | A: models+money/counter utils · B: controllers+services · C: FE + autoBilling | ✅ 2026-07-10 (shared sendErr util; 12 sites; money math untouched) |
 | M4 | **Lab/Investigation** | BE ~3.2k + FE lab | A: BE · B: FE + printables | ✅ 2026-07-10 (8 catches→sendErr, 2 unused requires) |
-| M5 | **TPA/Claims** | BE 1.5k + FE | A: BE · B: FE + claim printables | ⬜ |
+| M5 | **TPA/Claims** | BE 1.5k + FE | A: BE · B: FE + claim printables | ✅ 2026-07-10 (audit-clean dono parts) |
 | M6 | **Clinical** | BE 16.6k + FE 13.4k | A: BE models · B: BE ctrl/services · C: FE pages | ⬜ |
 | M7 | **Doctor** | BE 7.7k + FE 11.6k | A: BE · B: FE assessment pages · C: FE panels/notes | ⬜ |
 | M8 | **Nursing** | FE 11.5k + nurse 4.4k | A: nursing pages · B: nurse panels · C: shared clinical components | ⬜ |
@@ -36,4 +36,4 @@
 - **Left as-is:** risky cheezein jaanbूझkar nahi chhedi + wajah
 
 ## Status board yahin update hota rahega
-Current: **M5-A pending** (TPA/Claims backend)
+Current: **M6-A pending** (Clinical BE models — 16.6k, bada module, fresh session me shuru karna best)
