@@ -3,6 +3,7 @@
 // admin import of the yearly CMS file.
 
 const { Icd10Code, Icd10Meta } = require("../../models/Clinical/Icd10CodeModel");
+const sendErr = require("../../utils/sendErr");
 
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
@@ -37,7 +38,7 @@ exports.search = async (req, res) => {
     ]);
     res.json({ success: true, data: rows });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -47,7 +48,7 @@ exports.meta = async (_req, res) => {
     const m = await Icd10Meta.findOne({}).lean();
     res.json({ success: true, data: m ? { version: m.version, count: m.count, importedAt: m.importedAt, source: m.source } : { version: "", count: 0 } });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 

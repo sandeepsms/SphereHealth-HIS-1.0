@@ -23,7 +23,6 @@
 // Read-only. All callers use .lean() / aggregate so no docs are loaded.
 // ═══════════════════════════════════════════════════════════════════
 
-const mongoose = require("mongoose");
 const { LabTrend, LabReport } = require("../../models/Clinical/labRecordsModels");
 
 // Build the cumulative view for a patient + panel within an optional

@@ -7,6 +7,7 @@
  *   /reports       list / get / create / update / verify
  */
 const { LabTrend, LabReport } = require("../../models/Clinical/labRecordsModels");
+const sendErr = require("../../utils/sendErr");
 const resolveUserName = require("../../utils/userName");
 
 /* ── Reference panels (single source of truth, served to frontend) ── */
@@ -182,7 +183,7 @@ exports.trendList = async (req, res) => {
     if (req.query?.status) filter.status = req.query.status;
     const rows = await LabTrend.find(filter).sort({ createdAt: -1 }).limit(100).lean();
     res.json({ success: true, count: rows.length, data: rows });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+  } catch (e) { sendErr(res, e); }
 };
 
 exports.trendGet = async (req, res) => {
@@ -190,7 +191,7 @@ exports.trendGet = async (req, res) => {
     const row = await LabTrend.findById(req.params.id).lean();
     if (!row) return res.status(404).json({ success: false, message: "Not found" });
     res.json({ success: true, data: row });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+  } catch (e) { sendErr(res, e); }
 };
 
 exports.trendCreate = async (req, res) => {
@@ -249,7 +250,7 @@ exports.reportList = async (req, res) => {
     if (req.query?.status) filter.status = req.query.status;
     const rows = await LabReport.find(filter).sort({ reportDate: -1 }).limit(100).lean();
     res.json({ success: true, count: rows.length, data: rows });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+  } catch (e) { sendErr(res, e); }
 };
 
 exports.reportGet = async (req, res) => {
@@ -257,7 +258,7 @@ exports.reportGet = async (req, res) => {
     const row = await LabReport.findById(req.params.id).lean();
     if (!row) return res.status(404).json({ success: false, message: "Not found" });
     res.json({ success: true, data: row });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+  } catch (e) { sendErr(res, e); }
 };
 
 exports.reportCreate = async (req, res) => {
@@ -375,7 +376,7 @@ exports.qcList = async (req, res) => {
     }
     const rows = await LabQCLog.find(q).sort({ performedAt: -1 }).limit(500).lean();
     res.json({ success: true, count: rows.length, data: rows });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+  } catch (e) { sendErr(res, e); }
 };
 
 exports.qcCreate = async (req, res) => {
@@ -486,5 +487,5 @@ exports.panelsMerged = async (_req, res) => {
       out[c.code] = { label: c.label, tests: c.tests, _custom: true };
     }
     res.json({ success: true, data: out });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+  } catch (e) { sendErr(res, e); }
 };

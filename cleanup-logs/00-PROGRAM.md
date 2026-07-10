@@ -17,7 +17,7 @@
 | M1 | **Pharmacy** (fresh 20/20 E2E — safest start) | BE 12.5k + FE 8.7k | A: BE models+services · B: pharmacyController+routes · C: FE pages | ✅ 2026-07-10 (61 LOC removed; layer already tight — R7 cycles) |
 | M2 | **Accounts/Finance/Tax** (20/20 E2E) | BE ~4.5k + FE 1.8k | A: BE reports/tax/cashier · B: FE console+pages | ✅ 2026-07-10 (3 LOC; dono layers already tight) |
 | M3 | **Billing** (NABH-audited) | BE 14.7k + FE 3.6k | A: models+money/counter utils · B: controllers+services · C: FE + autoBilling | ✅ 2026-07-10 (shared sendErr util; 12 sites; money math untouched) |
-| M4 | **Lab/Investigation** | BE ~3.2k + FE lab | A: BE · B: FE + printables | ⬜ |
+| M4 | **Lab/Investigation** | BE ~3.2k + FE lab | A: BE · B: FE + printables | ✅ 2026-07-10 (8 catches→sendErr, 2 unused requires) |
 | M5 | **TPA/Claims** | BE 1.5k + FE | A: BE · B: FE + claim printables | ⬜ |
 | M6 | **Clinical** | BE 16.6k + FE 13.4k | A: BE models · B: BE ctrl/services · C: FE pages | ⬜ |
 | M7 | **Doctor** | BE 7.7k + FE 11.6k | A: BE · B: FE assessment pages · C: FE panels/notes | ⬜ |
@@ -36,4 +36,4 @@
 - **Left as-is:** risky cheezein jaanbूझkar nahi chhedi + wajah
 
 ## Status board yahin update hota rahega
-Current: **M4-A pending** (Lab/Investigation backend)
+Current: **M5-A pending** (TPA/Claims backend)

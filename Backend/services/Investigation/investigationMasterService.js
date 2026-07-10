@@ -1,6 +1,5 @@
 const InvestigationMaster = require("../../models/Investigation/InvestigationMasterModel");
 const InvestigationPricing = require("../../models/Investigation/InvestigationPricingModel");
-const { tpaService } = require("../tpa/tpaService"); // adjust path if needed
 
 class InvestigationMasterService {
   // ── GET all ───────────────────────────────────────────────────
