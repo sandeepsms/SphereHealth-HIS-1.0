@@ -245,19 +245,6 @@ function FL({ label, children, span }) {
   );
 }
 
-function SBARBox({ letter, title, color, value, onChange, placeholder }) {
-  return (
-    <div style={{ marginBottom: 10 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
-        <span style={{ width: 24, height: 24, borderRadius: 6, background: color + "25", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 13, color }}>{letter}</span>
-        <label className="his-label" style={{ marginBottom: 0, color }}>{title}</label>
-      </div>
-      <textarea className="his-textarea" style={{ minHeight: 64, borderColor: color + "40" }} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} />
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════ */
 function DoctorNotesContent({ selectedPatient }) {
   const { user } = useAuth();
   const navigate = useNavigate();

@@ -1,4 +1,5 @@
 const doctorService = require("../../services/Doctor/doctorService");
+const sendErr = require("../../utils/sendErr");
 
 /* ---------------------------------- */
 /* Duplicate Key Error Handler */
@@ -170,7 +171,7 @@ exports.getMyDoctorProfile = async (req, res) => {
     }
     return res.json({ success: true, data: doctor });
   } catch (e) {
-    return res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };
 
@@ -475,7 +476,7 @@ exports.setAvailability = async (req, res) => {
     await doctor.save();
     res.json({ success: true, data: doctor.availability });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -503,7 +504,7 @@ exports.serveNextToken = async (req, res) => {
     await doctor.save();
     res.json({ success: true, data: doctor.availability });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -556,6 +557,6 @@ exports.getDashboardQueues = async (req, res) => {
 
     res.json({ success: true, date: today.toISOString().slice(0, 10), data: rows });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
