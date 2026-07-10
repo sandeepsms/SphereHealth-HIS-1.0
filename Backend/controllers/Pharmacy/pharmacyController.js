@@ -904,6 +904,19 @@ exports.dispense = async (req, res) => {
       if (d) drugMetaMap.set(key, d);
     }
 
+    // PHARM-audit fix: backfill item.drugName / hsnCode from the drug master
+    // when the client didn't send them — the sale-item schema requires
+    // drugName, and the server already holds the authoritative name here.
+    // Keeps thin API clients (indent bridges, integrations) working without
+    // each one re-shipping the drug master fields.
+    for (const it of items) {
+      const meta = drugMetaMap.get(String(it.drugId));
+      if (meta) {
+        if (!it.drugName) it.drugName = meta.name;
+        if (!it.hsnCode && meta.hsnCode) it.hsnCode = meta.hsnCode;
+      }
+    }
+
     // R7hr-12-S2 (D8-07): pre-resolve a top-level prescriber registration
     // number for the sale. Priority: explicit req.body.prescriberRegistrationNo
     // → Doctor master lookup by doctorName. The Doctor master fallback only
@@ -1556,7 +1569,10 @@ exports.dispense = async (req, res) => {
       return res.status(status).json({ success: false, message: consumeErr.message });
     }
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    // PHARM-audit fix: route through sendErr so a Mongoose ValidationError
+    // (bad/missing item field from a client) returns 400 VALIDATION, not a
+    // 500 that reads like a server crash in the counter UI.
+    sendErr(res, e);
   }
 };
 
