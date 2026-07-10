@@ -8,6 +8,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 const billingService = require("../../services/Billing/billingService");
+const sendErr = require("../../utils/sendErr");
 const BillingService = require("../../services/Billing/billingService");
 
 // ── GET /api/billing/uhid/:UHID ───────────────────────────────
@@ -120,7 +121,7 @@ exports.getPreviousDues = async (req, res) => {
     });
     res.json({ success: true, data });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -294,7 +295,7 @@ exports.deleteDraftBill = async (req, res) => {
       message: "Draft bill deleted",
     });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -575,7 +576,7 @@ exports.checkDaycare = async (req, res) => {
     );
     res.json({ success: true, data });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -585,7 +586,7 @@ exports.getSummary = async (req, res) => {
     const data = await billingService.getBillingSummary();
     res.json({ success: true, data });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -870,7 +871,7 @@ exports.getRevenueBreakdown = async (req, res, next) => {
       return res.status(e.status).json({ success: false, message: e.message });
     }
     console.error("[billing] getRevenueBreakdown error:", e);
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -1048,7 +1049,7 @@ exports.getAging = async (req, res, next) => {
     res.json({ success: true, ...payload });
   } catch (e) {
     console.error("[billing] getAging error:", e);
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -1106,7 +1107,7 @@ exports.listBills = async (req, res) => {
       pagination: { total, page: Number(page), limit: Number(limit), pages: Math.ceil(total / Number(limit)) },
     });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 

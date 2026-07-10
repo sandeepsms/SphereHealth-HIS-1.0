@@ -4,6 +4,7 @@
 // active template for an insurer; if none exists it generates the standard form.
 
 const { PDFDocument } = require("pdf-lib");
+const sendErr = require("../../utils/sendErr");
 const InsurerFormTemplate = require("../../models/Billing/insurerFormTemplateModel");
 const { getInsurer } = require("../../config/insurers");
 
@@ -92,7 +93,7 @@ exports.listTemplates = async (req, res) => {
     const docs = await InsurerFormTemplate.find({ isActive: true })
       .select("-pdf").sort({ insurerCode: 1, formType: 1 }).lean();
     res.json({ success: true, data: docs });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+  } catch (e) { sendErr(res, e); }
 };
 
 // GET /api/insurer-forms/:code  → active template meta for one insurer
@@ -102,7 +103,7 @@ exports.getTemplate = async (req, res) => {
       insurerCode: req.params.code.toUpperCase(), formType: req.query.formType || "CLAIM", isActive: true,
     }).select("-pdf").sort({ version: -1 }).lean();
     res.json({ success: true, data: doc || null });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+  } catch (e) { sendErr(res, e); }
 };
 
 // GET /api/insurer-forms/:code/blank  → stream the stored blank PDF (preview)
@@ -116,7 +117,7 @@ exports.downloadBlank = async (req, res) => {
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `inline; filename="${doc.fileName || "blank.pdf"}"`);
     res.send(Buffer.from(buf));
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+  } catch (e) { sendErr(res, e); }
 };
 
 // POST /api/insurer-forms/:code/template  (multipart: pdf) — upload a blank
@@ -179,7 +180,7 @@ exports.updateFieldMap = async (req, res) => {
     ).select("-pdf");
     if (!doc) return res.status(404).json({ success: false, message: "Template not found" });
     res.json({ success: true, data: doc });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+  } catch (e) { sendErr(res, e); }
 };
 
 // DELETE /api/insurer-forms/:id  → deactivate (keeps history)
@@ -190,5 +191,5 @@ exports.deleteTemplate = async (req, res) => {
     ).select("-pdf");
     if (!doc) return res.status(404).json({ success: false, message: "Template not found" });
     res.json({ success: true, data: doc });
-  } catch (e) { res.status(500).json({ success: false, message: e.message }); }
+  } catch (e) { sendErr(res, e); }
 };
