@@ -67,6 +67,16 @@ const DischargeSummarySchema = new mongoose.Schema(
     finalDiagnosis: { type: String, trim: true },
     icdCode: { type: String, trim: true },
     comorbidities: [{ type: String, trim: true }],
+    // R7hr(ICD-P2) — picker-driven MULTI-diagnosis capture. Claims need the
+    // full coded list (primary + secondaries), not one code + prose
+    // comorbidities. Additive: old summaries with only icdCode still work
+    // (claimFormService falls back). Primary row mirrors icdCode.
+    codedDiagnoses: [{
+      dxType:      { type: String, enum: ["Primary", "Secondary"], default: "Secondary" },
+      code:        { type: String, trim: true },        // dotted ICD-10-CM, e.g. K35.80
+      description: { type: String, trim: true },
+      _id: false,
+    }],
 
     // ── Clinical Narrative ───────────────────────────────────
     historyOfPresentIllness: { type: String },

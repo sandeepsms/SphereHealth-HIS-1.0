@@ -2023,6 +2023,32 @@ export function InvestigationsSummaryTab({ admission, patient }) {
     return () => { cancelled = true; };
   }, [UHID]);
 
+  // R7hr(LAB-FU) — original scanned outside-report files attached to
+  // LabReports (PDF/JPG). Renders nothing when no report has attachments —
+  // upload UI is currently gated off at the lab desk, so this is the
+  // future-ready read side. Files are JWT-gated at /uploads, so open via
+  // an authed blob fetch (a plain <a href> can't send the Bearer header).
+  const [attachDocs, setAttachDocs] = useState([]);
+  useEffect(() => {
+    if (!UHID) { setAttachDocs([]); return; }
+    let cancelled = false;
+    axios.get(`${API_ENDPOINTS.BASE}/lab-records/reports?UHID=${encodeURIComponent(UHID)}`)
+      .then((r) => {
+        if (cancelled) return;
+        const rows = (r.data?.data || []).filter((x) => Array.isArray(x.attachments) && x.attachments.length);
+        setAttachDocs(rows.map((x) => ({ testName: x.testName, reportDate: x.reportDate, attachments: x.attachments })));
+      })
+      .catch(() => { if (!cancelled) setAttachDocs([]); });
+    return () => { cancelled = true; };
+  }, [UHID]);
+  const openAttachment = async (url) => {
+    try {
+      const origin = String(API_ENDPOINTS.BASE).replace(/\/api\/?$/, "");
+      const res = await axios.get(`${origin}${url}`, { responseType: "blob" });
+      window.open(URL.createObjectURL(res.data), "_blank", "noopener");
+    } catch { /* file missing / no access — chip stays inert */ }
+  };
+
   if (loading) return <div className="ppt-empty" style={{ padding: 24, color: "#64748b" }}>Loading investigations…</div>;
   if (error)   return <div className="ppt-empty" style={{ padding: 24, color: "#b91c1c" }}>⚠ {error}</div>;
 
@@ -2084,6 +2110,27 @@ export function InvestigationsSummaryTab({ admission, patient }) {
           </table>
         </div>
       ))}
+
+      {/* R7hr(LAB-FU) — attached original scanned reports (renders only when present) */}
+      {attachDocs.length > 0 && (
+        <div style={{ ...card, borderLeft: "4px solid #ea580c" }}>
+          <div style={head("#fff7ed", "#c2410c")}>📎 Attached original reports</div>
+          <div style={{ padding: "10px 16px", display: "flex", flexDirection: "column", gap: 8 }}>
+            {attachDocs.map((d, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", fontSize: 12.5 }}>
+                <b style={{ color: "#0f172a" }}>{d.testName}</b>
+                {d.reportDate && <span style={{ color: "#94a3b8", fontSize: 11 }}>{new Date(d.reportDate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</span>}
+                {d.attachments.map((url, j) => (
+                  <button key={j} onClick={() => openAttachment(url)}
+                    style={{ display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 10px", borderRadius: 7, border: "1px solid #fdba74", background: "#fff", color: "#c2410c", fontWeight: 700, fontSize: 11.5, cursor: "pointer" }}>
+                    {/\.(jpe?g|png|webp|gif)$/i.test(url) ? "🖼" : "📄"} {url.split("/").pop().replace(/^\d+-/, "").slice(0, 28)}
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Trends */}
       {trends.length > 0 && (

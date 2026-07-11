@@ -21,6 +21,7 @@ import SignaturePad from "../../Components/signature/SignaturePad";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 import MLCAutoStamp from "../../Components/mlc/MLCAutoStamp";
 import Icd10Picker from "../../Components/clinical/Icd10Picker";   // R7hr(ICD-P1.3)
+import { buildChronologicalLabNarrative } from "../../utils/labNarrative";   // R7hr(LAB-FU)
 import { confirm } from "../../Components/common/ConfirmDialog";
 import "../../Components/clinical/clinical-forms.css";
 
@@ -957,6 +958,9 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
     ipdNo: "", admissionDate: "", dischargeDate: new Date().toISOString().slice(0, 10),
     stayDays: "", doctorName: "", doctorRegNo: "", department: "",
     consultants: "", admittingDiagnosis: "", finalDiagnosis: "", icdCode: "",
+    // R7hr(ICD-P2) — additional coded diagnoses (Secondary); Primary is the
+    // icdCode + finalDiagnosis pair above. Merged into codedDiagnoses on save.
+    codedDx: [],
     comorbidities: "", historyOfPresentIllness: "", courseInHospital: "",
     // R7hr-200 — free-text investigations paragraph, auto-filled from the
     // patient's manual lab trends + imaging/path reports so the doctor
@@ -1234,11 +1238,15 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
         try {
           const autoInv = [];
           const narrLines = [];   // R7hr-200 — paragraph view of the same data
+          let chronoNarr = "";    // R7hr(LAB-FU) — range-aware chronological paragraph
           const _dt = (d) => d ? new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }) : "";
           // Lab trend sheets → latest reading per test (rows + one narrative line per panel)
           try {
             const tr = await axios.get(`${API_ENDPOINTS.BASE}/lab-records/trends`, { params: { UHID: found.UHID }, headers });
             const trends = Array.isArray(tr?.data?.data) ? tr.data.data : (Array.isArray(tr?.data) ? tr.data : []);
+            // R7hr(LAB-FU) — same values date-order me, ref-range explanation ke
+            // saath (Investigations tab wali shared util) — richest opening para.
+            chronoNarr = buildChronologicalLabNarrative(trends);
             trends.forEach(panel => {
               const panelParts = [];
               let panelDate = "";
@@ -1277,7 +1285,11 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
             const ai = await axios.get(`${API_ENDPOINTS.BASE}/admission-investigations`, { params: { uhid: found.UHID, admissionId: found._id }, headers });
             adminParagraph = (ai?.data?.data?.paragraph || "").trim();
           } catch (_) { /* fall back to narrLines */ }
-          const investNarrative = adminParagraph || (narrLines.length ? narrLines.join("\n") : "");
+          // R7hr(LAB-FU) — chronological range-aware paragraph leads; the
+          // day-wise aggregate (labs + imaging + orders) follows; legacy
+          // latest-per-panel lines only when both are unavailable.
+          const investNarrative = [chronoNarr, adminParagraph].filter(Boolean).join("\n\n")
+            || (narrLines.length ? narrLines.join("\n") : "");
           // Fill only when the doctor hasn't typed one / a draft hasn't restored
           // it — never clobber existing text.
           if (investNarrative) {
@@ -1491,7 +1503,13 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
     }
     setSaving(true);
     try {
-      const payload = { ...form, deptTemplate: selectedDept?.key, medications, investigations, procedures };
+      // R7hr(ICD-P2) — merge Primary (icdCode + finalDiagnosis) with the
+      // Secondary picker rows into the model's codedDiagnoses shape.
+      const codedDiagnoses = [
+        ...(form.icdCode || form.finalDiagnosis ? [{ dxType: "Primary", code: form.icdCode || "", description: form.finalDiagnosis || "" }] : []),
+        ...(form.codedDx || []).filter(d => d.code || d.description).map(d => ({ dxType: "Secondary", code: d.code || "", description: d.description || "" })),
+      ];
+      const payload = { ...form, codedDx: undefined, codedDiagnoses, deptTemplate: selectedDept?.key, medications, investigations, procedures };
       const r = await axios.post(API, payload, { headers });
       // Capture the freshly-created summary _id so the Finalize button
       // knows which document to flip + which admission to discharge.
@@ -1957,6 +1975,39 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
                 <input className="his-field" value={form.comorbidities} onChange={upd("comorbidities")} placeholder="e.g. T2DM, HTN, CKD Stage 3" />
               </F>
             </G2>
+
+            {/* R7hr(ICD-P2) — additional coded diagnoses. Every row is picker-
+                driven off the ICD-10 master; these flow into the claim forms
+                as Secondary diagnoses alongside the Primary above. */}
+            <div style={{ marginTop: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+                <span style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px" }}>
+                  Additional Coded Diagnoses (Secondary · ICD-10)
+                </span>
+                <button type="button"
+                  onClick={() => setForm(p => ({ ...p, codedDx: [...(p.codedDx || []), { code: "", description: "" }] }))}
+                  style={{ padding: "3px 10px", borderRadius: 6, border: `1.5px solid ${color}`, background: "#fff", color, fontWeight: 800, fontSize: 11, cursor: "pointer" }}>
+                  + Add diagnosis
+                </button>
+              </div>
+              {(form.codedDx || []).map((d, i) => (
+                <div key={i} style={{ display: "grid", gridTemplateColumns: "220px 1fr 30px", gap: 8, marginBottom: 6, alignItems: "center" }}>
+                  <Icd10Picker
+                    className="his-field"
+                    value={d.code}
+                    onChange={v => setForm(p => ({ ...p, codedDx: p.codedDx.map((x, j) => j === i ? { ...x, code: v } : x) }))}
+                    onPick={({ code, description }) => setForm(p => ({ ...p, codedDx: p.codedDx.map((x, j) => j === i ? { code, description } : x) }))}
+                    placeholder="code / diagnosis…"
+                  />
+                  <input className="his-field" value={d.description}
+                    onChange={e => setForm(p => ({ ...p, codedDx: p.codedDx.map((x, j) => j === i ? { ...x, description: e.target.value } : x) }))}
+                    placeholder="description (auto-fills on pick)" />
+                  <button type="button" title="Remove"
+                    onClick={() => setForm(p => ({ ...p, codedDx: p.codedDx.filter((_, j) => j !== i) }))}
+                    style={{ border: "none", background: "none", color: "#dc2626", fontWeight: 800, fontSize: 16, cursor: "pointer" }}>×</button>
+                </div>
+              ))}
+            </div>
           </Section>
 
           {/* History & Course */}
