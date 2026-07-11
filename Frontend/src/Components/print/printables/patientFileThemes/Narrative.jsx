@@ -473,7 +473,16 @@ const COVERAGE_BLOCKS = [
     row: (x) => [_cfmt(_pick(x,"reactionDate","createdAt")), _pick(x,"foodItem","food"), _pick(x,"reaction","symptoms"), _pick(x,"severity"), _pick(x,"actionTaken","action")] },
   { key: "codeResponseEvents", title: "Code / Resuscitation Events", nabh: "NABH FMS.5",
     headers: ["Time", "Code", "Location", "Outcome", "Response"], widths: ["18%","16%","22%","22%","22%"],
-    row: (x) => [_cfmt(_pick(x,"alertTime","createdAt")), _pick(x,"codeType","code"), _pick(x,"location","area"), _pick(x,"outcome"), _pick(x,"responseTime") && `${x.responseTime} min`] },
+    // R7hr(REG-V): real rows carry alertedAt / arrivalDelaySec /
+    // durationMinutes (codeResponseService), not the alertTime /
+    // responseTime the seed used — Response printed blank on every real
+    // code event (the NABH FMS.5 response-time figure).
+    row: (x) => {
+      const respMin = Number.isFinite(x.arrivalDelaySec) ? Math.round(x.arrivalDelaySec / 6) / 10
+        : (Number.isFinite(x.durationMinutes) ? x.durationMinutes : _pick(x, "responseTime"));
+      return [_cfmt(_pick(x,"alertedAt","alertTime","createdAt")), _pick(x,"codeType","code"), _pick(x,"location","area"), _pick(x,"outcome"),
+        (respMin !== "" && respMin != null) ? `${respMin} min` : ""];
+    } },
   { key: "promPremSurveys", title: "Patient Experience (PROM / PREM)", nabh: "Patient Feedback",
     headers: ["Date", "Type", "Score", "Comments"], widths: ["18%","20%","16%","46%"],
     row: (x) => [_cfmt(_pick(x,"submittedAt","createdAt")), _pick(x,"surveyType","type"), String(_pick(x,"overallScore","score") || ""), _pick(x,"comments","feedback")] },
@@ -544,11 +553,22 @@ function ComplianceRegisters({ registers }) {
               headers={["Date", "Detail", "Indication / Reason", "By", "Status"]}
               widths={["16%","30%","26%","16%","12%"]}
               rows={reg[k].map((x) => [
-                _cfmt(_pick(x,"eventDate","assessedAt","appliedAt","occurredAt","createdAt")),
-                _pick(x,"deviceType","stage","errorType","eventType","diagnosis","organism","detail","summary","description","title"),
-                _pick(x,"indication","reason","rootCause","cause","riskLevel","category"),
-                _pick(x,"recordedByName","orderedByName","assessedByName","recordedBy","actorName"),
-                _pick(x,"status","outcome","severity"),
+                /* R7hr(REG-V): each chain now ALSO carries the real schema/
+                   emitter field names (appended, so existing precedence is
+                   unchanged) — real runtime rows used to print blank Detail/
+                   Reason/By cells because only seed-era names were read. */
+                _cfmt(_pick(x,"eventDate","assessedAt","appliedAt","occurredAt","onsetDate","lamaAt","discoveredAt","startTime","createdAt")),
+                _pick(x,"deviceType","stage","errorType","eventType","diagnosis","organism","detail","summary","description","title",
+                       "antibiotic","medicationName","HAIType","actualProcedure","surgeryName","plannedProcedure","primaryCause","doctorCounsellingNotes")
+                  || [_pick(x,"restraintType"), Array.isArray(x.restraintDevice) ? x.restraintDevice.join(", ") : "", _pick(x,"chemicalAgent")].filter(Boolean).join(" · ")
+                  || [_pick(x,"ulcerStage") && `Stage ${x.ulcerStage}`, _pick(x,"ulcerSite")].filter(Boolean).join(" · ")
+                  || (x.morseScore != null && x.morseScore !== "" ? `Morse ${x.morseScore}` : ""),
+                _pick(x,"indication","reason","rootCause","cause","riskLevel","category",
+                       "lamaReason","interventionTaken","immediateCauseOfDeath","underlyingCause","riskTier","immediateAction","surgicalSpeciality"),
+                _pick(x,"recordedByName","orderedByName","assessedByName","recordedBy","actorName",
+                       "orderingDoctor","appliedBy","assessedBy","observedByName","reportedByName","counsellingDoctor",
+                       "attendingDoctor","certifyingDoctor","surgeonName","identifiedByEmpId","discoveredByEmpId","createdByName"),
+                _pick(x,"status","outcome","severity","severityNCC","interventionBundle"),
               ])}
             />
           </React.Fragment>

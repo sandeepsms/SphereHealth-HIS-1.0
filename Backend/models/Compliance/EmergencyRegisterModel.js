@@ -96,6 +96,12 @@ const EmergencyRegisterSchema = new Schema(
     isMLC: { type: Boolean, default: false, index: true },
     mlcNumber: { type: String, default: "" },
     mlcCaseId: { type: Schema.Types.ObjectId, ref: "MLCReport", default: null },
+    // R7hr(REG-V): emitEmergency has set these since day one, but strict
+    // mode silently dropped them because the schema lacked the fields —
+    // statutory MLC police details never persisted on the ER register.
+    policeStation: { type: String, default: "" },
+    policeOfficer: { type: String, default: "" },
+    policeFIRNo:   { type: String, default: "" },
 
     // ── Append-only lock ──
     locked: { type: Boolean, default: false, index: true },

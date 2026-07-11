@@ -1100,6 +1100,19 @@ async function emitECG(args = {}) {
       });
     }
 
+    // R7hr(REG-V): the auto-emit caller (doctorOrderRoutes) passes the real
+    // ward name ("Male General Ward") but the schema's location is a closed
+    // enum — the create() threw ValidationError, the catch below swallowed
+    // it, and NO auto-emitted ECG row was ever written. Normalize here so
+    // both the auto and manual paths are enum-safe.
+    const rawLoc = String(ecg.location || "");
+    const location =
+      /icu/i.test(rawLoc)                    ? "ICU"      :
+      /emerg|casualt|\ber\b/i.test(rawLoc)   ? "ER"       :
+      /cath/i.test(rawLoc)                   ? "Cath Lab" :
+      /day\s*care/i.test(rawLoc)             ? "Day Care" :
+      /opd|out\s*patient/i.test(rawLoc)      ? "OPD"      : "Ward";
+
     const row = await ECGRegister.create({
       patientId: patient._id,
       UHID: patient.UHID,
@@ -1111,7 +1124,7 @@ async function emitECG(args = {}) {
 
       ecgNumber,
       performedAt: performedAtVal,
-      location: ecg.location || "Ward",
+      location,
       leadType: ecg.leadType || "12-lead",
 
       indication: ecg.indication || "",
@@ -1715,7 +1728,7 @@ async function emitRestraint(args = {}) {
       adverseEvent: !!restraint.adverseEvent,
       adverseEventNotes: restraint.adverseEventNotes || "",
       status: endTime ? "Removed" : "Active",
-      sourceRef: restraint.sourceRef || null,
+      sourceRef: restraint.sourceRef || "",   // R7hr(REG-V): schema is String now
       sourceType: restraint.sourceType || "DoctorOrder",
       occurredAt: startTime,
       auditTrail: [{
@@ -3332,12 +3345,23 @@ async function emitDayCare(args = {}) {
 
     const cl = admission.dayCare?.preProcChecklist || {};
     const checklistComplete = !!(cl.consentVerified && cl.npoConfirmed && cl.siteMarked && cl.highRiskMedsReviewed);
+    // R7hr(REG-V): Admission has NO top-level age/gender — both callers pass
+    // the raw admission doc, so every register row was written age=null,
+    // sex="" and the statutory DC register printed a blank Age/Sex column.
+    // Pull them from the patient (same pattern as the readmission check).
+    let pt = null;
+    try {
+      const Patient = require("../../models/Patient/patientModel");
+      pt = admission.patientId
+        ? await Patient.findById(admission.patientId).select("age gender").lean()
+        : null;
+    } catch (_) { /* age/sex stay blank rather than failing the emit */ }
     const payload = {
       patientId:       admission.patientId,
       UHID:            admission.UHID,
       patientName:     admission.patientName || "",
-      age:             admission.age || null,
-      sex:             admission.gender || "",
+      age:             pt?.age ?? admission.age ?? null,
+      sex:             pt?.gender || admission.gender || "",
       admissionNumber: admission.admissionNumber || "",
       procedure:       admission.reasonForAdmission || admission.provisionalDiagnosis || "",
       doctor:          admission.attendingDoctor || "",
