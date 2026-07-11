@@ -2038,6 +2038,118 @@ exports.tpaQueryReply = async (req, res, next) => {
   } catch (e) { next(e); }
 };
 
+// R7hr(TPA-P3) — POST /api/billing/:billId/tpa-document (multipart "files")
+// Attach scanned claim-pack documents (pre-auth letters, query replies,
+// PODs). Files land via safeUpload under uploads/tpa-docs/; only the
+// server-derived paths are stored, re-validated through filterSafeUrls.
+// Atomic $push — same partial-select rationale as tpaQueryRaise.
+exports.tpaDocumentUpload = async (req, res, next) => {
+  try {
+    const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+    const { filterSafeUrls } = require("../../utils/urlValidator");
+    const files = req.files || [];
+    if (!files.length) return res.status(400).json({ success: false, message: "No files uploaded" });
+    const label = String(req.body?.label || "").trim().slice(0, 80);
+    const by = req.user?.fullName || req.user?.employeeId || "TPA Desk";
+    const docs = filterSafeUrls(files.map((f) => `/uploads/tpa-docs/${f.filename}`))
+      .map((url) => ({ url, label, uploadedBy: by }));
+    const bill = await PatientBill.findOneAndUpdate(
+      { _id: req.params.billId, paymentType: { $in: ["TPA", "CORPORATE"] } },
+      { $push: { tpaDocuments: { $each: docs } } },
+      { new: true, select: "UHID patient billNumber tpaDocuments" },
+    );
+    if (!bill) {
+      const exists = await PatientBill.exists({ _id: req.params.billId });
+      return res.status(exists ? 400 : 404).json({ success: false, message: exists ? "Documents apply to TPA/Corporate claims only" : "Bill not found" });
+    }
+    try {
+      const { emit } = require("../../models/Billing/BillingAudit");
+      await emit({
+        event: "TPA_DOC_ATTACHED", UHID: bill.UHID, patientId: bill.patient,
+        billId: bill._id, billNumber: bill.billNumber,
+        actorName: req.user?.fullName, actorId: req.user?._id,
+        reason: `${docs.length} claim document(s) attached${label ? ` — ${label}` : ""}`,
+      }, { req });
+    } catch (_) { /* audit best-effort */ }
+    res.status(201).json({ success: true, data: bill.tpaDocuments });
+  } catch (e) { next(e); }
+};
+
+// R7hr(TPA-P3) — DELETE /api/billing/:billId/tpa-document  Body: { docId }
+exports.tpaDocumentDelete = async (req, res, next) => {
+  try {
+    const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+    const docId = String(req.body?.docId || req.query?.docId || "");
+    if (!docId) return res.status(400).json({ success: false, message: "docId required" });
+    const before = await PatientBill.findById(req.params.billId).select("tpaDocuments UHID patient billNumber").lean();
+    if (!before) return res.status(404).json({ success: false, message: "Bill not found" });
+    const doc = (before.tpaDocuments || []).find((d) => String(d._id) === docId);
+    if (!doc) return res.status(404).json({ success: false, message: "Document not found on this claim" });
+    const bill = await PatientBill.findOneAndUpdate(
+      { _id: req.params.billId },
+      { $pull: { tpaDocuments: { _id: docId } } },
+      { new: true, select: "tpaDocuments" },
+    );
+    // best-effort unlink, confined to our own tpa-docs dir
+    if (/^\/uploads\/tpa-docs\/[a-zA-Z0-9._-]+$/.test(doc.url || "")) {
+      const fs = require("fs"), path = require("path");
+      fs.unlink(path.join(__dirname, "..", "..", doc.url.replace(/^\//, "")), () => {});
+    }
+    try {
+      const { emit } = require("../../models/Billing/BillingAudit");
+      await emit({
+        event: "TPA_DOC_REMOVED", UHID: before.UHID, patientId: before.patient,
+        billId: before._id, billNumber: before.billNumber,
+        actorName: req.user?.fullName, actorId: req.user?._id,
+        reason: `Claim document removed${doc.label ? ` — ${doc.label}` : ""}`,
+      }, { req });
+    } catch (_) { /* audit best-effort */ }
+    res.json({ success: true, data: bill.tpaDocuments });
+  } catch (e) { next(e); }
+};
+
+// R7hr(TPA-P3) — POST /api/billing/:billId/tpa-dispatch
+// Body: { mode, courierName, awbNo, sentTo, remarks }. Logs a claim-pack
+// dispatch (courier AWB is what the desk chases on "kuch nahi mila").
+exports.tpaDispatchRecord = async (req, res, next) => {
+  try {
+    const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+    const MODES = ["COURIER", "EMAIL", "PORTAL", "HAND_DELIVERY"];
+    const mode = String(req.body?.mode || "COURIER").toUpperCase();
+    if (!MODES.includes(mode)) return res.status(400).json({ success: false, message: `mode must be one of ${MODES.join(", ")}` });
+    if (mode === "COURIER" && !String(req.body?.awbNo || "").trim()) {
+      return res.status(400).json({ success: false, message: "awbNo required for courier dispatch — that's the number you chase" });
+    }
+    const entry = {
+      mode,
+      courierName: String(req.body?.courierName || "").trim().slice(0, 80),
+      awbNo:       String(req.body?.awbNo || "").trim().slice(0, 60),
+      sentTo:      String(req.body?.sentTo || "").trim().slice(0, 120),
+      remarks:     String(req.body?.remarks || "").trim().slice(0, 300),
+      dispatchedBy: req.user?.fullName || req.user?.employeeId || "TPA Desk",
+    };
+    const bill = await PatientBill.findOneAndUpdate(
+      { _id: req.params.billId, paymentType: { $in: ["TPA", "CORPORATE"] } },
+      { $push: { tpaDispatchLog: entry } },
+      { new: true, select: "UHID patient billNumber tpaDispatchLog" },
+    );
+    if (!bill) {
+      const exists = await PatientBill.exists({ _id: req.params.billId });
+      return res.status(exists ? 400 : 404).json({ success: false, message: exists ? "Dispatch applies to TPA/Corporate claims only" : "Bill not found" });
+    }
+    try {
+      const { emit } = require("../../models/Billing/BillingAudit");
+      await emit({
+        event: "TPA_DISPATCHED", UHID: bill.UHID, patientId: bill.patient,
+        billId: bill._id, billNumber: bill.billNumber,
+        actorName: req.user?.fullName, actorId: req.user?._id,
+        reason: `Claim pack dispatched via ${mode}${entry.awbNo ? ` — AWB ${entry.awbNo}` : ""}${entry.sentTo ? ` to ${entry.sentTo}` : ""}`,
+      }, { req });
+    } catch (_) { /* audit best-effort */ }
+    res.status(201).json({ success: true, data: bill.tpaDispatchLog });
+  } catch (e) { next(e); }
+};
+
 // POST /api/billing/:billId/tpa-deny  Body: { reason }
 // NOTE: the bill schema's tpaClaimStatus enum is
 // [NOT_APPLICABLE, PENDING, SUBMITTED, APPROVED, REJECTED, PARTIAL_APPROVED]

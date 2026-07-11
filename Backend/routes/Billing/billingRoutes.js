@@ -73,6 +73,17 @@ router.post("/:billId/tpa-deny",           vBill, requireAction("tpa.claim"),   
 // REJECTED claim re-submits via tpa-preauth-submit (ALLOWED_FROM covers it).
 router.post("/:billId/tpa-query",                vBill, requireAction("tpa.claim"), ctrl.tpaQueryRaise);
 router.post("/:billId/tpa-query/:queryId/reply", vBill, requireAction("tpa.claim"), ctrl.tpaQueryReply);
+// R7hr(TPA-P3) — claim-pack documents (scanned pre-auth/approval/POD, PDF or
+// image, ≤5 files ×5 MB via safeUpload → uploads/tpa-docs/) + dispatch log.
+const path = require("path");
+const fs = require("fs");
+const { safeUpload } = require("../../middleware/safeUpload");
+const TPA_DOCS_DIR = path.join(__dirname, "..", "..", "uploads", "tpa-docs");
+try { fs.mkdirSync(TPA_DOCS_DIR, { recursive: true }); } catch (_) { /* exists */ }
+const uploadTpaDoc = safeUpload({ destination: TPA_DOCS_DIR, allowedKinds: ["image", "document"] });
+router.post  ("/:billId/tpa-document", vBill, requireAction("tpa.claim"), uploadTpaDoc.array("files", 5), ctrl.tpaDocumentUpload);
+router.delete("/:billId/tpa-document", vBill, requireAction("tpa.claim"), ctrl.tpaDocumentDelete);
+router.post  ("/:billId/tpa-dispatch", vBill, requireAction("tpa.claim"), ctrl.tpaDispatchRecord);
 // R7z: short-pay reconciliation — TPA settles less than approved, this
 // endpoint posts the actual remittance + handles the shortfall (default:
 // bump patientPayableAmount; alt: write off via extraDiscount).

@@ -447,6 +447,34 @@ const PatientBillSchema = new mongoose.Schema(
         status:     { type: String, enum: ["OPEN", "REPLIED"], default: "OPEN" },
       },
     ],
+    // R7hr(TPA-P3) — claim-pack DOCUMENTS: scanned pre-auth request/approval
+    // letters, query-reply proofs, dispatch PODs. Server-derived /uploads
+    // paths only (safeUpload writes them; filterSafeUrls re-validates) —
+    // never client-supplied strings.
+    tpaDocuments: [
+      {
+        url:        { type: String, trim: true },
+        label:      { type: String, trim: true, default: "" },   // "Pre-auth approval", "Query reply", "POD"…
+        uploadedBy: String,
+        uploadedAt: { type: Date, default: Date.now },
+      },
+    ],
+    // R7hr(TPA-P3) — physical/electronic DISPATCH tracking. A claim pack
+    // couriered to the TPA (or emailed / filed on portal / handed over) gets
+    // a row here; the AWB number is what the desk chases when an insurer
+    // says "kuch nahi mila". Multiple rows — initial pack + query-reply
+    // dispatches all log separately.
+    tpaDispatchLog: [
+      {
+        mode:         { type: String, enum: ["COURIER", "EMAIL", "PORTAL", "HAND_DELIVERY"], default: "COURIER" },
+        courierName:  { type: String, trim: true, default: "" },
+        awbNo:        { type: String, trim: true, default: "" },   // airway-bill / tracking no
+        sentTo:       { type: String, trim: true, default: "" },   // TPA branch / email / portal ref
+        remarks:      { type: String, trim: true, default: "" },
+        dispatchedBy: String,
+        dispatchedAt: { type: Date, default: Date.now },
+      },
+    ],
     // R7bb-FIX-E-15 / D3-HIGH-2: maker-checker on TPA approval. The
     // user who SUBMITTED the preauth cannot also APPROVE the claim —
     // otherwise a single TPA Coordinator can move from preauth straight

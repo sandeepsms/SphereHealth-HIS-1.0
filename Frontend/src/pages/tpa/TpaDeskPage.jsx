@@ -28,6 +28,7 @@ export default function TpaDeskPage() {
   const [claims, setClaims] = useState([]);
   const [loading, setLoading] = useState(true);
   const [queryFor, setQueryFor] = useState(null);   // claim being queried/replied
+  const [docsFor, setDocsFor] = useState(null);     // R7hr(TPA-P3) — claim whose docs/dispatch modal is open
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -139,6 +140,10 @@ export default function TpaDeskPage() {
                       style={{ padding: "4px 10px", borderRadius: 7, border: `1px solid ${C.violet}`, background: "#fff", color: C.violet, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 11 }}>
                       ❓ Queries
                     </button>
+                    <button onClick={() => setDocsFor(cl)} title="Claim documents + dispatch tracking"
+                      style={{ marginLeft: 6, padding: "4px 10px", borderRadius: 7, border: `1px solid ${C.green}`, background: "#fff", color: C.green, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 11 }}>
+                      📎 Docs{(cl.tpaDocuments?.length || cl.tpaDispatchLog?.length) ? ` (${(cl.tpaDocuments || []).length}·🚚${(cl.tpaDispatchLog || []).length})` : ""}
+                    </button>
                   </Td>
                 </tr>
               );
@@ -149,6 +154,117 @@ export default function TpaDeskPage() {
       </div>
 
       {queryFor && <QueryModal claim={queryFor} onClose={() => setQueryFor(null)} onSaved={() => { setQueryFor(null); load(); }} />}
+      {docsFor && <DocsModal claim={docsFor} onClose={() => setDocsFor(null)} onSaved={() => { setDocsFor(null); load(); }} />}
+    </div>
+  );
+}
+
+/* R7hr(TPA-P3) — claim documents + dispatch tracking. Scanned pre-auth /
+   approval letters / PODs attach here (safeUpload backend); every physical
+   or electronic dispatch of the claim pack logs a row with the AWB the
+   desk chases when the insurer says "kuch nahi mila". */
+function DocsModal({ claim, onClose, onSaved }) {
+  const [label, setLabel] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [docs, setDocs] = useState(claim.tpaDocuments || []);
+  const [dispatches, setDispatches] = useState(claim.tpaDispatchLog || []);
+  const [dis, setDis] = useState({ mode: "COURIER", courierName: "", awbNo: "", sentTo: "", remarks: "" });
+  const fileRef = React.useRef(null);
+  const FILE_ORIGIN = String(API_ENDPOINTS.BASE).replace(/\/api\/?$/, "");
+
+  const upload = async () => {
+    const files = fileRef.current?.files;
+    if (!files?.length) return toast.error("Pehle file choose karo (PDF/JPG)");
+    const fd = new FormData();
+    Array.from(files).slice(0, 5).forEach((f) => fd.append("files", f));
+    if (label.trim()) fd.append("label", label.trim());
+    setBusy(true);
+    try {
+      const r = await axios.post(`${API_ENDPOINTS.BILLING}/${claim._id}/tpa-document`, fd);
+      setDocs(r.data?.data || []);
+      if (fileRef.current) fileRef.current.value = "";
+      setLabel("");
+      toast.success("Document(s) attached");
+    } catch (e) { toast.error(e?.response?.data?.message || "Upload failed"); }
+    setBusy(false);
+  };
+  const delDoc = async (docId) => {
+    try {
+      const r = await axios.delete(`${API_ENDPOINTS.BILLING}/${claim._id}/tpa-document`, { data: { docId } });
+      setDocs(r.data?.data || []);
+    } catch (e) { toast.error(e?.response?.data?.message || "Delete failed"); }
+  };
+  const openDoc = async (url) => {
+    try {
+      const r = await axios.get(`${FILE_ORIGIN}${url}`, { responseType: "blob" });
+      window.open(URL.createObjectURL(r.data), "_blank", "noopener");
+    } catch { toast.error("File open nahi hui"); }
+  };
+  const recordDispatch = async () => {
+    if (dis.mode === "COURIER" && !dis.awbNo.trim()) return toast.error("Courier ke liye AWB number zaroori hai");
+    setBusy(true);
+    try {
+      const r = await axios.post(`${API_ENDPOINTS.BILLING}/${claim._id}/tpa-dispatch`, dis);
+      setDispatches(r.data?.data || []);
+      setDis({ mode: "COURIER", courierName: "", awbNo: "", sentTo: "", remarks: "" });
+      toast.success("Dispatch recorded");
+    } catch (e) { toast.error(e?.response?.data?.message || "Failed"); }
+    setBusy(false);
+  };
+  const inp = { width: "100%", boxSizing: "border-box", padding: "7px 9px", border: "1px solid #cbd5e1", borderRadius: 7, fontSize: 12.5, fontFamily: "inherit" };
+  const MODE_LABEL = { COURIER: "Courier", EMAIL: "Email", PORTAL: "Portal", HAND_DELIVERY: "Hand delivery" };
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.45)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
+      <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 14, padding: 18, width: "min(620px,96vw)", maxHeight: "90vh", overflowY: "auto", boxShadow: "0 20px 50px rgba(0,0,0,.25)" }}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
+          <div style={{ fontWeight: 800, fontSize: 15 }}>📎 Claim Docs & Dispatch — {claim.billNumber || claim.patientName}</div>
+          <button onClick={onClose} style={{ border: "none", background: "transparent", fontSize: 18, cursor: "pointer", color: "#64748b" }}>✕</button>
+        </div>
+
+        {/* Documents */}
+        <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 6 }}>Documents ({docs.length})</div>
+        {docs.map((d) => (
+          <div key={d._id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", border: `1px solid ${C.line}`, borderRadius: 7, marginBottom: 5, fontSize: 12 }}>
+            <span>{/\.(jpe?g|png|webp|gif)$/i.test(d.url) ? "🖼" : "📄"}</span>
+            <button onClick={() => openDoc(d.url)} style={{ border: "none", background: "none", color: C.violet, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 12, textAlign: "left", flex: 1 }}>
+              {d.label || d.url.split("/").pop().replace(/^\d+-/, "")}
+            </button>
+            <span style={{ color: "#94a3b8", fontSize: 10.5 }}>{d.uploadedBy} · {d.uploadedAt ? new Date(d.uploadedAt).toLocaleDateString("en-IN") : ""}</span>
+            <button onClick={() => delDoc(d._id)} style={{ border: "none", background: "none", color: C.red, fontWeight: 800, cursor: "pointer", fontSize: 14 }}>×</button>
+          </div>
+        ))}
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "8px 10px", background: "#f8fafc", border: `1px dashed ${C.line}`, borderRadius: 8, marginBottom: 14 }}>
+          <input ref={fileRef} type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.webp" style={{ fontSize: 11.5, flex: "1 1 200px" }} />
+          <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="label (Pre-auth approval / POD…)" style={{ ...inp, width: 190 }} />
+          <button onClick={upload} disabled={busy} style={{ padding: "7px 14px", borderRadius: 7, border: "none", background: C.green, color: "#fff", fontWeight: 800, fontSize: 11.5, cursor: "pointer", fontFamily: "inherit" }}>{busy ? "…" : "⬆ Attach"}</button>
+        </div>
+
+        {/* Dispatch */}
+        <div style={{ fontSize: 11, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".4px", marginBottom: 6 }}>Dispatch log ({dispatches.length})</div>
+        {dispatches.map((d) => (
+          <div key={d._id} style={{ borderLeft: `3px solid ${C.violet}`, background: "#faf5ff", borderRadius: 6, padding: "6px 9px", marginBottom: 5, fontSize: 12 }}>
+            <strong>{MODE_LABEL[d.mode] || d.mode}</strong>
+            {d.awbNo && <> · AWB <strong style={{ fontFamily: "monospace" }}>{d.awbNo}</strong></>}
+            {d.courierName && <> · {d.courierName}</>}
+            {d.sentTo && <> → {d.sentTo}</>}
+            <span style={{ color: "#94a3b8", fontSize: 10.5 }}> ({d.dispatchedBy} · {d.dispatchedAt ? new Date(d.dispatchedAt).toLocaleString("en-IN", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : ""})</span>
+            {d.remarks && <div style={{ color: C.muted, fontSize: 11 }}>{d.remarks}</div>}
+          </div>
+        ))}
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8, padding: "10px", background: "#f8fafc", border: `1px dashed ${C.line}`, borderRadius: 8 }}>
+          <select value={dis.mode} onChange={(e) => setDis((p) => ({ ...p, mode: e.target.value }))} style={inp}>
+            {Object.entries(MODE_LABEL).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          </select>
+          <input value={dis.awbNo} onChange={(e) => setDis((p) => ({ ...p, awbNo: e.target.value }))} placeholder="AWB / tracking no *" style={{ ...inp, fontFamily: "monospace" }} />
+          <input value={dis.courierName} onChange={(e) => setDis((p) => ({ ...p, courierName: e.target.value }))} placeholder="courier (BlueDart / DTDC…)" style={inp} />
+          <input value={dis.sentTo} onChange={(e) => setDis((p) => ({ ...p, sentTo: e.target.value }))} placeholder="sent to (TPA branch / email)" style={inp} />
+          <input value={dis.remarks} onChange={(e) => setDis((p) => ({ ...p, remarks: e.target.value }))} placeholder="remarks" style={{ ...inp, gridColumn: "1 / -1" }} />
+          <button onClick={recordDispatch} disabled={busy} style={{ gridColumn: "1 / -1", padding: "9px 0", background: C.violet, color: "#fff", border: "none", borderRadius: 8, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }}>{busy ? "…" : "🚚 Record Dispatch"}</button>
+        </div>
+
+        <button onClick={onSaved} style={{ marginTop: 10, width: "100%", padding: "8px 0", border: `1px solid ${C.line}`, background: "#fff", borderRadius: 8, fontWeight: 700, cursor: "pointer", fontFamily: "inherit", fontSize: 12, color: C.muted }}>Done — refresh desk</button>
+      </div>
     </div>
   );
 }
