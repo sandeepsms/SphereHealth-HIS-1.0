@@ -12,13 +12,6 @@ import axios from "axios";
 import { toast } from "react-toastify";
 import API_ENDPOINTS from "../../config/api";
 import { openPrint } from "../../Components/print/openPrint";
-// R7fq Track C: shared print shell — replaces the legacy
-// openPrint("opd-prescription", payload) routing with direct
-// buildPrintShellHtml() calls so the SGRH-style header / patient strip /
-// signature zone / footer all come from one source of truth. The R7bt
-// fixes (full payload — HOPI / vitals / chronic / allergies / drugs /
-// investigations / advice) are preserved inside bodyHtml.
-import { buildPrintShellHtml } from "@/templates/PrintShell";
 import FingerprintConsentModal from "../../Components/clinical/FingerprintConsentModal";
 import DrugAutocomplete, { parseStrength, drugDisplayName } from "../../Components/clinical/DrugAutocomplete";
 import ServiceAutocomplete from "../../Components/clinical/ServiceAutocomplete";
