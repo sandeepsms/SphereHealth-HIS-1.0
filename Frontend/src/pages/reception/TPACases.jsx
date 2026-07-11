@@ -46,9 +46,11 @@ function printTPAAuth(bill) {
   // approval number, sanctioned amount, validity and co-pay block.
   openPrint("tpa-authorization", {
     requestNo:           bill.tpaClaimNumber || bill.billNumber,
-    date:                bill.tpaSubmittedAt || new Date().toISOString(),
+    // R7hr(TPA-UI): model fields are tpaPreAuthSubmittedAt / tpaPreAuthNumber
+    // — the old tpaSubmittedAt / tpaApprovalNumber reads never existed.
+    date:                bill.tpaPreAuthSubmittedAt || new Date().toISOString(),
     stage:               bill.tpaClaimStatus === "APPROVED" ? "approved" : bill.tpaClaimStatus === "DENIED" ? "denied" : "request",
-    approvalNumber:      bill.tpaApprovalNumber,
+    approvalNumber:      bill.tpaPreAuthNumber,
     approvedAmount:      bill.tpaApprovedAmount,
     validTill:           bill.tpaValidTill,
     coPayPercent:        bill.tpaCoPayPercent,
@@ -247,6 +249,10 @@ export default function TPACases() {
 
 function TPAActionModal({ bill, type, onClose, onDone }) {
   const [claimNumber, setClaimNumber] = useState(bill.tpaClaimNumber || "");
+  // R7hr(TPA-UI): NABH-P3.5 backend has accepted `preAuthNumber` on both
+  // submit + approve since day one — this input finally captures it (the
+  // TPA's AL/pre-auth reference the desk quotes on every chase call).
+  const [preAuthNumber, setPreAuthNumber] = useState(bill.tpaPreAuthNumber || "");
   const [requestedAmount, setRequestedAmount] = useState(bill.tpaPayableAmount || 0);
   const [approvedAmount, setApprovedAmount] = useState(bill.tpaPayableAmount || 0);
   const [reason, setReason] = useState("");
@@ -264,11 +270,13 @@ function TPAActionModal({ bill, type, onClose, onDone }) {
       if (type === "submit") {
         await axios.post(`${API_ENDPOINTS.BASE}/billing/${bill._id}/tpa-preauth-submit`, {
           claimNumber, requestedAmount: Number(requestedAmount) || 0,
+          preAuthNumber: preAuthNumber.trim(),
         });
         toast.success("Pre-auth submitted");
       } else if (type === "approve") {
         await axios.post(`${API_ENDPOINTS.BASE}/billing/${bill._id}/tpa-approve`, {
           approvedAmount: Number(approvedAmount) || 0,
+          preAuthNumber: preAuthNumber.trim(),
         });
         toast.success("Approval recorded");
       } else if (type === "deny") {
@@ -317,6 +325,10 @@ function TPAActionModal({ bill, type, onClose, onDone }) {
                 <label className="his-label">Requested Amount (₹)</label>
                 <input className="his-field" type="number" value={requestedAmount} onChange={e => setRequestedAmount(e.target.value)} />
               </div>
+              <div className="his-field-group">
+                <label className="his-label">Pre-Auth / AL Number (from TPA, if allotted)</label>
+                <input className="his-field" value={preAuthNumber} onChange={e => setPreAuthNumber(e.target.value)} placeholder="e.g. AL-2026-88231" />
+              </div>
               <div className="rx-banner rx-banner--info">
                 📄 Checklist before submission: photo ID, insurance card, doctor's reasoning, estimated cost breakdown, pre-existing disease declaration.
               </div>
@@ -327,6 +339,10 @@ function TPAActionModal({ bill, type, onClose, onDone }) {
               <div className="his-field-group">
                 <label className="his-label">Approved Amount (₹)</label>
                 <input className="his-field" type="number" value={approvedAmount} onChange={e => setApprovedAmount(e.target.value)} />
+              </div>
+              <div className="his-field-group">
+                <label className="his-label">Pre-Auth / AL Number (on approval letter)</label>
+                <input className="his-field" value={preAuthNumber} onChange={e => setPreAuthNumber(e.target.value)} placeholder="e.g. AL-2026-88231" />
               </div>
               <div className="rx-banner rx-banner--success">
                 ✓ Patient cashless validity activated up to this amount. Settlement will happen on discharge.

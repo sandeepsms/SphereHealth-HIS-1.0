@@ -123,7 +123,7 @@ export default function TpaDeskPage() {
       <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, overflow: "hidden" }}>
         <div style={{ padding: "9px 12px", fontWeight: 800, fontSize: 13 }}>Active claims {loading ? "· loading…" : `(${claims.length})`}</div>
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead><tr><Th>Bill</Th><Th>Patient</Th><Th>TPA</Th><Th>Status</Th><Th right>Approved ₹</Th><Th right>Queries</Th><Th right>Action</Th></tr></thead>
+          <thead><tr><Th>Bill</Th><Th>Patient</Th><Th>TPA</Th><Th>Pre-Auth / AL</Th><Th>Status</Th><Th right>Approved ₹</Th><Th right>Queries</Th><Th right>Action</Th></tr></thead>
           <tbody>
             {claims.map((cl) => {
               const open = (cl.tpaQueryLog || []).filter((q) => q.status === "OPEN").length;
@@ -132,6 +132,8 @@ export default function TpaDeskPage() {
                   <Td>{cl.billNumber || "(draft)"}</Td>
                   <Td>{cl.patient?.fullName || cl.patientName} · {cl.UHID}</Td>
                   <Td>{cl.tpa?.tpaName || cl.tpaName || "—"}</Td>
+                  {/* R7hr(TPA-UI): the AL number the desk quotes on chase calls */}
+                  <Td>{cl.tpaPreAuthNumber || "—"}</Td>
                   <Td tone={cl.tpaClaimStatus === "REJECTED" ? C.red : undefined}><strong>{cl.tpaClaimStatus}</strong></Td>
                   <Td right>₹{Number(cl.tpaApprovedAmount || 0).toLocaleString("en-IN")}</Td>
                   <Td right tone={open ? C.amber : undefined}>{(cl.tpaQueryLog || []).length}{open ? ` (${open} open)` : ""}</Td>
@@ -298,7 +300,7 @@ function QueryModal({ claim, onClose, onSaved }) {
   const resubmit = async () => {
     setSaving(true);
     try {
-      await axios.post(`${API_ENDPOINTS.BILLING}/${claim._id}/tpa-preauth-submit`, { claimNumber: claim.tpaClaimNumber, requestedAmount: Number(claim.tpaPayableAmount) || undefined });
+      await axios.post(`${API_ENDPOINTS.BILLING}/${claim._id}/tpa-preauth-submit`, { claimNumber: claim.tpaClaimNumber, requestedAmount: Number(claim.tpaPayableAmount) || undefined, preAuthNumber: claim.tpaPreAuthNumber || undefined });
       toast.success("Claim re-submitted to insurer");
       onSaved();
     } catch (e) { toast.error(e?.response?.data?.message || "Re-submit failed"); setSaving(false); }

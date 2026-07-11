@@ -151,6 +151,9 @@ export default function PharmacyLedgerPage({
   const [refAdvId, setRefAdvId] = useState("");      // chosen advance _id
   const [refAmt, setRefAmt]     = useState("");
   const [refReason, setRefReason] = useState("");
+  // R7hr(TPA-UI): NABH-P3.5 refund-to-kin capture (optional).
+  const [refToName, setRefToName] = useState("");
+  const [refToRel,  setRefToRel]  = useState("");
   const [refMode, setRefMode]   = useState("CASH");
   const [refTxn, setRefTxn]     = useState("");
   const [refSaving, setRefSaving] = useState(false);
@@ -846,6 +849,8 @@ export default function PharmacyLedgerPage({
     setRefReason("");
     setRefMode("CASH");
     setRefTxn("");
+    setRefToName("");
+    setRefToRel("");
     setRefOpen(true);
   };
   const submitRefund = async () => {
@@ -870,6 +875,8 @@ export default function PharmacyLedgerPage({
           refundReason: refReason.trim(),
           mode: refMode,
           transactionId: refTxn.trim() || undefined,
+          refundedToName: refToName.trim() || undefined,
+          refundedToRelation: refToRel.trim() || undefined,
         },
       );
       const refunded = r?.data?.data || r?.data || chosen;
@@ -1405,6 +1412,25 @@ export default function PharmacyLedgerPage({
                     style={{ width: "100%", padding: "8px 10px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12, marginTop: 3, fontFamily: "'DM Mono', monospace" }} />
                 </div>
               )}
+              {/* R7hr(TPA-UI): refund-to-kin — actual recipient when not the patient */}
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+                <div>
+                  <label style={{ fontSize: 10.5, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>
+                    Received by (if not patient)
+                  </label>
+                  <input value={refToName} onChange={e => setRefToName(e.target.value.slice(0, 120))}
+                    placeholder="Recipient's full name"
+                    style={{ width: "100%", padding: "8px 10px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12, marginTop: 3 }} />
+                </div>
+                <div>
+                  <label style={{ fontSize: 10.5, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>
+                    Relation to patient
+                  </label>
+                  <input value={refToRel} onChange={e => setRefToRel(e.target.value.slice(0, 60))}
+                    placeholder="e.g. Son, Wife"
+                    style={{ width: "100%", padding: "8px 10px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 12, marginTop: 3 }} />
+                </div>
+              </div>
             </div>
             <div style={{ display: "flex", gap: 10, marginTop: 18, justifyContent: "flex-end" }}>
               <button onClick={() => setRefOpen(false)} disabled={refSaving} style={{
