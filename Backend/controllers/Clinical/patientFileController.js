@@ -220,9 +220,45 @@ exports.getCompleteFile = async (req, res) => {
     // capped + lean. A schema without either field simply matches zero
     // rows — never throws.
     const _lazyModel = (p) => { try { return require(p); } catch { return null; } };
+
+    // ── R7hr(COV-SCOPE) — product decision (owner, 2026-07-12) ─────────
+    // The Complete File is the ADMISSION's medical record. On a
+    // readmitted patient these coverage collections used to mix every
+    // prior encounter's pharmacy dispenses / advances / prescriptions /
+    // ADRs into the current file. Scope each collection to the current
+    // admission: explicit admission linkage (any of the schema spellings
+    // in use) OR created inside the admission window — with a 72h
+    // lead-in grace (the ER visit / pre-admission workup of the SAME
+    // episode predates admissionDate) and a 24h post-discharge grace
+    // (exit paperwork: medical certificate, PREM survey).
+    // `?coverageScope=patient` restores the old patient-wide behaviour;
+    // OPD-only patients (no admission) stay patient-wide automatically.
+    const _scopeAdm = req.query.coverageScope === "patient"
+      ? null
+      : admissions.find((a) => ["Active", "Admitted"].includes(a.status)) || admissions[0] || null;
+    const _covScope = (() => {
+      if (!_scopeAdm) return null;
+      const or = [{ admissionId: _scopeAdm._id }, { admission: _scopeAdm._id }, { linkedAdmissionId: _scopeAdm._id }];
+      // Guard: an undefined admissionNumber clause would match every doc
+      // LACKING the field — only add the clause when the value exists.
+      if (_scopeAdm.admissionNumber) or.push({ admissionNumber: _scopeAdm.admissionNumber });
+      const startRaw = _scopeAdm.admissionDate || _scopeAdm.createdAt;
+      if (startRaw) {
+        const start = new Date(new Date(startRaw).getTime() - 72 * 3600e3);
+        const endRaw = _scopeAdm.actualDischargeDate || _scopeAdm.dischargeDate;
+        const end = endRaw ? new Date(new Date(endRaw).getTime() + 24 * 3600e3) : now;
+        or.push({ createdAt: { $gte: start, $lte: end } });
+      }
+      return { $or: or };
+    })();
+
     const _byPatient = (Model, name, { sort = { createdAt: -1 }, cap = 100 } = {}) =>
       Model
-        ? safe(name, () => Model.find({ $or: [{ UHID }, { patientUHID: UHID }] }).sort(sort).limit(cap).lean())
+        ? safe(name, () => Model.find(
+            _covScope
+              ? { $and: [{ $or: [{ UHID }, { patientUHID: UHID }] }, _covScope] }
+              : { $or: [{ UHID }, { patientUHID: UHID }] },
+          ).sort(sort).limit(cap).lean())
         : Promise.resolve([]);
 
     const [
@@ -577,6 +613,11 @@ exports.getCompleteFile = async (req, res) => {
         promPremSurveys,
         codeResponseEvents,
         complianceRegisters,
+        // R7hr(COV-SCOPE): which scoping the coverage collections used —
+        // "admission" (default when an admission exists) or "patient"
+        // (?coverageScope=patient opt-out, or OPD-only patient).
+        coverageScope: _covScope ? "admission" : "patient",
+        coverageAdmissionId: _scopeAdm?._id || null,
         timeline,
         completeness,
         pagination,
