@@ -115,9 +115,9 @@ export const PRINTABLES = {
   "refund-receipt":   { component: RefundReceipt,     title: "Refund Receipt",            defaultPaper: "half-a4" },
   "cost-estimate":    { component: CostEstimate,      title: "Cost Estimate · Indicative",defaultPaper: "a4"      },
   "tariff-list":      { component: TariffList,        title: "Hospital Tariff List",      defaultPaper: "a4"      },
-  "er-summary":       { component: ERDischargeSummary,title: "Emergency Treatment Summary", defaultPaper: "a4"    },
-  "dc-summary":       { component: DayCareSummary,    title: "Day Care Discharge Summary",  defaultPaper: "a4"    },
-  "er-handover":      { component: ERHandoverSBAR,    title: "ER → Ward Handover (SBAR)",   defaultPaper: "a4"    },
+  "er-summary":       { component: ERDischargeSummary,title: "Emergency Treatment Summary", defaultPaper: "a4", footer: "neutral" },
+  "dc-summary":       { component: DayCareSummary,    title: "Day Care Discharge Summary",  defaultPaper: "a4", footer: "neutral" },
+  "er-handover":      { component: ERHandoverSBAR,    title: "ER → Ward Handover (SBAR)",   defaultPaper: "a4", footer: "neutral" },
   "claim-part-b":     { component: ClaimFormPartB,    title: "Claim Form Part B (Hospital)",defaultPaper: "a4"    },
   "claim-part-a":     { component: ClaimFormPartA,    title: "Claim Form Part A (Insured)", defaultPaper: "a4"    },
   "pre-auth":         { component: PreAuthRequest,    title: "Cashless Pre-Authorisation",  defaultPaper: "a4"    },
@@ -140,58 +140,58 @@ export const PRINTABLES = {
   "gst-report":            { component: GstReportPrint,         title: "GST Outward Register",      defaultPaper: "a4" },
   "tpa-settlement":        { component: TpaSettlementPrint,     title: "TPA Settlement Statement",  defaultPaper: "a4" },
   "cashier-shift-close":   { component: CashierShiftClosePrint, title: "Cashier Shift Close",       defaultPaper: "a4" },
-  "schedule-x-register":   { component: ScheduleXRegisterPrint, title: "Schedule X Narcotics Register", defaultPaper: "a4", defaultOrient: "landscape" },
+  "schedule-x-register":   { component: ScheduleXRegisterPrint, title: "Schedule X Narcotics Register", defaultPaper: "a4", defaultOrient: "landscape", footer: "neutral" },
 
   // ── Clinical ──────────────────────────────────────────
-  "opd-prescription": { component: OPDPrescription,   title: "OPD Prescription (Rx)",     defaultPaper: "a4"      },
-  "discharge-summary":{ component: DischargeSummary,  title: "Discharge Summary",         defaultPaper: "a4"      },
-  "ipd-file":             { component: CompleteIPDFile, title: "Complete IPD File (uses admin-picked theme)", defaultPaper: "a4" },
+  "opd-prescription": { component: OPDPrescription,   title: "OPD Prescription (Rx)",     defaultPaper: "a4", footer: "neutral" },
+  "discharge-summary":{ component: DischargeSummary,  title: "Discharge Summary",         defaultPaper: "a4", footer: "neutral" },
+  "ipd-file":             { component: CompleteIPDFile, title: "Complete IPD File (uses admin-picked theme)", defaultPaper: "a4", footer: "neutral" },
   // R7fv — Condensed handover for a referring physician. Same receipt
   // payload as ipd-file; only the renderer subsets it down to the
   // first+last notes, latest MAR, consents, reports, transfusions and
   // procedures so the colleague gets a 2-4 page brief instead of the
   // full chronological file.
-  "referral-summary":     { component: ReferralSummary, title: "Referral Summary",                                    defaultPaper: "a4" },
+  "referral-summary":     { component: ReferralSummary, title: "Referral Summary",                                    defaultPaper: "a4", footer: "neutral" },
   // R7ft — 5 theme-forced preview slugs for the print gallery.
   // Each one hardcodes ?theme=<key> via the URL when opened from the
   // gallery card; CompleteIPDFile.jsx reads the override and ignores
   // settings.patientFilePrintTheme so admins can compare side-by-side
   // before picking the default. Each delegates to the SAME router →
   // SAME data normalizer → only theme renderer changes.
-  "ipd-file-narrative":   { component: CompleteIPDFile, title: "Patient File · Narrative Letter (Apollo/Fortis prose)", defaultPaper: "a4" },
-  "ipd-file-timeline":    { component: CompleteIPDFile, title: "Patient File · Chronological Journal (day-diary)",    defaultPaper: "a4" },
-  "ipd-file-executive":   { component: CompleteIPDFile, title: "Patient File · Executive Brief (Max/Tirath 2-col)",   defaultPaper: "a4" },
-  "ipd-file-audit":       { component: CompleteIPDFile, title: "Patient File · NABH Audit Table (inspector view)",     defaultPaper: "a4" },
-  "ipd-file-editorial":   { component: CompleteIPDFile, title: "Patient File · Editorial Magazine (glossy VIP)",      defaultPaper: "a4" },
-  "mar-sheet":        { component: MARSheet,          title: "MAR Sheet · Daily",         defaultPaper: "a4"      },
-  "doctor-order":     { component: DoctorOrderSheet,  title: "Doctor's Order Sheet",      defaultPaper: "a4"      },
-  "lab-report":       { component: LabReport,         title: "Laboratory Report",         defaultPaper: "a4"      },
-  "diagnostic-report":{ component: DiagnosticReport,  title: "Imaging / Diagnostic Report",defaultPaper: "a4"     },
+  "ipd-file-narrative":   { component: CompleteIPDFile, title: "Patient File · Narrative Letter (Apollo/Fortis prose)", defaultPaper: "a4", footer: "neutral" },
+  "ipd-file-timeline":    { component: CompleteIPDFile, title: "Patient File · Chronological Journal (day-diary)",    defaultPaper: "a4", footer: "neutral" },
+  "ipd-file-executive":   { component: CompleteIPDFile, title: "Patient File · Executive Brief (Max/Tirath 2-col)",   defaultPaper: "a4", footer: "neutral" },
+  "ipd-file-audit":       { component: CompleteIPDFile, title: "Patient File · NABH Audit Table (inspector view)",     defaultPaper: "a4", footer: "neutral" },
+  "ipd-file-editorial":   { component: CompleteIPDFile, title: "Patient File · Editorial Magazine (glossy VIP)",      defaultPaper: "a4", footer: "neutral" },
+  "mar-sheet":        { component: MARSheet,          title: "MAR Sheet · Daily",         defaultPaper: "a4", footer: "neutral" },
+  "doctor-order":     { component: DoctorOrderSheet,  title: "Doctor's Order Sheet",      defaultPaper: "a4", footer: "neutral" },
+  "lab-report":       { component: LabReport,         title: "Laboratory Report",         defaultPaper: "a4", footer: "neutral" },
+  "diagnostic-report":{ component: DiagnosticReport,  title: "Imaging / Diagnostic Report",defaultPaper: "a4", footer: "neutral" },
 
   // ── Letters / certificates / authorizations ───────────
-  "consent-form":     { component: ConsentForm,       title: "Consent Form",              defaultPaper: "a4"      },
-  "medical-certificate": { component: MedicalCertificate, title: "Medical Certificate",   defaultPaper: "half-a4" },
-  "referral-letter":  { component: ReferralLetter,    title: "Referral Letter",           defaultPaper: "a4"      },
+  "consent-form":     { component: ConsentForm,       title: "Consent Form",              defaultPaper: "a4", footer: "neutral" },
+  "medical-certificate": { component: MedicalCertificate, title: "Medical Certificate",   defaultPaper: "half-a4", footer: "neutral" },
+  "referral-letter":  { component: ReferralLetter,    title: "Referral Letter",           defaultPaper: "a4", footer: "neutral" },
   "tpa-authorization":{ component: TPAAuthorization,  title: "TPA / Cashless Authorization",defaultPaper: "a4"    },
 
   // ── Operational ───────────────────────────────────────
-  "visitor-pass":     { component: VisitorPass,       title: "Visitor / Attendant Pass",  defaultPaper: "half-a4" },
+  "visitor-pass":     { component: VisitorPass,       title: "Visitor / Attendant Pass",  defaultPaper: "half-a4", footer: "neutral" },
 
   // ── R7bj-F7: ward boy / housekeeping / security / dietary / mortuary / BMW / code ──
-  "ward-task-ticket":       { component: WardTaskTicket,        title: "Ward Task Ticket",                    defaultPaper: "half-a4" },
-  "equipment-transport":    { component: EquipmentTransport,    title: "Equipment Transport / Return Slip",   defaultPaper: "half-a4" },
-  "sample-collection-slip": { component: SampleCollectionSlip,  title: "Sample Collection Slip",              defaultPaper: "half-a4" },
-  "cleaning-task-slip":     { component: CleaningTaskSlip,      title: "Housekeeping Cleaning Task Slip",     defaultPaper: "half-a4" },
-  "spillage-report":        { component: SpillageReport,        title: "Spillage Incident Report",            defaultPaper: "a4" },
-  "pest-control-register":  { component: PestControlRegister,   title: "Pest Control Register Entry",         defaultPaper: "a4" },
-  "area-cleaning-checklist":{ component: AreaCleaningChecklist, title: "Area Cleaning Checklist",             defaultPaper: "a4" },
-  "gate-log-slip":          { component: GateLogSlip,           title: "Security Gate Log Entry",             defaultPaper: "half-a4" },
-  "incident-report":        { component: IncidentReportPrint,   title: "Incident Report",                     defaultPaper: "a4" },
-  "security-shift-register":{ component: SecurityShiftRegister, title: "Security Shift Register",             defaultPaper: "a4" },
-  "diet-plan":              { component: DietPlan,              title: "Diet Plan",                           defaultPaper: "a4" },
-  "mortuary-handover":      { component: MortuaryHandover,      title: "Mortuary Body Handover & Release",    defaultPaper: "a4" },
-  "bmw-manifest":           { component: BmwManifest,           title: "Bio-Medical Waste Manifest (Form-IV)",defaultPaper: "a4" },
-  "code-response-sheet":    { component: CodeResponseSheet,     title: "Code Response Event Sheet",           defaultPaper: "a4" },
+  "ward-task-ticket":       { component: WardTaskTicket,        title: "Ward Task Ticket",                    defaultPaper: "half-a4", footer: "neutral" },
+  "equipment-transport":    { component: EquipmentTransport,    title: "Equipment Transport / Return Slip",   defaultPaper: "half-a4", footer: "neutral" },
+  "sample-collection-slip": { component: SampleCollectionSlip,  title: "Sample Collection Slip",              defaultPaper: "half-a4", footer: "neutral" },
+  "cleaning-task-slip":     { component: CleaningTaskSlip,      title: "Housekeeping Cleaning Task Slip",     defaultPaper: "half-a4", footer: "neutral" },
+  "spillage-report":        { component: SpillageReport,        title: "Spillage Incident Report",            defaultPaper: "a4", footer: "neutral" },
+  "pest-control-register":  { component: PestControlRegister,   title: "Pest Control Register Entry",         defaultPaper: "a4", footer: "neutral" },
+  "area-cleaning-checklist":{ component: AreaCleaningChecklist, title: "Area Cleaning Checklist",             defaultPaper: "a4", footer: "neutral" },
+  "gate-log-slip":          { component: GateLogSlip,           title: "Security Gate Log Entry",             defaultPaper: "half-a4", footer: "neutral" },
+  "incident-report":        { component: IncidentReportPrint,   title: "Incident Report",                     defaultPaper: "a4", footer: "neutral" },
+  "security-shift-register":{ component: SecurityShiftRegister, title: "Security Shift Register",             defaultPaper: "a4", footer: "neutral" },
+  "diet-plan":              { component: DietPlan,              title: "Diet Plan",                           defaultPaper: "a4", footer: "neutral" },
+  "mortuary-handover":      { component: MortuaryHandover,      title: "Mortuary Body Handover & Release",    defaultPaper: "a4", footer: "neutral" },
+  "bmw-manifest":           { component: BmwManifest,           title: "Bio-Medical Waste Manifest (Form-IV)",defaultPaper: "a4", footer: "neutral" },
+  "code-response-sheet":    { component: CodeResponseSheet,     title: "Code Response Event Sheet",           defaultPaper: "a4", footer: "neutral" },
 
   // ── R7bj-F1 / F2: Physio + Kitchen sibling printables ───────────
   // Templates landed in R7bj; R7bm-F1 activated these registrations
@@ -199,27 +199,27 @@ export const PRINTABLES = {
   // until the component file exists" guard which was never lifted
   // when the component files were added on disk). Slugs match the
   // openPrint() callsites in physio + diet workflows.
-  "physio-session":         { component: PhysioSession,         title: "Physiotherapy Session Note",          defaultPaper: "a4" },
-  "physio-plan":            { component: PhysioPlan,            title: "Physiotherapy Treatment Plan",        defaultPaper: "a4" },
-  "kitchen-indent-slip":    { component: KitchenIndentSlip,     title: "Kitchen Indent Slip",                 defaultPaper: "half-a4" },
+  "physio-session":         { component: PhysioSession,         title: "Physiotherapy Session Note",          defaultPaper: "a4", footer: "neutral" },
+  "physio-plan":            { component: PhysioPlan,            title: "Physiotherapy Treatment Plan",        defaultPaper: "a4", footer: "neutral" },
+  "kitchen-indent-slip":    { component: KitchenIndentSlip,     title: "Kitchen Indent Slip",                 defaultPaper: "half-a4", footer: "neutral" },
 
   // ── R7bm-F7: regulatory printables for HIC.6 / cold-chain / food ADR ──
-  "sharps-injury":          { component: SharpsInjuryPrint,         title: "Sharps / Needle-stick Injury Report", defaultPaper: "a4" },
-  "cold-chain-log":         { component: ColdChainLogPrint,         title: "Cold-Chain Temperature Log",          defaultPaper: "a4", defaultOrient: "landscape" },
-  "adverse-food-reaction":  { component: AdverseFoodReactionPrint,  title: "Adverse Food Reaction Report",        defaultPaper: "a4" },
+  "sharps-injury":          { component: SharpsInjuryPrint,         title: "Sharps / Needle-stick Injury Report", defaultPaper: "a4", footer: "neutral" },
+  "cold-chain-log":         { component: ColdChainLogPrint,         title: "Cold-Chain Temperature Log",          defaultPaper: "a4", defaultOrient: "landscape", footer: "neutral" },
+  "adverse-food-reaction":  { component: AdverseFoodReactionPrint,  title: "Adverse Food Reaction Report",        defaultPaper: "a4", footer: "neutral" },
 
   // ── R7hr-174: Nurse N15 Valuables & Belongings handover slip ──
   // Auto-printed from IPDInitialAssessmentPage after the nurse signs the
   // IA AND has ticked "Receipt issued to patient/family" in N15. Family
   // signs to confirm receipt of listed items (jewellery, cash, etc.).
-  "valuables-handover":     { component: ValuablesHandoverSlip,     title: "Valuables & Belongings Handover Slip", defaultPaper: "half-a4" },
+  "valuables-handover":     { component: ValuablesHandoverSlip,     title: "Valuables & Belongings Handover Slip", defaultPaper: "half-a4", footer: "neutral" },
 
   // ── NABH PRE.3: Patient feedback QR slip ──
-  "feedback-slip":          { component: FeedbackSlip,              title: "Patient Feedback Slip",               defaultPaper: "half-a4" },
+  "feedback-slip":          { component: FeedbackSlip,              title: "Patient Feedback Slip",               defaultPaper: "half-a4", footer: "neutral" },
 
   // ── R7hr(ER-P3/DC-P3): statutory attendance registers ──
-  "er-register":            { component: ErRegister,                title: "Emergency Attendance Register",       defaultPaper: "a4", defaultOrient: "landscape" },
-  "dc-register":            { component: DcRegister,                title: "Day Care Register",                   defaultPaper: "a4", defaultOrient: "landscape" },
+  "er-register":            { component: ErRegister,                title: "Emergency Attendance Register",       defaultPaper: "a4", defaultOrient: "landscape", footer: "neutral" },
+  "dc-register":            { component: DcRegister,                title: "Day Care Register",                   defaultPaper: "a4", defaultOrient: "landscape", footer: "neutral" },
 };
 
 export default PRINTABLES;

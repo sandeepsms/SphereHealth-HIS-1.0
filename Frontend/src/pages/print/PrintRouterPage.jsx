@@ -11,6 +11,7 @@ import React, { useMemo } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import useHospitalSettings from "../../Components/print/useHospitalSettings";
 import PrintPreviewPage from "../../Components/print/PrintPreviewPage";
+import { PrintFooterContext } from "../../Components/print/PrintShell";
 import PRINTABLES from "../../Components/print/printables";
 import { useEnrichedPrintPayload } from "../../Components/print/printEnrichment";
 import "../../Components/print/print.css";
@@ -540,7 +541,12 @@ const PrintRouterPage = () => {
          POSTs to /api/print-audit before window.print(). */
       printAudit={payload?.printAudit}
     >
-      <Component settings={settings} receipt={receipt || {}} />
+      {/* R7hr(FOOTER-N): registry `footer: "neutral"` flows to PrintShell
+          via context so clinical/operational printables drop the billing
+          footer without each component threading a prop. */}
+      <PrintFooterContext.Provider value={cfg.footer || "billing"}>
+        <Component settings={settings} receipt={receipt || {}} />
+      </PrintFooterContext.Provider>
     </PrintPreviewPage>
   );
 };

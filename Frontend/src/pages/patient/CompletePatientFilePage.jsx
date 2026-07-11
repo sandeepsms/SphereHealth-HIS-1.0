@@ -2513,6 +2513,7 @@ function PrintBody({ data, docInitial, nurseInitial, docOther, nurseOther, viewe
       showBank={false}
       showSignatures={true}
       showTerms={true}
+      footerKind="neutral"
     >
     <main className="pf-print-body" data-uhid={uhid}>
       <PrintSection title="1. Admission Summary">

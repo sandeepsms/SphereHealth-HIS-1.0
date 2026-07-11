@@ -175,6 +175,9 @@ const FinalBill = ({ settings, receipt = {} }) => {
         documentTitle={docTitle}
         serialNo={receipt.billNo || receipt.invoiceNo}
         printCount={printCount}
+        /* R7hr(FOOTER-N): the audit view is a compliance log, not a bill —
+           prop override beats the slug's billing default. */
+        footerKind="neutral"
         infoItems={[
           { label: "Patient",       value: receipt.patientName },
           { label: "UHID",          value: receipt.uhid },
