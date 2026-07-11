@@ -19,6 +19,7 @@
     "formik": "^2.4.6",
     "html2pdf.js": "^0.14.0",
     "lucide-react": "^0.542.0",
+    "pdfjs-dist": "^6.1.200",
     "primeflex": "^4.0.0",
     "primeicons": "^7.0.0",
     "primereact": "^10.9.7",

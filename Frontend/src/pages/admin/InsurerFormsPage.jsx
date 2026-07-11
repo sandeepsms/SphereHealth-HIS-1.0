@@ -9,10 +9,14 @@
  * map stays editable. Insurers with no uploaded form fall back to the
  * generated standard-format claim form (still branded + auto-filled).
  */
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, Suspense } from "react";
 import axios from "axios";
 import { toast } from "react-toastify";
 import { API_ENDPOINTS } from "../../config/api";
+
+// R7hr(CLAIM-P5) — visual click-to-place mapper for flat PDFs. Lazy so
+// pdfjs-dist (~1MB) loads only when a map editor actually opens it.
+const PdfCoordinateMapper = React.lazy(() => import("./PdfCoordinateMapper"));
 
 const C = { ink: "#0f172a", muted: "#64748b", line: "#e2e8f0", teal: "#0e7490", green: "#166534", red: "#dc2626", amber: "#b45309" };
 const TYPE_ORDER = ["STANDALONE_HEALTH", "PRIVATE_GENERAL", "PSU", "DIGITAL"];
@@ -140,16 +144,35 @@ function MapEditor({ tpl, fields, onClose, onSaved }) {
   const [saving, setSaving] = useState(false);
   const acro = tpl.acroFields || [];
   const isFillable = tpl.hasAcroForm;
+  // R7hr(CLAIM-P5): visual mapper auto-opens for flat PDFs (they used to
+  // get only blind numeric x/y inputs); fillable PDFs can open it too —
+  // an x/y row acts as the overlay engine's fallback when acroName fails.
+  const [showMapper, setShowMapper] = useState(!isFillable);
 
   const setRow = (i, k, v) => setRows((rs) => rs.map((r, j) => j === i ? { ...r, [k]: v } : r));
   const addRow = () => setRows((rs) => [...rs, isFillable ? { field: "", acroName: acro[0] || "" } : { field: "", page: 0, x: 100, y: 700, size: 9 }]);
   const delRow = (i) => setRows((rs) => rs.filter((_, j) => j !== i));
 
+  // Click-to-place from the visual mapper: one coordinate row per field —
+  // update in place if the field is already mapped, else append.
+  const placeField = useCallback(({ field, page, x, y }) => {
+    setRows((rs) => {
+      const i = rs.findIndex((r) => r.field === field);
+      if (i >= 0) return rs.map((r, j) => j === i ? { ...r, page, x, y, size: r.size || 9 } : r);
+      return [...rs, { field, page, x, y, size: 9 }];
+    });
+  }, []);
+
   const save = async () => {
     setSaving(true);
     try {
-      const clean = rows.filter((r) => r.field && (r.acroName || (typeof r.x === "number" && typeof r.y === "number")))
-        .map((r) => ({ field: r.field, acroName: r.acroName || undefined, page: Number(r.page) || 0, x: r.x != null ? Number(r.x) : undefined, y: r.y != null ? Number(r.y) : undefined, size: Number(r.size) || 9 }));
+      // R7hr(CLAIM-P5): numeric inputs yield STRING x/y — the old
+      // `typeof r.x === "number"` filter silently dropped hand-edited
+      // coordinate rows on save. Accept anything that parses to a number.
+      const hasXY = (r) => r.x !== "" && r.x != null && !isNaN(Number(r.x))
+                        && r.y !== "" && r.y != null && !isNaN(Number(r.y));
+      const clean = rows.filter((r) => r.field && (r.acroName || hasXY(r)))
+        .map((r) => ({ field: r.field, acroName: r.acroName || undefined, page: Number(r.page) || 0, x: hasXY(r) ? Number(r.x) : undefined, y: hasXY(r) ? Number(r.y) : undefined, size: Number(r.size) || 9 }));
       await axios.put(`${API_ENDPOINTS.BASE}/insurer-forms/${tpl._id}/field-map`, { fieldMap: clean });
       toast.success(`Saved ${clean.length} field mappings`);
       onSaved();
@@ -159,13 +182,24 @@ function MapEditor({ tpl, fields, onClose, onSaved }) {
 
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(15,23,42,.45)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }} onClick={onClose}>
-      <div style={{ background: "#fff", borderRadius: 14, padding: 18, width: "min(760px, 94vw)", maxHeight: "88vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
-        <div style={{ fontSize: 16, fontWeight: 800, color: C.ink }}>Field Map — {tpl.insurerName} <span style={{ color: C.muted, fontSize: 12 }}>({tpl.fileName})</span></div>
+      <div style={{ background: "#fff", borderRadius: 14, padding: 18, width: "min(1000px, 96vw)", maxHeight: "90vh", overflow: "auto" }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <div style={{ fontSize: 16, fontWeight: 800, color: C.ink, flex: 1 }}>Field Map — {tpl.insurerName} <span style={{ color: C.muted, fontSize: 12 }}>({tpl.fileName})</span></div>
+          <Btn tone={showMapper ? "#475569" : C.teal} onClick={() => setShowMapper((s) => !s)}>
+            {showMapper ? "Hide visual mapper" : "🎯 Visual mapper"}
+          </Btn>
+        </div>
         <div style={{ fontSize: 11.5, color: C.muted, margin: "4px 0 12px" }}>
           {isFillable
             ? "Fillable PDF — map each system value to one of the form's field names."
-            : "Flat PDF — map each system value to a page + x/y position (points from bottom-left, A4 ≈ 595×842)."}
+            : "Flat PDF — pick a field and click on the form below where its value should print (or type x/y directly; points from bottom-left, A4 ≈ 595×842)."}
         </div>
+
+        {showMapper && (
+          <Suspense fallback={<div style={{ padding: 14, color: C.muted, fontSize: 12 }}>Loading PDF preview…</div>}>
+            <PdfCoordinateMapper insurerCode={tpl.insurerCode} formType={tpl.formType} rows={rows} fields={fields} onPlace={placeField} />
+          </Suspense>
+        )}
 
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead><tr>

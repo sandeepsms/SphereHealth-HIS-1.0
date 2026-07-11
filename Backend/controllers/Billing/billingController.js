@@ -80,7 +80,22 @@ exports.getClaimData = async (req, res, next) => {
 exports.getInsurerForm = async (req, res) => {
   try {
     const { fillInsurerForm } = require("../../services/Billing/insurerFormService");
-    const insurerCode = (req.query.insurerCode || "").trim();
+    let insurerCode = (req.query.insurerCode || "").trim();
+
+    // R7hr(CLAIM-P5) — fall back to the patient's REGISTERED insurer when the
+    // caller omits ?insurerCode (the IPD ledger "Company Form" button never
+    // passed it, so uploaded templates were silently never used from there).
+    if (!insurerCode) {
+      try {
+        const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+        const Patient = require("../../models/Patient/patientModel");
+        const bill = await PatientBill.findById(req.params.billId).select("patient").lean();
+        if (bill?.patient) {
+          const pat = await Patient.findById(bill.patient).select("insurerCode").lean();
+          insurerCode = (pat?.insurerCode || "").trim();
+        }
+      } catch { /* fall through — generated standard form */ }
+    }
 
     // CLAIM-P4.3 — look up an uploaded official template for this insurer (if
     // the model/collection exists). Soft: any failure falls back to generated.
