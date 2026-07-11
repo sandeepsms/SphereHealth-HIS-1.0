@@ -98,6 +98,9 @@ import ValuablesHandoverSlip    from "./ValuablesHandoverSlip";
 // NABH PRE.3 — Patient Feedback Slip. QR + link to the no-login feedback
 // form; printed from the Patient Feedback page's generate-link flow.
 import FeedbackSlip             from "./FeedbackSlip";
+// R7hr(ER-P3/DC-P3) — statutory attendance registers: ER attendance log
+// + Day Care register (DayCareRegister rows finally get a read surface).
+import { ErRegister, DcRegister } from "./AttendanceRegisters";
 
 export const PRINTABLES = {
   // ── Receipts / billing ─────────────────────────────────
@@ -213,6 +216,10 @@ export const PRINTABLES = {
 
   // ── NABH PRE.3: Patient feedback QR slip ──
   "feedback-slip":          { component: FeedbackSlip,              title: "Patient Feedback Slip",               defaultPaper: "half-a4" },
+
+  // ── R7hr(ER-P3/DC-P3): statutory attendance registers ──
+  "er-register":            { component: ErRegister,                title: "Emergency Attendance Register",       defaultPaper: "a4", defaultOrient: "landscape" },
+  "dc-register":            { component: DcRegister,                title: "Day Care Register",                   defaultPaper: "a4", defaultOrient: "landscape" },
 };
 
 export default PRINTABLES;

@@ -907,3 +907,46 @@ exports.getDiagnosisFrequency = async (req, res, next) => {
       { from: fromStr, to: toStr, count: items.length });
   } catch (e) { next(e); }
 };
+
+// ═══════════════════════════════════════════════════════════════════
+// R7hr(ER-P3/DC-P3) — statutory attendance registers.
+// ER register: chronological log of every ER attendance (NABH requires a
+// bound ER register — this is its printable source). DC register: the
+// DayCareRegister rows the daycare workflow emits (emit existed since
+// DC-P2 but had NO read surface — this closes that gap).
+// ═══════════════════════════════════════════════════════════════════
+exports.getErRegister = async (req, res) => {
+  try {
+    let from, to;
+    try {
+      ({ from, to } = parseHospitalDateRange(req.query.from, req.query.to, { defaultDays: 31, maxDays: 366 }));
+    } catch (e) { return sendErr(res, e, "VALIDATION", e.status || 400); }
+    // Source is the Compliance EmergencyRegister (same emitter-fed model
+    // getErTat aggregates) — not the live Emergency visit doc — because
+    // register rows are locked at disposition and carry the statutory
+    // fields (mode/broughtBy/complaint/TAT minutes) the print needs.
+    const EmergencyRegister = require("../../models/Compliance/EmergencyRegisterModel");
+    const rows = await EmergencyRegister.find({ arrivalAt: { $gte: from, $lte: to } })
+      .select("erNumber emergencyNumber arrivalAt modeOfArrival broughtBy patientName UHID age sex triageCategory presentingComplaint consultantIncharge isMLC mlcNumber disposition dispositionAt doorToDispositionMinutes")
+      .sort({ arrivalAt: 1 })
+      .limit(2000)
+      .lean();
+    res.json({ success: true, from, to, count: rows.length, data: rows });
+  } catch (e) { return sendErr(res, e); }
+};
+
+exports.getDcRegister = async (req, res) => {
+  try {
+    let from, to;
+    try {
+      ({ from, to } = parseHospitalDateRange(req.query.from, req.query.to, { defaultDays: 31, maxDays: 366 }));
+    } catch (e) { return sendErr(res, e, "VALIDATION", e.status || 400); }
+    const DayCareRegister = require("../../models/Compliance/DayCareRegisterModel");
+    const rows = await DayCareRegister.find({ createdAt: { $gte: from, $lte: to } })
+      .select("dcNumber UHID patientName age sex admissionNumber procedure doctor admittedAt dischargedAt checklistComplete readinessScore outcome remarks")
+      .sort({ createdAt: 1 })
+      .limit(2000)
+      .lean();
+    res.json({ success: true, from, to, count: rows.length, data: rows });
+  } catch (e) { return sendErr(res, e); }
+};

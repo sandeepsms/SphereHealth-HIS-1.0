@@ -49,6 +49,21 @@ export default function DayCareBoard() {
   }, []);
   useEffect(() => { load(); }, [load]);
 
+  // R7hr(DC-P3) — NABH Day Care register print. The DayCareRegister rows
+  // (emitted at every day-care discharge since DC-P2) finally get a read
+  // surface: last 31 days via /reports/dc-register → landscape printable.
+  const [printingReg, setPrintingReg] = useState(false);
+  const printRegister = async () => {
+    setPrintingReg(true);
+    try {
+      const r = await axios.get(`${API_ENDPOINTS.BASE}/reports/dc-register`);
+      const d = r.data || {};
+      openPrint("dc-register", { from: d.from, to: d.to, rows: d.data || [] });
+    } catch (e) {
+      toast.error(e?.response?.data?.message || "Day Care register load failed");
+    } finally { setPrintingReg(false); }
+  };
+
   return (
     <div style={{ maxWidth: 1100, margin: "0 auto", padding: 16, fontFamily: "inherit" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
@@ -58,6 +73,10 @@ export default function DayCareBoard() {
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={load} style={{ padding: "7px 14px", borderRadius: 8, border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 12 }}>↻ Refresh</button>
+          <button onClick={printRegister} disabled={printingReg} title="Print NABH Day Care register (last 31 days)"
+                  style={{ padding: "7px 14px", borderRadius: 8, border: "1px solid #cbd5e1", background: "#fff", cursor: printingReg ? "wait" : "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 12 }}>
+            🖨 DC Register
+          </button>
           <button onClick={() => navigate("/reception/register?type=Day Care")} style={{ padding: "7px 14px", borderRadius: 8, border: "none", background: C.amber, color: "#fff", cursor: "pointer", fontFamily: "inherit", fontWeight: 800, fontSize: 12 }}>＋ New Day Care</button>
         </div>
       </div>

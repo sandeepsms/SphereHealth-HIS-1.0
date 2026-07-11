@@ -88,6 +88,11 @@ export default function EmergencyList() {
   const [vitalsFor, setVitalsFor] = useState(null);
   // R7hr(ER-P1.2) — disposition modal target (the visit being closed).
   const [dispoFor, setDispoFor] = useState(null);
+  // R7hr(ER-P3a) — TAT KPIs from /reports/er-tat (endpoint shipped in
+  // ER-P2 but never had a consumer). Roles without reports.clinical get
+  // a 403 → tat stays null → strip simply doesn't render.
+  const [tat, setTat] = useState(null);
+  const [printingReg, setPrintingReg] = useState(false);
   const inputRef = useRef(null);
 
   const load = useCallback(async () => {
@@ -130,6 +135,27 @@ export default function EmergencyList() {
 
   useEffect(() => { inputRef.current?.focus(); }, []);
 
+  useEffect(() => {
+    axios.get(`${API_ENDPOINTS.BASE}/reports/er-tat`)
+      .then((r) => {
+        const d = r.data?.data || r.data || {};
+        setTat(d.overall || null);   // KPI fields nest under `overall`
+      })
+      .catch(() => setTat(null));
+  }, []);
+
+  // R7hr(ER-P3b) — NABH statutory ER attendance register (last 31 days).
+  const printRegister = async () => {
+    setPrintingReg(true);
+    try {
+      const r = await axios.get(`${API_ENDPOINTS.BASE}/reports/er-register`);
+      const d = r.data || {};
+      openPrint("er-register", { from: d.from, to: d.to, rows: d.data || [] });
+    } catch (err) {
+      toast.error(err?.response?.data?.message || "ER register load failed");
+    } finally { setPrintingReg(false); }
+  };
+
   const filtered = useMemo(() => {
     let r = list;
     if (triageFilter) r = r.filter(e => e.triageCategory === triageFilter);
@@ -170,6 +196,10 @@ export default function EmergencyList() {
           <button className="rx-btn-ghost" onClick={load}>
             <i className={`pi ${loading ? "pi-spin pi-spinner" : "pi-refresh"}`} /> Refresh
           </button>
+          <button className="rx-btn-ghost" onClick={printRegister} disabled={printingReg}
+                  title="Print statutory ER attendance register (last 31 days)">
+            <i className={`pi ${printingReg ? "pi-spin pi-spinner" : "pi-print"}`} /> ER Register
+          </button>
           <button className="rx-btn-primary rx-btn-primary--er"
                   onClick={() => navigate("/reception/register?type=Emergency")}>
             <i className="pi pi-plus" /> New ER Registration
@@ -195,6 +225,17 @@ export default function EmergencyList() {
           );
         })}
       </div>
+
+      {/* R7hr(ER-P3a) — TAT strip: door-to-triage / door-to-doctor /
+          door-to-disposition averages over the endpoint's default window. */}
+      {tat && tat.count > 0 && (
+        <div className="rx-kpis" style={{ marginTop: 6 }}>
+          <div className="rx-kpi"><div className="rx-kpi-label">ER Visits (30d)</div><div className="rx-kpi-value">{tat.count}</div></div>
+          <div className="rx-kpi"><div className="rx-kpi-label">Door → Triage</div><div className="rx-kpi-value">{tat.avgTriageMins != null ? `${tat.avgTriageMins}m` : "—"}</div><div className="rx-kpi-sub">avg</div></div>
+          <div className="rx-kpi"><div className="rx-kpi-label">Door → Doctor</div><div className="rx-kpi-value">{tat.avgDoctorMins != null ? `${tat.avgDoctorMins}m` : "—"}</div><div className="rx-kpi-sub">avg</div></div>
+          <div className="rx-kpi"><div className="rx-kpi-label">Door → Disposition</div><div className="rx-kpi-value">{tat.avgDispositionMins != null ? `${tat.avgDispositionMins}m` : "—"}</div><div className="rx-kpi-sub">avg · max {tat.maxDispositionMins ?? "—"}m</div></div>
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="rx-tabs">
