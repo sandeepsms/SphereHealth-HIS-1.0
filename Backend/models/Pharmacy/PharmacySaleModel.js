@@ -408,6 +408,12 @@ PharmacySaleSchema.index({ createdAt: -1 });
 // — the previous single-field createdAt index forced a COLLSCAN over the
 // status filter. Compound covers it.
 PharmacySaleSchema.index({ status: 1, createdAt: -1 });
+// TD-1 — patient-file coverage loads every patient's sales via
+// { $or: [{ UHID }, { patientUHID }] } sorted by createdAt; patientUHID had
+// no index so each Complete File load COLLSCANned this high-volume
+// collection. Compound serves the filter + sort in one pass (walk-in blank
+// UHIDs cluster under "" — fine, they're never queried by patient).
+PharmacySaleSchema.index({ patientUHID: 1, createdAt: -1 });
 // R7hr-12-S2 (D10-02): pharmacyController.listIpdCreditAdmissions runs
 // `Sale.find({ saleType: $in, status: $in, admissionId: $ne null })` on every
 // IPD-credit-pill open. Pre-fix only single-field indexes existed on

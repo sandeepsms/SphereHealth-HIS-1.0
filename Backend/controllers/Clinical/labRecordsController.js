@@ -231,6 +231,24 @@ exports.trendUpdate = async (req, res) => {
 
 exports.trendVerify = async (req, res) => {
   try {
+    // TD-2 (NABH AAC.3 / ISO 15189 deferred gate, now live) — results run on
+    // an analyser whose latest QC control FAILED must not be released until
+    // a passing control is logged. Only fires when the sheet names its
+    // analyser (LAB-P4 equipmentId) AND a QC row exists for it; sheets
+    // without equipment info verify as before.
+    const sheetDoc = await LabTrend.findById(req.params.id).select("equipmentId").lean();
+    if (sheetDoc?.equipmentId) {
+      const eq = sheetDoc.equipmentId.trim();
+      const { escapeRegex } = require("../../utils/queryGuards");
+      const lastQc = await LabQCLog.findOne({ equipmentName: new RegExp(`^${escapeRegex(eq)}$`, "i") })
+        .sort({ performedAt: -1 }).lean();
+      if (lastQc && lastQc.result === "FAIL") {
+        return res.status(409).json({
+          success: false, code: "QC_FAILED",
+          message: `Release blocked — latest QC on ${eq} FAILED (${new Date(lastQc.performedAt).toLocaleString("en-IN")}). Log a passing control, then verify.`,
+        });
+      }
+    }
     // R7hr(LAB-P4) — stamp the authorizing signatory's NAME too: the NABL
     // print must show who released the report, not just an ObjectId.
     const row = await LabTrend.findByIdAndUpdate(req.params.id,

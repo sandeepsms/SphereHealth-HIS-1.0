@@ -771,11 +771,48 @@ class OPDService {
 
   /* ── Add investigation ── */
   async addInvestigation(visitNumber, investigation) {
-    return OPD.findOneAndUpdate(
+    const visit = await OPD.findOneAndUpdate(
       { visitNumber },
       { $push: { investigationsOrdered: { ...investigation, orderedDate: new Date() } } },
       { new: true }
     );
+
+    // TD-2 (lab-audit gap) — OPD-embedded investigations previously never
+    // reached the lab WORKLIST: only the Prescription flow auto-created an
+    // InvestigationOrder, so a test ordered from the OPD visit screen sat
+    // invisible to the lab. Reuse the same battle-tested bridge
+    // (PrescriptionService._createLabOrder — master resolution, tariff
+    // pricing, TPA limits, MANUAL fallback) with a minimal prescription-
+    // shaped adapter. Best-effort: a bridge failure must never lose the
+    // visit-side entry the clinician just saved.
+    if (visit && (investigation?.testName || investigation?.investigationName)) {
+      try {
+        const PrescriptionService = require("../Doctor/PrescriptionService");
+        const Patient = require("../../models/Patient/patientModel");
+        const Doctor  = require("../../models/Doctor/doctorModel");
+        const [patient, doctor] = await Promise.all([
+          visit.patientId ? Patient.findById(visit.patientId).lean() : Patient.findOne({ UHID: visit.UHID }).lean(),
+          visit.doctorId ? Doctor.findById(visit.doctorId).lean() : null,
+        ]);
+        await PrescriptionService._createLabOrder(
+          {
+            _id: null,                                   // no prescription behind this order
+            registrationType: "OPD",
+            clinicalDetails: { historyOfPresentIllness: visit.provisionalDiagnosis || "" },
+            investigations: [{
+              investigationId: investigation.investigationId || null,
+              investigationName: investigation.testName || investigation.investigationName,
+              chargedPrice: investigation.chargedPrice || 0,
+            }],
+          },
+          patient || { _id: visit.patientId, UHID: visit.UHID, fullName: visit.patientName, contactNumber: visit.contactNumber },
+          doctor || { _id: visit.doctorId, personalInfo: { firstName: (visit.doctorName || "").replace(/^Dr\.?\s*/i, ""), lastName: "" } },
+        );
+      } catch (e) {
+        console.warn(`[OPD] investigation worklist bridge failed for ${visitNumber}:`, e.message);
+      }
+    }
+    return visit;
   }
 
   /* ── Update investigation status ── */
