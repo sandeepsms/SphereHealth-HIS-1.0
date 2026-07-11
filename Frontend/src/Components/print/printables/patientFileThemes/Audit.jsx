@@ -21,6 +21,8 @@
 import React from "react";
 import PrintShell from "@/templates/PrintShell";
 import { fmtDate, fmtTime } from "./normalizeData";
+// R7hr(THEME-REG): coverage records + NABH registers — previously Narrative-only.
+import SharedRegisterSections from "./SharedRegisterSections";
 
 /* ── helpers ─────────────────────────────────────────────────── */
 
@@ -770,6 +772,7 @@ const AuditTheme = ({ settings = {}, file, events = [] }) => {
           may cross-reference each row against the cited NABH chapter.
         </div>
       </div>
+      <SharedRegisterSections file={file} />
     </PrintShell>
   );
 };

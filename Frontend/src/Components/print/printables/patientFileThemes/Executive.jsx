@@ -25,6 +25,8 @@
 import React from "react";
 import PrintShell from "@/templates/PrintShell";
 import { fmtDate, fmtDayMonth, pronoun } from "./normalizeData";
+// R7hr(THEME-REG): coverage records + NABH registers — previously Narrative-only.
+import SharedRegisterSections from "./SharedRegisterSections";
 
 /* ── prose helpers (component-local, mirrored from Narrative) ──── */
 const cleanSentence = (s) => {
@@ -844,6 +846,7 @@ const ExecutiveTheme = ({ settings = {}, file, events = [] }) => {
           )}
         </main>
       </div>
+      <SharedRegisterSections file={file} />
     </PrintShell>
   );
 };

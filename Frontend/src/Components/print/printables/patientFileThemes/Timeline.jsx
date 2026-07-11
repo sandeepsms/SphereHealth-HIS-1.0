@@ -23,6 +23,8 @@
 import React from "react";
 import PrintShell from "@/templates/PrintShell";
 import { fmtDate, fmtTime } from "./normalizeData";
+// R7hr(THEME-REG): coverage records + NABH registers — previously Narrative-only.
+import SharedRegisterSections from "./SharedRegisterSections";
 
 /* ── Event-kind metadata (colour + label) ──────────────────────── */
 const KIND_META = {
@@ -450,6 +452,7 @@ const TimelineTheme = ({ settings, file, events }) => {
           </div>
         )}
       </div>
+      <SharedRegisterSections file={file} />
     </PrintShell>
   );
 };
