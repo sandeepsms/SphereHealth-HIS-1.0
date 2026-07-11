@@ -12,8 +12,11 @@
 // the browser to a third-party QR service; a pre-rendered `qr` data
 // URL in the payload is used as-is when present.
 // ════════════════════════════════════════════════════════════════════
-import React, { useEffect, useState } from "react";
-import QRCode from "qrcode";
+import React from "react";
+// R7hr(DEDUP-16): the async `qrcode` package is gone — QRCodeSVG (already a
+// dependency via qrcode.react) renders synchronously, so the print never
+// races the QR generation and the bundle carries ONE QR library.
+import { QRCodeSVG } from "qrcode.react";
 import PrintShell from "../PrintShell";
 import { toNum } from "../../../utils/printUtils";
 
@@ -24,17 +27,7 @@ const fmtDate = (d) => d
 export default function FeedbackSlip({ settings = {}, receipt = {} }) {
   const r = receipt || {};
   const url = r.url || "";
-  const [qr, setQr] = useState(r.qr || "");
-
-  useEffect(() => {
-    let alive = true;
-    if (!qr && url) {
-      QRCode.toDataURL(url, { width: 360, margin: 1, color: { dark: "#1e293b", light: "#ffffff" } })
-        .then((d) => { if (alive) setQr(d); })
-        .catch(() => {});
-    }
-    return () => { alive = false; };
-  }, [url, qr]);
+  const qr = r.qr || "";   // legacy pre-rendered data-URL payloads still honoured
 
   return (
     <PrintShell
@@ -59,9 +52,13 @@ export default function FeedbackSlip({ settings = {}, receipt = {} }) {
         {qr ? (
           <img src={qr} alt="Feedback QR code"
             style={{ width: 220, height: 220, border: "1px solid #e2e8f0", borderRadius: 12, padding: 6, background: "#fff" }} />
+        ) : url ? (
+          <div style={{ display: "inline-block", border: "1px solid #e2e8f0", borderRadius: 12, padding: 6, background: "#fff", lineHeight: 0 }}>
+            <QRCodeSVG value={url} size={208} fgColor="#1e293b" bgColor="#ffffff" aria-label="Feedback QR code" />
+          </div>
         ) : (
           <div style={{ width: 220, height: 220, margin: "0 auto", display: "flex", alignItems: "center", justifyContent: "center", color: "#94a3b8", border: "1px dashed #cbd5e1", borderRadius: 12 }}>
-            {url ? "Generating QR…" : "No link provided"}
+            No link provided
           </div>
         )}
 

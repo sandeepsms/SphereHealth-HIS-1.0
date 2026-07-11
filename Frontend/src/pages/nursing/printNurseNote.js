@@ -24,6 +24,7 @@ import { inlineUploadsInHtml } from "../../utils/secureUploads";
 import {
   renderNursingNabhExtras,
 } from "../../Components/clinical/iaNabhRenderers";
+import { sigImgInline, sigImgPanel } from "../../utils/signatureImg";  // R7hr(DEFER-13) — shared, hardened (data:/uploads only)
 
 const escapeHtml = (s) =>
   String(s ?? "")
@@ -975,10 +976,7 @@ export function buildNurseNoteCardHtml(note, opts = {}) {
     // R7hr — signer's digital-signature image on EVERY signed line (all
     // surfaces render this same prose). data:/uploads/https only.
     const _sigSrc = note.signature || note.signatureImage || "";
-    const _sigImg = (isSigned && typeof _sigSrc === "string"
-                     && (_sigSrc.startsWith("data:image/") || _sigSrc.startsWith("/uploads/") || /^https?:\/\//.test(_sigSrc)))
-      ? `<br/><img src="${escapeHtml(_sigSrc)}" alt="Signature" style="max-height:36px;max-width:200px;margin-top:4px;border:1px solid #e2e8f0;background:#fff;padding:2px;border-radius:3px"/>`
-      : "";
+    const _sigImg = isSigned ? sigImgInline(_sigSrc) : "";
     const psign = isSigned
       ? `<div class="pfx-sign">✓ <strong>${escapeHtml(typeLabel)} — signed</strong> · By: <strong>${escapeHtml(note.nurseName || note.signedByName || "Nurse")}</strong>${_empId ? ` · Emp ${escapeHtml(_empId)}` : ""} · ${escapeHtml(_when)}${_sigImg}</div>`
       : `<div class="pfx-sign">✎ Draft — not yet signed</div>`;
@@ -998,12 +996,10 @@ export function buildNurseNoteCardHtml(note, opts = {}) {
   // like a real signed document.
   const nurseEmpIdShown = note.signedByEmpId || note.nurseEmployeeId || "";
   const nSigSrc = note.signature || note.signatureImage || "";
-  const nSigImgHtml = (isSigned && nSigSrc && typeof nSigSrc === "string"
-                      && (nSigSrc.startsWith("data:image/")
-                          || nSigSrc.startsWith("/uploads/")
-                          || /^https?:\/\//.test(nSigSrc)))
-    ? `<div style="margin-left:auto;text-align:center;flex:none"><img src="${escapeHtml(nSigSrc)}" alt="Signature" style="max-height:38px;max-width:170px;border:1px solid #e2e8f0;background:#fff;padding:2px 8px;border-radius:5px"/><div style="font-size:8px;color:#94a3b8;letter-spacing:.5px;text-transform:uppercase;margin-top:2px">e-signature</div></div>`
-    : "";
+  // R7hr(DEFER-13): the nurse footer had missed the R7hr-251 hardening —
+  // it still rendered external http(s) signature URLs. Shared helper now
+  // enforces data:/uploads everywhere.
+  const nSigImgHtml = isSigned ? sigImgPanel(nSigSrc) : "";
   // R7hr-222 — formal "authenticated" panel (presentation only; same fields:
   // signer name, emp id, signed timestamp, signature image).
   const sigHtml = isSigned

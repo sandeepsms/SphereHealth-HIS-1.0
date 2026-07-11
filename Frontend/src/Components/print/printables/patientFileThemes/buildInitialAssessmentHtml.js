@@ -24,6 +24,7 @@
 // Pure function. No React / CSS imports. Safe to bundle for node.
 
 /* ── local HTML escaper ─────────────────────────────────────────────── */
+import { sigImgInline } from "../../../../utils/signatureImg";  // R7hr(DEFER-13)
 const esc = (s) =>
   String(s ?? "")
     .replace(/&/g, "&amp;")
@@ -57,13 +58,9 @@ const fmtDateTime = (d) => {
   });
 };
 
-// R7hr — signer's digital-signature image for the signed lines (rendered on
-// every surface). Accepts data: URLs, /uploads paths and http(s) only.
-const signImg = (src) => {
-  if (typeof src !== "string" || !src) return "";
-  if (!(src.startsWith("data:image/") || src.startsWith("/uploads/") || /^https?:\/\//.test(src))) return "";
-  return `<br/><img src="${esc(src)}" alt="Signature" style="max-height:36px;max-width:200px;margin-top:4px;border:1px solid #e2e8f0;background:#fff;padding:2px;border-radius:3px"/>`;
-};
+// R7hr(DEFER-13) — shared, hardened helper (data:/uploads only; external
+// http(s) sources rejected per R7hr-251).
+const signImg = (src) => sigImgInline(src);
 
 /* ── prose primitives ───────────────────────────────────────────────── */
 // A bold-label prose line. Returns "" when the value is empty (so the caller

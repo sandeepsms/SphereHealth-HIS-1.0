@@ -13,6 +13,7 @@ import {
   renderDoctorNabhExtras,
   renderNursingNabhExtras,
 } from "../../Components/clinical/iaNabhRenderers";
+import { sigImgInline, sigImgPanel } from "../../utils/signatureImg";  // R7hr(DEFER-13) — shared, hardened (data:/uploads only)
 
 const escapeHtml = (s) =>
   String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;")
@@ -956,10 +957,7 @@ ${parts.map(p => `<div style="margin-bottom:6px;border-left:3px solid ${p[1]};pa
     // R7hr — the signer's digital-signature image (captured at sign time)
     // renders on EVERY signed line, on every surface. data:/uploads/https only.
     const _sigSrc = note.signature || note.signatureImage || "";
-    const _sigImg = (isSigned && typeof _sigSrc === "string"
-                     && (_sigSrc.startsWith("data:image/") || _sigSrc.startsWith("/uploads/") || /^https?:\/\//.test(_sigSrc)))
-      ? `<br/><img src="${escapeHtml(_sigSrc)}" alt="Signature" style="max-height:36px;max-width:200px;margin-top:4px;border:1px solid #e2e8f0;background:#fff;padding:2px;border-radius:3px"/>`
-      : "";
+    const _sigImg = isSigned ? sigImgInline(_sigSrc) : "";
     const psign = isSigned
       ? `<div class="pfx-sign">✓ <strong>${escapeHtml(typeLabel)} signed</strong> · By: <strong>${escapeHtml(note.doctorName || note.signedByName || "Doctor")}</strong>${_empId ? ` · Emp ${escapeHtml(_empId)}` : ""}${_reg ? ` · Reg ${escapeHtml(_reg)}` : ""} · ${escapeHtml(_when)}${_sigImg}</div>`
       : `<div class="pfx-sign">✎ Draft — not yet signed</div>`;
@@ -979,14 +977,7 @@ ${parts.map(p => `<div style="margin-bottom:6px;border-left:3px solid ${p[1]};pa
   // looks like a real signed document, not just a text claim.
   const empIdShown = note.signedByEmpId || note.doctorEmpId || "";
   const sigSrc = note.signature || note.signatureImage || "";
-  const sigImgHtml = (isSigned && sigSrc && typeof sigSrc === "string"
-                     // R7hr-251 (audit: external img fetch) — only data:image/
-                     // and local /uploads/ signatures; never an attacker-set
-                     // http(s) URL (tracking pixel / SSRF-lite / referer leak).
-                     && (sigSrc.startsWith("data:image/")
-                         || sigSrc.startsWith("/uploads/")))
-    ? `<div style="margin-left:auto;text-align:center;flex:none"><img src="${escapeHtml(sigSrc)}" alt="Signature" style="max-height:38px;max-width:170px;border:1px solid #e2e8f0;background:#fff;padding:2px 8px;border-radius:5px"/><div style="font-size:8px;color:#94a3b8;letter-spacing:.5px;text-transform:uppercase;margin-top:2px">e-signature</div></div>`
-    : "";
+  const sigImgHtml = isSigned ? sigImgPanel(sigSrc) : "";
   // R7hr-222 — formal "authenticated" panel (presentation only; same fields:
   // signer name, emp id, MCI reg, signed timestamp, signature image).
   const sigHtml = isSigned
