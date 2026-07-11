@@ -14,6 +14,9 @@ import {
 } from "../../Components/admin-theme";
 import { useAuth } from "../../context/AuthContext";
 import { API_BASE_URL as API } from "../../config/api";
+// R7hr(BMW-FIX): Form-IV print — the printable reads the manifest doc's
+// schema fields directly, so the row passes through as the payload.
+import { openPrint } from "../../Components/print/openPrint";
 
 const authHdr = () => ({
   headers: { Authorization: `Bearer ${sessionStorage.getItem("his_token") || ""}` },
@@ -147,7 +150,7 @@ export default function BmwManifestPage() {
         </div>
         {loading ? <div>Loading…</div> : rows.length === 0 ? <Empty msg="No manifests yet." /> : (
           <Table
-            headers={["#", "Date", "CBWTF", "Vehicle", "Bags", "Weight (kg)", "PCB Filed"]}
+            headers={["#", "Date", "CBWTF", "Vehicle", "Bags", "Weight (kg)", "PCB Filed", ""]}
             rows={rows.map(r => [
               r.manifestNumber || "—",
               fmtDT(r.manifestDate || r.createdAt),
@@ -156,6 +159,11 @@ export default function BmwManifestPage() {
               r.totalBags || (r.bags?.length || 0),
               r.totalWeight_kg || "—",
               r.pcbReturnFiled ? <Badge tone="green">YES</Badge> : <Badge tone="amber">No</Badge>,
+              <button key="print" onClick={() => openPrint("bmw-manifest", r)}
+                title="Print Form-IV manifest"
+                style={{ padding: "3px 10px", borderRadius: 6, border: "1px solid #cbd5e1", background: "#fff", cursor: "pointer", fontSize: 12 }}>
+                🖨
+              </button>,
             ])}
           />
         )}

@@ -77,7 +77,20 @@ export default function InsurerFormsPage() {
     catch (e) { toast.error(e?.response?.data?.message || "Remove failed"); }
   };
 
-  const grouped = TYPE_ORDER.map((t) => ({ type: t, items: insurers.filter((i) => i.type === t) })).filter((g) => g.items.length);
+  // R7hr(CLAIM-P5 follow-up): rows outside the 4 TYPE_ORDER groups were
+  // silently filtered OUT. Two sources land there: (a) any registry
+  // insurer with an unlisted type, and (b) ORPHAN templates — a blank
+  // uploaded for a code the registry list doesn't return (e.g. the OTHER
+  // fallback) existed in the backend but had no row here, so it could
+  // never be re-mapped, previewed or removed from the UI.
+  const listedCodes = new Set(insurers.map((i) => i.code));
+  const orphanTemplates = templates
+    .filter((t) => !listedCodes.has(t.insurerCode))
+    .map((t) => ({ code: t.insurerCode, name: t.insurerName || t.insurerCode, type: "_REST" }));
+  const grouped = [
+    ...TYPE_ORDER.map((t) => ({ type: t, items: insurers.filter((i) => i.type === t) })),
+    { type: "_REST", items: [...insurers.filter((i) => !TYPE_ORDER.includes(i.type)), ...orphanTemplates] },
+  ].filter((g) => g.items.length);
   const onFile = tplFor;
 
   return (
@@ -95,7 +108,7 @@ export default function InsurerFormsPage() {
 
       {loading ? <div style={{ color: C.muted }}>Loading…</div> : grouped.map((g) => (
         <div key={g.type} style={{ marginBottom: 18 }}>
-          <div style={{ fontSize: 12, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 4 }}>{g.items[0]?.typeLabel}</div>
+          <div style={{ fontSize: 12, fontWeight: 800, color: C.muted, textTransform: "uppercase", letterSpacing: ".5px", marginBottom: 4 }}>{g.type === "_REST" ? "Other / Unlisted" : g.items[0]?.typeLabel}</div>
           <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 12, overflow: "hidden" }}>
             <table style={{ width: "100%", borderCollapse: "collapse" }}>
               <thead><tr><Th>Insurer</Th><Th>Official Form</Th><Th right>Actions</Th></tr></thead>

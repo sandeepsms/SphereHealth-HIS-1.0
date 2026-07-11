@@ -855,13 +855,15 @@ export default function PharmacyLedgerPage({
   };
   const submitRefund = async () => {
     if (refundMutexRef.current) return;
+    // R7hr(REFUND-HONESTY): amount is display-only — the backend always
+    // refunds the full remaining balance, so the old editable-amount
+    // validations (>0 / max-cap) were validating a value nobody used.
     const amt = Number(refAmt);
-    if (!Number.isFinite(amt) || amt <= 0)   return toast.warn("Enter an amount > 0");
+    if (!Number.isFinite(amt) || amt <= 0)   return toast.warn("Nothing refundable on this row — refresh");
     if (!refReason.trim())                    return toast.warn("Reason is required (NABH audit trail)");
     if (!refAdvId)                            return toast.warn("Pick an advance row");
     const chosen = refundableAdvances.find(a => String(a._id) === String(refAdvId));
     if (!chosen)                              return toast.warn("Selected advance is no longer refundable — refresh");
-    if (amt > chosen.remaining + 0.01)        return toast.warn(`Max refundable on this row is ${fmtINR(chosen.remaining)}`);
     if ((refMode === "UPI" || refMode === "BANK_TRANSFER") && !refTxn.trim()) {
       return toast.warn("Transaction reference required for UPI / Bank Transfer");
     }
@@ -871,7 +873,7 @@ export default function PharmacyLedgerPage({
       const r = await axios.post(
         `${API_ENDPOINTS.BASE}/billing/advance/${refAdvId}/refund`,
         {
-          amount: amt,
+          // no `amount` — the endpoint always refunds the full remaining
           refundReason: refReason.trim(),
           mode: refMode,
           transactionId: refTxn.trim() || undefined,
@@ -1382,9 +1384,15 @@ export default function PharmacyLedgerPage({
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
                 <div>
-                  <label style={{ fontSize: 10.5, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>Refund amount</label>
-                  <input type="number" autoFocus value={refAmt} onChange={e => setRefAmt(e.target.value)}
-                    style={{ width: "100%", padding: "8px 10px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 13, fontWeight: 700, marginTop: 3 }} />
+                  {/* R7hr(REFUND-HONESTY): the backend ALWAYS refunds the full
+                      remaining balance (refundAdvance has no amount param) —
+                      the old editable input + max-validation were cosmetic and
+                      implied partial refunds that never happened. Fixed
+                      display matches ReceptionBilling's refund modal. */}
+                  <label style={{ fontSize: 10.5, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>Refund amount (full remaining)</label>
+                  <div style={{ width: "100%", padding: "8px 10px", border: `1px solid ${C.border}`, borderRadius: 6, fontSize: 13, fontWeight: 800, marginTop: 3, background: "#fef2f2", color: "#b91c1c", boxSizing: "border-box" }}>
+                    {fmtINR(Number(refAmt) || 0)}
+                  </div>
                 </div>
                 <div>
                   <label style={{ fontSize: 10.5, color: C.muted, fontWeight: 700, textTransform: "uppercase", letterSpacing: ".4px" }}>Refund mode</label>
