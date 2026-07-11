@@ -4120,7 +4120,17 @@ export default function CompletePatientFilePage() {
     let cancelled = false;
     setData(null); setErr("");
     axios.get(`${BASE}/patient-file/${uhid}/complete`)
-      .then((res) => { if (!cancelled) setData(res.data?.data || null); })
+      .then((res) => {
+        if (cancelled) return;
+        setData(res.data?.data || null);
+        // TD-3 — the backend now flags sections that hit the per-section cap
+        // (oldest rows dropped). Tell the reader instead of implying the
+        // file is complete.
+        const trunc = res.data?.truncation;
+        if (trunc?.sections?.length) {
+          toast.warn(`Long record — showing the latest ${trunc.limit} entries per section (${trunc.sections.join(", ")}). Older entries are not in this view/print.`, { autoClose: 9000 });
+        }
+      })
       .catch((e) => { if (!cancelled) setErr(e.response?.data?.message || e.message); });
     return () => { cancelled = true; };
   }, [uhid]);

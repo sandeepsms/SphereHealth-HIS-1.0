@@ -57,8 +57,14 @@ export function payloadNeedsEnrichment(payload) {
   return DEMO_KEYS.some((k) => isEmpty(payload[k])) || IPD_KEYS.some((k) => isEmpty(payload[k]));
 }
 
-async function lookup(uhid, wantAdmission) {
-  const key = `${String(uhid).toUpperCase()}|${wantAdmission ? 1 : 0}`;
+async function lookup(uhid, wantAdmission, admissionHint = {}) {
+  // TD-3 — the hint pins WHICH admission backfills the payload. Before this,
+  // reprinting an OLD admission's document silently stamped the CURRENT
+  // (latest) admission's bed/ward/dates onto it. When the payload carries an
+  // admissionId/admissionNumber we now match that exact stay; latest is only
+  // the fallback for payloads with no admission identity at all.
+  const hintKey = admissionHint.admissionId || admissionHint.admissionNumber || "";
+  const key = `${String(uhid).toUpperCase()}|${wantAdmission ? 1 : 0}|${hintKey}`;
   if (_lookupCache.has(key)) return _lookupCache.get(key);
   const p = (async () => {
     let patient = null;
@@ -72,9 +78,14 @@ async function lookup(uhid, wantAdmission) {
         const res = await axios.get(`${API_ENDPOINTS.ADMISSIONS}/patient/${patient._id}/history`);
         const list = res.data?.admissions || res.data?.data || [];
         if (Array.isArray(list) && list.length) {
-          admission = [...list].sort(
-            (a, b) => new Date(b.admissionDate || 0) - new Date(a.admissionDate || 0),
-          )[0];
+          admission =
+            (admissionHint.admissionId &&
+              list.find((a) => String(a._id) === String(admissionHint.admissionId))) ||
+            (admissionHint.admissionNumber &&
+              list.find((a) => a.admissionNumber === admissionHint.admissionNumber)) ||
+            [...list].sort(
+              (a, b) => new Date(b.admissionDate || 0) - new Date(a.admissionDate || 0),
+            )[0];
         }
       } catch (_) { /* no admissions — fine (OPD-only patient) */ }
     }
@@ -101,7 +112,10 @@ export async function enrichPrintPayload(raw) {
      payload.dischargeDate) !== undefined;
 
   try {
-    const { patient, admission } = await lookup(uhid, !!wantAdmission);
+    const { patient, admission } = await lookup(uhid, !!wantAdmission, {
+      admissionId: payload.admissionId,
+      admissionNumber: payload.admissionNumber || payload.ipdNo,
+    });
 
     if (patient) {
       const name =

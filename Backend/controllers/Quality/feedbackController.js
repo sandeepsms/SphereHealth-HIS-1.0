@@ -12,6 +12,7 @@
  *   POST /api/public-feedback/:token  publicSubmit  — patient submits
  */
 const PatientFeedback = require("../../models/Quality/PatientFeedbackModel");
+const { escapeRegex } = require("../../utils/queryGuards");   // TD-3 dedup — was hand-rolled twice below
 const { RATING_KEYS } = PatientFeedback;
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -160,7 +161,7 @@ exports.list = async (req, res) => {
     const { from, to, visitType, department, via, minOverall } = req.query;
     const q = { status: "submitted" };
     if (visitType) q.visitType = visitType;
-    if (department) q.department = new RegExp(`^${String(department).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
+    if (department) q.department = new RegExp(`^${escapeRegex(String(department))}$`, "i");
     if (via) q.submittedVia = via;
     if (minOverall) q["ratings.overall"] = { $gte: Number(minOverall) };
     if (from || to) {
@@ -186,7 +187,7 @@ exports.stats = async (req, res) => {
     const { from, to, visitType, department } = req.query;
     const match = { status: "submitted" };
     if (visitType) match.visitType = visitType;
-    if (department) match.department = new RegExp(`^${String(department).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
+    if (department) match.department = new RegExp(`^${escapeRegex(String(department))}$`, "i");
     if (from || to) {
       match.submittedAt = {};
       if (from) match.submittedAt.$gte = new Date(from);

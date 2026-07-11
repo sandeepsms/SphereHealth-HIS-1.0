@@ -508,8 +508,19 @@ exports.getCompleteFile = async (req, res) => {
       },
     };
 
+    // TD-3 — sections that hit the per-section cap silently dropped their
+    // OLDEST rows with no signal to the reader. Surface which sections were
+    // truncated so the UI/print can show an honest "showing latest N" note
+    // instead of implying the record is complete.
+    const truncatedSections = Object.entries({ doctorNotes, nurseNotes, doctorOrders, mar, vitals })
+      .filter(([, rows]) => Array.isArray(rows) && rows.length >= PER_SECTION_LIMIT)
+      .map(([name]) => name);
+
     return res.json({
       success: true,
+      truncation: truncatedSections.length
+        ? { limit: PER_SECTION_LIMIT, sections: truncatedSections }
+        : null,
       data: {
         patient,
         admissions,
