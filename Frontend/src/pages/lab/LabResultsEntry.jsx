@@ -370,7 +370,37 @@ function TrendTab({ uhid, patient }) {
     setTests([...tests, newRow]);
   };
   const removeTestRow = (i) => setTests(tests.filter((_, j) => j !== i));
-  const updateTest = (i, patch) => setTests(prev => prev.map((t, j) => j === i ? { ...t, ...patch } : t));
+  // R7hr(DEFER-14): ad-hoc rows used to start with blank unit/ranges the
+  // tech had to retype from memory. The panel catalog (GET /lab-records/
+  // panels — the hospital's own single source of truth, already loaded)
+  // carries unit + refMin/refMax per test — typing a known test name now
+  // prefills them. Only fills while all three are still empty; anything
+  // the tech typed is never overwritten.
+  const catalogHit = (name) => {
+    const q = String(name || "").trim().toLowerCase();
+    if (q.length < 3) return null;
+    for (const p of Object.values(panels)) {
+      for (const t of (p.tests || [])) {
+        const n = String(t.name || "").toLowerCase();
+        if (n === q || n.startsWith(q)) return t;
+      }
+    }
+    return null;
+  };
+  const updateTest = (i, patch) => setTests(prev => prev.map((t, j) => {
+    if (j !== i) return t;
+    const next = { ...t, ...patch };
+    if (patch.name !== undefined && next.refMin == null && next.refMax == null && !next.unit) {
+      const hit = catalogHit(patch.name);
+      if (hit) {
+        next.unit = hit.unit || "";
+        next.refMin = hit.refMin ?? null;
+        next.refMax = hit.refMax ?? null;
+        if (hit.method && !next.method) next.method = hit.method;
+      }
+    }
+    return next;
+  }));
   const updateCell = (ti, ri, value) => setTests(prev => prev.map((t, j) => {
     if (j !== ti) return t;
     const readings = t.readings.map((r, k) => k === ri ? { ...r, value, status: classify(value, t.refMin, t.refMax) } : r);
