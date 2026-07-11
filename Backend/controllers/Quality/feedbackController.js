@@ -200,24 +200,39 @@ exports.stats = async (req, res) => {
       avgStage[k] = { $avg: { $cond: [{ $gt: [`$ratings.${k}`, 0] }, `$ratings.${k}`, "$$REMOVE"] } };
     }
 
-    const [agg] = await PatientFeedback.aggregate([
+    // R7hr(DEFER-15): the three sequential queries (summary group, visit-type
+    // breakdown, recent comments) now run as ONE $facet — one collection
+    // scan of the matched window instead of three round-trips.
+    const [facets] = await PatientFeedback.aggregate([
       { $match: match },
-      { $group: {
-          _id: null,
-          count: { $sum: 1 },
-          ...avgStage,
-          promoters:  { $sum: { $cond: [{ $gte: ["$npsScore", 9] }, 1, 0] } },
-          passives:   { $sum: { $cond: [{ $and: [{ $gte: ["$npsScore", 7] }, { $lte: ["$npsScore", 8] }] }, 1, 0] } },
-          detractors: { $sum: { $cond: [{ $and: [{ $ne: ["$npsScore", null] }, { $lte: ["$npsScore", 6] }] }, 1, 0] } },
-          npsAnswered:{ $sum: { $cond: [{ $ne: ["$npsScore", null] }, 1, 0] } },
-        } },
-    ]);
+      { $facet: {
+          summary: [
+            { $group: {
+                _id: null,
+                count: { $sum: 1 },
+                ...avgStage,
+                promoters:  { $sum: { $cond: [{ $gte: ["$npsScore", 9] }, 1, 0] } },
+                passives:   { $sum: { $cond: [{ $and: [{ $gte: ["$npsScore", 7] }, { $lte: ["$npsScore", 8] }] }, 1, 0] } },
+                detractors: { $sum: { $cond: [{ $and: [{ $ne: ["$npsScore", null] }, { $lte: ["$npsScore", 6] }] }, 1, 0] } },
+                npsAnswered:{ $sum: { $cond: [{ $ne: ["$npsScore", null] }, 1, 0] } },
+              } },
+          ],
+          byVisitType: [
+            { $group: { _id: "$visitType", count: { $sum: 1 }, avgOverall: { $avg: { $cond: [{ $gt: ["$ratings.overall", 0] }, "$ratings.overall", "$$REMOVE"] } } } },
+            { $sort: { count: -1 } },
+          ],
+          comments: [
+            { $match: { $or: [{ wentWell: { $nin: ["", null] } }, { improvements: { $nin: ["", null] } }] } },
+            { $sort: { submittedAt: -1 } },
+            { $limit: 25 },
+            { $project: { patientName: 1, anonymous: 1, visitType: 1, department: 1, wentWell: 1, improvements: 1, "ratings.overall": 1, npsScore: 1, submittedAt: 1 } },
+          ],
+      } },
+    ]).option({ allowDiskUse: true, maxTimeMS: 15_000 });
 
-    const byVisitType = await PatientFeedback.aggregate([
-      { $match: match },
-      { $group: { _id: "$visitType", count: { $sum: 1 }, avgOverall: { $avg: { $cond: [{ $gt: ["$ratings.overall", 0] }, "$ratings.overall", "$$REMOVE"] } } } },
-      { $sort: { count: -1 } },
-    ]);
+    const agg         = facets?.summary?.[0] || null;
+    const byVisitType = facets?.byVisitType || [];
+    const comments    = facets?.comments || [];
 
     const round = (v) => (v == null ? 0 : Number(v.toFixed(2)));
     const categoryAverages = {};
@@ -227,12 +242,6 @@ exports.stats = async (req, res) => {
     const nps = agg && agg.npsAnswered
       ? Math.round(((agg.promoters - agg.detractors) / agg.npsAnswered) * 100)
       : null;
-
-    // Recent free-text comments (most recent 25 with any text).
-    const comments = await PatientFeedback.find(
-      { ...match, $or: [{ wentWell: { $nin: ["", null] } }, { improvements: { $nin: ["", null] } }] },
-      { patientName: 1, anonymous: 1, visitType: 1, department: 1, wentWell: 1, improvements: 1, "ratings.overall": 1, npsScore: 1, submittedAt: 1 },
-    ).sort({ submittedAt: -1 }).limit(25).lean();
 
     return res.json({
       success: true,

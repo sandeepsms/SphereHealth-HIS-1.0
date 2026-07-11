@@ -374,19 +374,29 @@ exports.getLabTat = async (req, res, next) => {
           _id: "$_category",
           count: { $sum: 1 },
           avgMins: { $avg: "$_tatMins" },
-          medianMins: { $avg: "$_tatMins" },   // approx; full median requires $sortBy
+          // R7hr(DEFER-18): true median — collect the per-item TATs and
+          // compute in Node (the old medianMins was silently just the avg).
+          // Bounded: per-category verified items in a ≤366-day window.
+          mins: { $push: "$_tatMins" },
           maxMins: { $max: "$_tatMins" },
           minMins: { $min: "$_tatMins" },
       } },
       { $sort: { count: -1 } },
     ]).option({ allowDiskUse: true, maxTimeMS: 20_000 });
+
+    const median = (arr) => {
+      if (!arr || !arr.length) return 0;
+      const s = [...arr].sort((a, b) => a - b);
+      const mid = Math.floor(s.length / 2);
+      return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+    };
     const fromStr = from.toISOString().slice(0, 10);
     const toStr   = to.toISOString().slice(0, 10);
     const items = rows.map((r) => ({
       category:   r._id,
       count:      r.count,
       avgMins:    Math.round(r.avgMins),
-      medianMins: Math.round(r.medianMins),
+      medianMins: Math.round(median(r.mins)),
       maxMins:    Math.round(r.maxMins),
       minMins:    Math.round(r.minMins),
     }));

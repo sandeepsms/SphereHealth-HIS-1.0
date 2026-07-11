@@ -50,11 +50,24 @@ const ageFromDob = (dob) => {
 const DEMO_KEYS = ["patientName", "age", "gender", "mobile", "contactNumber", "address", "bloodGroup"];
 const IPD_KEYS  = ["ipdNo", "admissionNumber", "bedNumber", "wardName", "admissionDate", "consultantName"];
 
+// A payload "smells IPD-ish" when the caller supplied ANY admission-context
+// key — only then is chasing bed/ward/admission data meaningful.
+const isIpdIsh = (payload) =>
+  (payload.ipdNo || payload.admissionNumber || payload.admissionId ||
+   payload.bedNumber || payload.wardName || payload.admissionDate ||
+   payload.dischargeDate) !== undefined;
+
 export function payloadNeedsEnrichment(payload) {
   if (!payload || typeof payload !== "object") return false;
   const uhid = payload.uhid || payload.UHID || payload.patientUHID;
   if (!uhid) return false;
-  return DEMO_KEYS.some((k) => isEmpty(payload[k])) || IPD_KEYS.some((k) => isEmpty(payload[k]));
+  // R7hr(DEFER-17): empty IPD keys alone used to trigger a patient fetch on
+  // EVERY non-IPD print (visitor pass, gate log, feedback slip…) even when
+  // all demographic fields were already supplied — the lookup could fill
+  // nothing. IPD gaps now only count on IPD-ish payloads (the same
+  // heuristic enrichPrintPayload uses before chasing an admission).
+  return DEMO_KEYS.some((k) => isEmpty(payload[k])) ||
+         (isIpdIsh(payload) && IPD_KEYS.some((k) => isEmpty(payload[k])));
 }
 
 async function lookup(uhid, wantAdmission, admissionHint = {}) {
@@ -103,13 +116,7 @@ export async function enrichPrintPayload(raw) {
   if (!payloadNeedsEnrichment(raw)) return raw;
   const payload = { ...raw };
   const uhid = payload.uhid || payload.UHID || payload.patientUHID;
-  const wantAdmission =
-    IPD_KEYS.some((k) => isEmpty(payload[k])) &&
-    // Only chase an admission when the payload smells IPD-ish (has any IPD
-    // hint) OR carries none of the IPD keys at all but is a clinical doc.
-    (payload.ipdNo || payload.admissionNumber || payload.admissionId ||
-     payload.bedNumber || payload.wardName || payload.admissionDate ||
-     payload.dischargeDate) !== undefined;
+  const wantAdmission = IPD_KEYS.some((k) => isEmpty(payload[k])) && isIpdIsh(payload);
 
   try {
     const { patient, admission } = await lookup(uhid, !!wantAdmission, {
@@ -164,8 +171,10 @@ export async function enrichPrintPayload(raw) {
  * showing its loading shell so the operator never sees (or prints) a strip
  * full of dashes that silently fills in later.
  */
-export function useEnrichedPrintPayload(payload) {
-  const needs = payloadNeedsEnrichment(payload);
+export function useEnrichedPrintPayload(payload, { disabled = false } = {}) {
+  // R7hr(DEFER-17): `disabled` lets the router skip enrichment entirely for
+  // ?demo=1 payloads — their placeholder UHIDs 404'd on every gallery print.
+  const needs = !disabled && payloadNeedsEnrichment(payload);
   const [state, setState] = useState({ receipt: payload, enriching: needs });
 
   useEffect(() => {

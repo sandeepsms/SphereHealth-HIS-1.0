@@ -8,7 +8,9 @@
  */
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
-import QRCode from "qrcode";
+// R7hr(DEDUP-16): async `qrcode` dep dropped — QRCodeSVG renders the modal QR
+// synchronously; FeedbackSlip self-generates its own QR from `url`.
+import { QRCodeSVG } from "qrcode.react";
 import { toast } from "react-toastify";
 import { API_BASE_URL } from "../../config/api";
 import { useAuth } from "../../context/AuthContext";
@@ -19,7 +21,8 @@ import { openPrint } from "../../Components/print/openPrint";
 import { getTemplate, buildWhatsAppURL } from "../../Components/whatsapp/whatsapp-templates";
 
 const FB = `${API_BASE_URL}/feedback`;
-const authHeaders = () => ({ headers: { Authorization: `Bearer ${sessionStorage.getItem("his_token")}` } });
+// R7hr(DEDUP-16): explicit auth headers removed — the global axios request
+// interceptor (config/axiosInterceptor.js) already attaches the Bearer token.
 const VISIT_TYPES = ["OPD", "IPD", "Emergency", "Daycare", "Walk-in"];
 const scoreColor = (v) => (v >= 4 ? "#16a34a" : v >= 3 ? "#d97706" : v > 0 ? "#dc2626" : "#94a3b8");
 
@@ -83,7 +86,7 @@ function NewFeedback({ user }) {
     if (!answered) { toast.warn("Rate at least one item before submitting."); return; }
     setSaving(true);
     try {
-      await axios.post(FB, { ...ctx, ratings, npsScore, ...text, contactConsent }, authHeaders());
+      await axios.post(FB, { ...ctx, ratings, npsScore, ...text, contactConsent });
       toast.success("Feedback recorded. Thank you!");
       reset();
     } catch (e) {
@@ -94,10 +97,9 @@ function NewFeedback({ user }) {
   const generate = async () => {
     setSaving(true);
     try {
-      const { data } = await axios.post(`${FB}/generate-link`, { ...ctx }, authHeaders());
+      const { data } = await axios.post(`${FB}/generate-link`, { ...ctx });
       const url = `${window.location.origin}${data.data.path}`;
-      const qr = await QRCode.toDataURL(url, { width: 240, margin: 1, color: { dark: "#1e293b", light: "#ffffff" } });
-      setLink({ url, qr, ctx: { ...ctx }, expiresAt: data.data.expiresAt });
+      setLink({ url, ctx: { ...ctx }, expiresAt: data.data.expiresAt });
     } catch (e) {
       toast.error(e?.response?.data?.message || "Could not generate link.");
     } finally { setSaving(false); }
@@ -106,7 +108,7 @@ function NewFeedback({ user }) {
   const printSlip = () => {
     if (!link) return;
     openPrint("feedback-slip", {
-      url: link.url, qr: link.qr,
+      url: link.url,
       patientName: link.ctx?.patientName, UHID: link.ctx?.UHID,
       visitType: link.ctx?.visitType, department: link.ctx?.department,
       date: new Date().toISOString(), validUntil: link.expiresAt,
@@ -183,7 +185,7 @@ function NewFeedback({ user }) {
           <div onClick={(e) => e.stopPropagation()} style={{ background: "#fff", borderRadius: 18, padding: 24, width: 340, textAlign: "center", boxShadow: "0 20px 50px rgba(0,0,0,.3)" }}>
             <div style={{ fontWeight: 800, fontSize: 16, color: "#1e293b", marginBottom: 4 }}>Patient feedback link</div>
             <div style={{ fontSize: 12, color: "#64748b", marginBottom: 14 }}>Patient scans the QR or opens the link on their phone.</div>
-            <img src={link.qr} alt="Feedback QR" style={{ width: 220, height: 220, borderRadius: 12, border: "1px solid #e2e8f0" }} />
+            <div style={{ display: "inline-block", borderRadius: 12, border: "1px solid #e2e8f0", padding: 6, lineHeight: 0 }}><QRCodeSVG value={link.url} size={208} fgColor="#1e293b" bgColor="#ffffff" aria-label="Feedback QR" /></div>
             <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
               <input readOnly value={link.url} style={{ ...field, fontSize: 12 }} onFocus={(e) => e.target.select()} />
               <button onClick={copy} style={{ ...btn("#4338ca"), padding: "9px 14px", whiteSpace: "nowrap" }}><i className="pi pi-copy" /></button>
@@ -219,14 +221,20 @@ function Dashboard() {
     setLoading(true);
     try {
       const params = Object.fromEntries(Object.entries(filters).filter(([, v]) => v));
-      const { data } = await axios.get(`${FB}/stats`, { ...authHeaders(), params });
+      const { data } = await axios.get(`${FB}/stats`, { params });
       setStats(data.data);
     } catch (e) {
       toast.error(e?.response?.data?.message || "Could not load dashboard.");
     } finally { setLoading(false); }
   }, [filters]);
 
-  useEffect(() => { load(); }, [load]);
+  // R7hr(DEFER-15): the department text filter used to refetch /stats on
+  // every keystroke; a 400ms debounce coalesces typing into one request
+  // (dropdown/date changes share the same small delay — imperceptible).
+  useEffect(() => {
+    const t = setTimeout(load, 400);
+    return () => clearTimeout(t);
+  }, [load]);
 
   const field = { padding: "8px 10px", borderRadius: 9, border: "1px solid #e2e8f0", fontSize: 13, fontFamily: "inherit" };
 

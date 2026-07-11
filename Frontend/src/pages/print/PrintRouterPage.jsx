@@ -493,7 +493,11 @@ const PrintRouterPage = () => {
   // missing standard patient/admission fields, backfill them from the API
   // before the template renders — otherwise the strip under the header
   // prints "—" wherever the calling page didn't hand-plumb a field.
-  const { receipt, enriching } = useEnrichedPrintPayload(payload);
+  // R7hr(DEFER-17): demo payloads skip enrichment — their placeholder
+  // UHIDs 404'd on every gallery preview.
+  const { receipt, enriching } = useEnrichedPrintPayload(payload, {
+    disabled: search.get("demo") === "1",
+  });
 
   if (!cfg) {
     return (
