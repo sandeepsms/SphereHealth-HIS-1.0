@@ -330,6 +330,16 @@ const DEMO = {
     idNumber: "XXXX-XXXX-4242",
     visitingHours: "5:00 PM – 7:00 PM (daily)",
   },
+  // FeedbackSlip self-renders the QR from `url` (qrcode pkg) — no `qr`
+  // field here on purpose. Demo token routes to the real public page,
+  // which correctly shows "invalid link" if actually scanned.
+  "feedback-slip": {
+    url: `${window.location.origin}/feedback/demo-4f8a2c19`,
+    patientName: "Demo Patient", UHID: "UH00000099",
+    visitType: "OPD", department: "General Medicine",
+    date: new Date().toISOString(),
+    validUntil: new Date(Date.now() + 14 * 86400000).toISOString(),
+  },
   "mar-sheet": {
     marNo: "MAR-2026-00087",
     patientName: "Demo Patient", uhid: "UH00000099", ipdNo: "IPD-2026-0042",

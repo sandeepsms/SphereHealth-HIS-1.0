@@ -15,6 +15,8 @@ import { useAuth } from "../../context/AuthContext";
 import { roleCan } from "../../config/permissions";
 import { CategoryRatings, NpsScale, FeedbackTextFields, CATEGORY_META, emptyRatings } from "./feedbackShared";
 import { openPrint } from "../../Components/print/openPrint";
+// R7hr(FDBK-X2) — WhatsApp/SMS share of the minted link.
+import { getTemplate, buildWhatsAppURL } from "../../Components/whatsapp/whatsapp-templates";
 
 const FB = `${API_BASE_URL}/feedback`;
 const authHeaders = () => ({ headers: { Authorization: `Bearer ${sessionStorage.getItem("his_token")}` } });
@@ -116,6 +118,26 @@ function NewFeedback({ user }) {
     catch { toast.info("Copy manually: " + link.url); }
   };
 
+  // R7hr(FDBK-X2) — direct share. WhatsApp: wa.me click-to-chat with the
+  // shared feedback_link template (no number → WhatsApp's own contact
+  // picker). SMS: sms: URI — works on the phone/tablet reception devices;
+  // desktop browsers ignore it, so the copy button stays the fallback.
+  const feedbackMessage = () =>
+    getTemplate("feedback_link").build({
+      patientName: link?.ctx?.patientName || "Sir/Madam",
+      feedbackUrl: link?.url || "",
+    });
+  const shareWhatsApp = () => {
+    const text = feedbackMessage();
+    const to = buildWhatsAppURL(link?.ctx?.contactNumber, text)
+      || `https://wa.me/?text=${encodeURIComponent(text)}`;
+    window.open(to, "_blank", "noopener");
+  };
+  const shareSms = () => {
+    const digits = String(link?.ctx?.contactNumber || "").replace(/\D/g, "");
+    window.location.href = `sms:${digits}?body=${encodeURIComponent(feedbackMessage())}`;
+  };
+
   const field = { width: "100%", padding: "9px 11px", borderRadius: 9, border: "1px solid #e2e8f0", fontSize: 14, fontFamily: "inherit" };
 
   return (
@@ -169,6 +191,14 @@ function NewFeedback({ user }) {
             <button onClick={printSlip} style={{ ...btn("#0891b2"), width: "100%", marginTop: 10, justifyContent: "center" }}>
               <i className="pi pi-print" /> Print feedback slip
             </button>
+            <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+              <button onClick={shareWhatsApp} style={{ ...btn("#16a34a"), flex: 1, justifyContent: "center" }}>
+                <i className="pi pi-whatsapp" /> WhatsApp
+              </button>
+              <button onClick={shareSms} style={{ ...btn("#64748b"), flex: 1, justifyContent: "center" }}>
+                <i className="pi pi-envelope" /> SMS
+              </button>
+            </div>
             <button onClick={() => setLink(null)} style={{ marginTop: 12, background: "none", border: "none", color: "#64748b", cursor: "pointer", fontSize: 13 }}>Close</button>
           </div>
         </div>
