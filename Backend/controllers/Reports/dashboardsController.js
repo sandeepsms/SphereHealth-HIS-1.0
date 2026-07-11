@@ -390,8 +390,16 @@ exports.getLabTat = async (req, res, next) => {
       maxMins:    Math.round(r.maxMins),
       minMins:    Math.round(r.minMins),
     }));
+    // R7hr(LAB-TAT tile): overall rollup mirroring getErTat so a KPI strip
+    // can consume one block instead of re-weighting the category rows.
+    const totalCount = items.reduce((s, r) => s + r.count, 0);
+    const overall = totalCount > 0 ? {
+      count:   totalCount,
+      avgMins: Math.round(items.reduce((s, r) => s + r.avgMins * r.count, 0) / totalCount),
+      maxMins: Math.max(...items.map((r) => r.maxMins)),
+    } : { count: 0 };
     return sendOk(res,
-      { from: fromStr, to: toStr, rows: items },
+      { from: fromStr, to: toStr, rows: items, overall },
       { from: fromStr, to: toStr, count: items.length });
   } catch (e) { next(e); }
 };

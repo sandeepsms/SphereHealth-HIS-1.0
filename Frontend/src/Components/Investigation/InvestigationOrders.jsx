@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
+import axios from "axios";   // R7hr(LAB-TAT): interceptor-authed /reports call
 import { tpaService } from "../../Services/tpa/tpaService";
 import patientService from "../../Services/patient/patientService";
 import { Card } from "primereact/card";
@@ -178,6 +179,19 @@ export default function InvestigationOrders() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [summary, setSummary] = useState({});
+  // R7hr(LAB-TAT tile): collection→verify TAT over the last 30 days from
+  // /reports/lab-tat (gate lab.read — same roles as this page). The page's
+  // own fetch() calls carry no auth header, so this uses axios (global
+  // Bearer interceptor). 403/failure → null → tiles simply don't render.
+  const [labTat, setLabTat] = useState(null);
+  useEffect(() => {
+    axios.get(`${API}/reports/lab-tat`)
+      .then((r) => {
+        const d = r.data?.data || r.data || {};
+        setLabTat(d.overall?.count > 0 ? d.overall : null);
+      })
+      .catch(() => setLabTat(null));
+  }, []);
   // R7hr-314 — seed the status filter from ?status= so the Lab dashboard
   // tiles deep-link: Result Entry → ?status=SAMPLE_COLLECTED, Dispatch
   // Reports → ?status=COMPLETED (else the worklist opens unfiltered).
@@ -650,6 +664,12 @@ export default function InvestigationOrders() {
           color="#10b981"
         />
         <SCard label="Urgent" val={summary.urgent} color="#dc2626" />
+        {labTat && (
+          <>
+            <SCard label="TAT Avg · 30d" val={`${labTat.avgMins}m`} color="#7c3aed" />
+            <SCard label="TAT Max · 30d" val={`${labTat.maxMins}m`} color="#64748b" />
+          </>
+        )}
       </div>
 
       {/* Filter Bar */}

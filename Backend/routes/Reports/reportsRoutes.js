@@ -51,7 +51,11 @@ router.get("/inventory/abc-analysis",  requireAction("reports.financial"), dash.
 // ── Clinical ─────────────────────────────────────────────────────
 router.get("/patient-census",          requireAction("reports.clinical"),  dash.getPatientCensus);
 router.get("/bed-occupancy",           requireAction("reports.clinical"),  dash.getBedOccupancy);
-router.get("/lab-tat",                 requireAction("reports.clinical"),  dash.getLabTat);
+// R7hr(LAB-TAT tile): gate widened reports.clinical → lab.read so the lab
+// desk's own roles (Lab Technician / Radiologist / Nurse / MRD) can see
+// their TAT CQI on /investigation-orders. lab.read still includes
+// Admin + Doctor, so nobody lost access.
+router.get("/lab-tat",                 requireAction("lab.read"),          dash.getLabTat);
 // R7hr(NABH-P2.5) — IPD discharge TAT (doctor-approve → bill-clear →
 // gate-pass), the NABH CQI discharge-process indicator. FY/date-ranged.
 router.get("/discharge-tat",           requireAction("reports.clinical"),  dash.getDischargeTat);
