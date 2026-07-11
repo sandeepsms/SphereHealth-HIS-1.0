@@ -228,6 +228,11 @@ async function main() {
     };
   };
 
+  // R7hr(SEED-GUARD): shared ids for cross-block linkage (validated blocks)
+  const demoDoctorId = new mongoose.Types.ObjectId(); // prescription.doctor + Appointment.doctorId are REQUIRED ObjectId refs; no doctor doc guaranteed — validate() only type-checks the id
+  const physioPlanId = new mongoose.Types.ObjectId(); // shared: PhysioPlan._id ↔ PhysioSession.planId
+  const demoAdrReporterId = new mongoose.Types.ObjectId(); // ADRReport.reportedBy requires an ObjectId ref User; no user doc is loaded in this script — validation only type-checks the id (populate would return null; print uses reportedByName)
+
   const SETS = {
     // R7hu — a clean demo medication order so the day-wise Treatment Chart
     // showcases the MAR: Meropenem TDS across three days with on-time, late
@@ -250,8 +255,11 @@ async function main() {
     "../models/Doctor/DoctorNotesModel": [
       DN({
         createdAt: day(0, 12), visitDate: day(0, 12), noteType: "initial", section: "doctor",
+        patient: patient._id, patientName: patient.fullName || patient.firstName,
         doctorName: "Dr. Sandeep Kumar", signedByName: "Dr. Sandeep Kumar", doctorRegNo: "HMC-45821",
         signedAt: day(0, 12),
+        lateEntry: true, lateEntryAt: now,
+        lateEntryReason: "Retrospective electronic entry — admission-day note documented on paper during ICU resuscitation and transcribed after stabilisation (NABH HIC.6).",
         noteDetails: { doctor: {
           chiefComplaints: "High-grade fever with chills × 4 days; foul-smelling ulcer over right foot; drowsiness × 1 day.",
           historyOfPresentingIllness: "Known type-2 diabetic (12 yrs, on OHA) noticed a small blister over the right sole 10 days ago that rapidly ulcerated with purulent discharge. Fever became high-grade with rigors; family reports altered sensorium since yesterday.",
@@ -278,7 +286,10 @@ async function main() {
       }),
       DN({
         createdAt: day(2, 9), visitDate: day(2, 9), noteType: "daily", section: "doctor",
+        patient: patient._id, patientName: patient.fullName || patient.firstName,
         doctorName: "Dr. Sandeep Kumar", signedByName: "Dr. Sandeep Kumar", signedAt: day(2, 9),
+        lateEntry: true, lateEntryAt: now,
+        lateEntryReason: "Retrospective electronic entry — ward-round progress note transcribed from the paper record (NABH HIC.6).",
         // buildDoctorNoteCardHtml reads note.soap at top level for progress notes.
         soap: {
           subjective: "Fever settling, more alert. Pain at debridement site.",
@@ -289,7 +300,10 @@ async function main() {
       }),
       DN({
         createdAt: day(7, 10), visitDate: day(7, 10), noteType: "daily", section: "doctor",
+        patient: patient._id, patientName: patient.fullName || patient.firstName,
         doctorName: "Dr. Sandeep Kumar", signedByName: "Dr. Sandeep Kumar", signedAt: day(7, 10),
+        lateEntry: true, lateEntryAt: now,
+        lateEntryReason: "Retrospective electronic entry — ward-round progress note transcribed from the paper record (NABH HIC.6).",
         soap: {
           subjective: "No fever, walking with support in physio.", objective: "Vitals stable, wound granulating well.",
           assessment: "Recovering; sepsis resolved.", plan: "Step down to oral antibiotics, continue physio, plan discharge in 3-4 days.",
@@ -329,27 +343,56 @@ async function main() {
       NA(8, "nutrition", "Nutrition reassessment",   "MUST 2 — diabetic high-protein diet; egg removed after urticaria; oral intake adequate."),
     ],
     "../models/Patient/emergencyModel": [B({
-      createdAt: admit, arrivalTime: admit, triageLevel: "Red (Emergent)", erType: "Medical Emergency",
+      createdAt: admit, arrivalDate: admit, arrivalTime: admit, triageTime: admit,
+      patientId: patient._id, patientName: patient.fullName || patient.firstName,
+      emergencyNumber: `ER-DEMO-${UHID}`,
+      arrivalMode: "Ambulance", modeOfArrival: "Ambulance",
+      triageCategory: "Critical", triageLevel: "Red (Emergent)", erType: "Medical Emergency",
+      presentingComplaints: "High-grade fever, altered sensorium, foul-smelling right-foot ulcer — septic diabetic foot × 4 days",
       chiefComplaint: "High-grade fever, altered sensorium, foul-smelling right-foot ulcer",
-      presentingComplaint: "Septic diabetic foot × 4 days", modeOfArrival: "Ambulance",
-      disposition: "Admitted to ICU", consultantName: "Dr. Sandeep Kumar",
+      complaintDuration: "4 days",
+      consultantIncharge: "Dr. Sandeep Kumar", consultantName: "Dr. Sandeep Kumar",
+      provisionalDiagnosis: "Septic diabetic foot (right) with sepsis",
+      vitals: { weight: 72, temperature: 39.4, bloodPressure: "96/60", pulse: 118, respiratoryRate: 24, oxygenSaturation: 94, painScore: 6, glasgowComaScale: 12 },
+      disposition: "Admitted", status: "Admitted",
+      admission: admissionId, admittedAt: admit, admittedBy: "Dr. Sandeep Kumar",
+      admittedToWard: "ICU", admittedToBed: "ICU-3", admittedDepartment: "General Medicine",
     })],
     "../models/Doctor/prescription": [B({
-      createdAt: day(-20, 11), prescriptionDate: day(-20, 11), prescriptionNumber: "RX-2026-000112",
-      doctorName: "Dr. Sandeep Kumar", department: "General Medicine",
+      createdAt: day(-20, 11), date: day(-20, 11), prescriptionDate: day(-20, 11), prescriptionNumber: "RX-2026-000112",
+      patient: patient._id, patientName: patient.fullName || patient.firstName,
+      doctor: demoDoctorId, doctorName: "Dr. Sandeep Kumar",
+      department: "General Medicine", registrationType: "OPD",
+      provisionalDiagnosis: "Type-2 diabetes mellitus with early right plantar foot ulcer",
       medicines: [
-        { medicineName: "Metformin 500mg", dosage: "1 tab", frequency: "BD", duration: "Continued" },
-        { medicineName: "Glimepiride 1mg", dosage: "1 tab", frequency: "OD", duration: "Continued" },
+        { medicineName: "Metformin 500mg", dosage: "1 tab", frequency: "BD", duration: "Continued", schedule: "BD", route: "Oral", days: "Continued" },
+        { medicineName: "Glimepiride 1mg", dosage: "1 tab", frequency: "OD", duration: "Continued", schedule: "OD", route: "Oral", days: "Continued" },
       ],
       advice: "Foot care, daily dressing, review if discharge/redness increases",
+      status: "Completed",
     })],
     "../models/Appointment/appointmentModel": [B({
-      createdAt: day(3), appointmentDate: future(7), department: "General Medicine",
-      doctorName: "Dr. Sandeep Kumar", chiefComplaint: "Post-discharge follow-up + wound review", status: "Booked",
+      createdAt: day(3), bookedAt: day(3),
+      appointmentNumber: `APT-DEMO-${UHID}`,
+      patientId: patient._id,
+      patientName: patient.fullName || patient.firstName,
+      patientPhone: patient.contactNumber || "9876543210",
+      doctorId: demoDoctorId, doctorName: "Dr. Sandeep Kumar",
+      appointmentDate: future(7), slotTime: "10:30", durationMinutes: 15,
+      department: "General Medicine",
+      chiefComplaint: "Post-discharge follow-up + wound review",
+      status: "Booked", bookedBy: "Ritu Sharma (Receptionist)",
     })],
     "../models/PatientBillModel/PatientAdvanceModel": [
-      B({ createdAt: admit, paidAt: admit, receiptNumber: "ADV-DEMO-UH01", amount: 25000, paymentMode: "UPI",
-          appliedAmount: 20000, refundedAmount: 5000, refundedAt: day(13, 16), refundReason: "Unutilised advance after final bill" }),
+      B({ createdAt: admit, paidAt: admit, receiptNumber: `ADV-DEMO-${UHID}`,
+          patientId: patient._id, admission: admissionId,
+          amount: 25000, paymentMode: "UPI", transactionId: "UPI-DEMO-415922",
+          receivedBy: "Ritu Sharma", receivedByRole: "Receptionist",
+          appliedAmount: 20000, refundedAmount: 5000,
+          refundedAt: day(13, 16), refundedBy: "Ritu Sharma", refundMode: "CASH",
+          refundedToName: patient.fullName || patient.firstName, refundedToRelation: "Self",
+          refundReason: "Unutilised advance after final bill",
+          status: "REFUNDED" }),
     ],
     "../models/Clinical/MedReconciliationModel": [B({
       createdAt: day(0, 14), reconciledAt: day(0, 14), phase: "Admission",
@@ -358,9 +401,19 @@ async function main() {
       discrepancies: "Home Metformin dose mismatch vs OPD Rx — corrected; Amlodipine continued",
     })],
     "../models/Clinical/ProcedureNoteModel": [B({
-      createdAt: day(2, 12), procedureDate: day(2, 12), procedureName: "Wound debridement — right diabetic foot",
-      performedByName: "Dr. Sandeep Kumar", site: "Right foot (plantar)",
+      createdAt: day(2, 12), procedureDate: day(2, 12),
+      patientId: patient._id, patientName: patient.fullName || patient.firstName,
+      admissionNumber: ipdNo,
+      surgeryName: "Wound debridement (LA) — right foot",
+      actualProcedure: "Wound debridement — right diabetic foot",
+      procedureName: "Wound debridement — right diabetic foot",
+      startTime: day(2, 10, 30), endTime: day(2, 11, 15), durationMinutes: 45,
+      surgeon: "Dr. Sandeep Kumar", performedByName: "Dr. Sandeep Kumar",
+      anaesthetistName: "Dr. Anaes Verma", anaesthesiaType: "Local", asaGrade: "III",
+      complications: "", bloodLossMl: 30, postOpDestination: "ICU",
+      site: "Right foot (plantar)",
       notes: "Extensive slough excised, healthy margins achieved, dressing applied. Swab count correct.",
+      createdByName: "Dr. Sandeep Kumar", createdByRole: "Doctor",
     })],
     // R7hr(REG-V): all register seeds below rewritten to the REAL schema
     // field names (raw insertMany bypasses strict mode, so the old wrong
@@ -378,14 +431,42 @@ async function main() {
       durationMinutes: 45, complications: "", status: "Completed",
     })],
     "../models/Clinical/PhysioPlanModel": [B({
-      createdAt: day(3, 10), diagnosis: "Post-debridement deconditioning; diabetic neuropathy",
-      goals: "Bed mobility → assisted standing → independent ambulation with footwear",
-      modalities: ["Active-assisted ROM", "Strengthening", "Gait training"], sessionCount: 6, frequency: "Once daily",
+      _id: physioPlanId,
+      createdAt: day(3, 10),
+      patientName: patient.fullName || patient.firstName,
+      diagnosis: "Post-debridement deconditioning; diabetic neuropathy",
+      goals: ["Bed mobility → assisted standing → independent ambulation with footwear"],
+      modalitySet: ["ROM", "STRENGTH", "GAIT"],
+      sessionsTotal: 6, sessionsCompleted: 3, frequency: "OD",
+      dischargeAdvice: "Continue home exercise programme; protective diabetic footwear",
+      createdByName: "Anita (PT)", createdByRole: "Physiotherapist", status: "ACTIVE",
+      // Display-only extras (not schema paths — strict validate ignores, raw insert keeps):
+      // the Complete File physioPlans print row reads modalities / sessionCount.
+      modalities: ["Active-assisted ROM", "Strengthening", "Gait training"], sessionCount: 6,
     })],
     "../models/Clinical/PhysioSessionModel": [
-      B({ createdAt: day(4, 11), sessionDate: day(4, 11), modality: "Bed mobility + ROM", duration: "30 min", therapistName: "Anita (PT)", patientResponse: "Tolerated well, mild fatigue" }),
-      B({ createdAt: day(6, 11), sessionDate: day(6, 11), modality: "Assisted standing + strengthening", duration: "35 min", therapistName: "Anita (PT)", patientResponse: "Stood with support ×2 min" }),
-      B({ createdAt: day(9, 11), sessionDate: day(9, 11), modality: "Gait training (walker)", duration: "40 min", therapistName: "Anita (PT)", patientResponse: "Walked 10m with walker, stable" }),
+      B({ planId: physioPlanId, createdAt: day(4, 11), sessionDate: day(4, 11),
+        patientName: patient.fullName || patient.firstName,
+        sessionType: "ROM", modalitiesUsed: ["Bed mobility", "Active-assisted ROM"], duration_min: 30,
+        painScoreBefore: 6, painScoreAfter: 5, tolerance: "GOOD",
+        notes: "Tolerated well, mild fatigue",
+        status: "COMPLETED", signedByName: "Anita (PT)", signedAt: day(4, 11),
+        // display-only extras for the physioSessions print row (not schema paths)
+        modality: "Bed mobility + ROM", duration: "30 min", therapistName: "Anita (PT)", patientResponse: "Tolerated well, mild fatigue" }),
+      B({ planId: physioPlanId, createdAt: day(6, 11), sessionDate: day(6, 11),
+        patientName: patient.fullName || patient.firstName,
+        sessionType: "STRENGTH", modalitiesUsed: ["Assisted standing", "Strengthening"], duration_min: 35,
+        painScoreBefore: 5, painScoreAfter: 4, tolerance: "FAIR",
+        notes: "Stood with support ×2 min",
+        status: "COMPLETED", signedByName: "Anita (PT)", signedAt: day(6, 11),
+        modality: "Assisted standing + strengthening", duration: "35 min", therapistName: "Anita (PT)", patientResponse: "Stood with support ×2 min" }),
+      B({ planId: physioPlanId, createdAt: day(9, 11), sessionDate: day(9, 11),
+        patientName: patient.fullName || patient.firstName,
+        sessionType: "GAIT", modalitiesUsed: ["Gait training (walker)"], duration_min: 40,
+        painScoreBefore: 4, painScoreAfter: 3, tolerance: "GOOD",
+        notes: "Walked 10m with walker, stable",
+        status: "COMPLETED", signedByName: "Anita (PT)", signedAt: day(9, 11),
+        modality: "Gait training (walker)", duration: "40 min", therapistName: "Anita (PT)", patientResponse: "Walked 10m with walker, stable" }),
     ],
     "../models/Compliance/RestraintRegisterModel": [B({
       createdAt: day(1, 3), occurredAt: day(1, 3), startTime: day(1, 3), endTime: day(1, 11), durationMinutes: 480,
@@ -451,12 +532,30 @@ async function main() {
       status: "Active",
     })],
     "../models/Pharmacy/ADRReportModel": [B({
-      createdAt: day(3, 18), reportedAt: day(3, 18), suspectedDrug: "Ceftriaxone",
-      reaction: "Maculopapular rash over trunk", severity: "Moderate", outcome: "Recovered after drug withdrawal + antihistamine",
+      createdAt: day(3, 18),
+      patientName: patient.fullName || patient.firstName,
+      suspectedDrugName: "Ceftriaxone", suspectedDrugDose: "1 g IV BD", suspectedRoute: "IV",
+      reactionDescription: "Maculopapular rash over trunk", onsetDate: day(3, 18),
+      severity: "MODERATE", causality: "PROBABLE", dechallenge: "POSITIVE",
+      actionTaken: "Drug withdrawn; antihistamine given",
+      outcome: "RECOVERED",
+      notes: "Recovered after drug withdrawal + antihistamine",
+      reportedBy: demoAdrReporterId, reportedByName: "Dr. Sandeep Kumar", reportedByRole: "Doctor",
+      status: "SUBMITTED", submittedAt: day(3, 18),
+      // Display-only extras (not schema paths — strict validate ignores, raw insert keeps):
+      // the adrReports print row picks reportedAt / drugName / reaction. Schema suspectedDrug
+      // is an ObjectId ref PharmacyDrug (string failed cast) so it is intentionally omitted.
+      reportedAt: day(3, 18), drugName: "Ceftriaxone", reaction: "Maculopapular rash over trunk",
     })],
     "../models/Clinical/AdverseFoodReactionModel": [B({
-      createdAt: day(8, 13), reactionDate: day(8, 13), foodItem: "Egg (breakfast tray)",
-      reaction: "Urticaria over forearms", severity: "Mild", actionTaken: "Egg removed from diet plan; noted as intolerance",
+      createdAt: day(8, 13), reportedAt: day(8, 13),
+      patientName: patient.fullName || patient.firstName,
+      mealItem: "Egg (breakfast tray)", suspectedAllergen: "Egg",
+      reactionDescription: "Urticaria over forearms",
+      severity: "MILD", onsetMinutesAfterMeal: 45,
+      reportedByName: "Sister Anita", reportedByRole: "Staff Nurse",
+      actionTaken: "Egg removed from diet plan; noted as intolerance",
+      outcome: "RESOLVED", status: "CLOSED",
     })],
     "../models/Compliance/CodeResponseEventModel": [B({
       createdAt: day(3, 2), alertedAt: day(3, 2),
@@ -468,22 +567,64 @@ async function main() {
       notes: "ROSC achieved after 2 cycles CPR; shifted to ventilator",
     })],
     "../models/Clinical/PROMPREMSurveyModel": [B({
-      createdAt: day(13, 17), submittedAt: day(13, 17), surveyType: "PREM — Discharge",
-      overallScore: 8, comments: "Very satisfied with doctors and nursing care; hospital food could improve.",
+      createdAt: day(13, 16), administeredAt: day(13, 16),
+      patientId: patient._id, patientName: patient.fullName || patient.firstName,
+      admissionNumber: ipdNo,
+      type: "PROM", instrument: "EQ-5D-5L",
+      responses: { mobility: 2, selfcare: 1, usualActivities: 2, pain: 2, anxiety: 1, vas: 75 },
+      scores: { vas: 75 },
+      comments: "Walking better than at admission; mild pain at wound site.",
+      patientSignature: { method: "DIGITAL_PAD", signedAt: day(13, 16) },
+      staffWitness: { userName: "Sister Anita", userRole: "Staff Nurse", signedAt: day(13, 16) },
+      status: "SIGNED", signedAt: day(13, 16), signedByName: "Sister Anita",
+      sourceRef: `demo-prom-${UHID}`,
+    }), B({
+      createdAt: day(13, 17), administeredAt: day(13, 17),
+      patientId: patient._id, patientName: patient.fullName || patient.firstName,
+      admissionNumber: ipdNo,
+      type: "PREM", instrument: "NABH-PSQ",
+      responses: { doctorCare: 9, nursingCare: 9, cleanliness: 8, foodQuality: 6, overallRating: 8 },
+      scores: { overall: 8 },
+      comments: "Very satisfied with doctors and nursing care; hospital food could improve.",
+      patientSignature: { method: "DIGITAL_PAD", signedAt: day(13, 17) },
+      staffWitness: { userName: "Sister Anita", userRole: "Staff Nurse", signedAt: day(13, 17) },
+      status: "SIGNED", signedAt: day(13, 17), signedByName: "Sister Anita",
+      sourceRef: `demo-prem-${UHID}`,
     })],
     "../models/Clinical/MedicalCertificateModel": [B({
-      createdAt: day(14, 11), issuedAt: day(14, 11), certificateNumber: "MC-2026-00231",
-      certificateType: "Fitness for Discharge", issuedByName: "Dr. Sandeep Kumar",
-      validFrom: day(14, 11), validTo: future(14),
+      createdAt: day(14, 11), issuedAt: day(14, 11),
+      patient: patient._id, patientName: patient.fullName || patient.firstName,
+      certNumber: `MC-DEMO-${UHID}`,                 // unique index — demo-scoped value
+      certType: "discharge-fitness",
+      visitType: "IPD", admissionNumber: ipdNo,
+      doctorName: "Dr. Sandeep Kumar", doctorReg: "MCI-2011-54321",
+      diagnosis: "Septic diabetic foot — infection resolved, wound granulating",
+      typeSpecific: { fitForDischarge: true, validFrom: day(14, 11), validTo: future(14), remarks: "Fit for discharge; OPD review in 7 days" },
+      status: "issued",
     })],
   };
 
   // ── 3. Insert (delete prior demo rows first) ──
+  // R7hr(SEED-GUARD): raw collection.insertMany stays (it preserves the
+  // _demoSeed tag + patient-scoping keys that some schemas don't declare,
+  // which the cleanup delete and _byPatient queries rely on) — but each
+  // doc is now VALIDATED against its schema first. REG-V found 8 register
+  // seeds silently carrying wrong keys / enum-violating values / missing
+  // required fields for months because raw inserts bypass validators; any
+  // future drift now fails loudly at seed time instead.
   let total = 0;
   for (const [p, docs] of Object.entries(SETS)) {
     const M = resolveModel(p);
     if (!M) { console.warn(`   ⚠️  ${p.split("/").pop()} — model unresolved, skipped`); continue; }
     try {
+      for (const d of docs) {
+        try {
+          await new M(d).validate();
+        } catch (ve) {
+          const bad = Object.keys(ve.errors || {}).join(", ") || ve.message;
+          throw new Error(`schema validation failed (${bad}) — fix the seed doc, do not bypass`);
+        }
+      }
       await M.collection.deleteMany({ _demoSeed: true, UHID });
       await M.collection.insertMany(docs);
       total += docs.length;
