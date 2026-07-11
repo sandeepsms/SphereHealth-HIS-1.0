@@ -19,39 +19,58 @@ const fmtDate = (d) => d ? new Date(d).toLocaleDateString("en-IN", {
   day: "2-digit", month: "short", year: "numeric",
 }) : "—";
 
+// R7hr(BMW-FIX): keys match the model's bagColor enum (lowercased) — the
+// 2018-amendment BLACK + CYTOTOXIC bags were missing, so those rows
+// rendered with the yellow fallback style.
 const COLOR_STYLE = {
-  yellow: { bg: "#fef3c7", color: "#78350f", border: "#fde68a", label: "Yellow" },
-  red:    { bg: "#fee2e2", color: "#7f1d1d", border: "#fca5a5", label: "Red" },
-  white:  { bg: "#f8fafc", color: "#0f172a", border: "#cbd5e1", label: "White (Translucent)" },
-  blue:   { bg: "#e0e7ff", color: "#3730a3", border: "#93c5fd", label: "Blue" },
+  yellow:    { bg: "#fef3c7", color: "#78350f", border: "#fde68a", label: "Yellow" },
+  red:       { bg: "#fee2e2", color: "#7f1d1d", border: "#fca5a5", label: "Red" },
+  white:     { bg: "#f8fafc", color: "#0f172a", border: "#cbd5e1", label: "White (Translucent)" },
+  blue:      { bg: "#e0e7ff", color: "#3730a3", border: "#93c5fd", label: "Blue" },
+  black:     { bg: "#e2e8f0", color: "#0f172a", border: "#94a3b8", label: "Black (General)" },
+  cytotoxic: { bg: "#f3e8ff", color: "#581c87", border: "#d8b4fe", label: "Cytotoxic" },
 };
 
 const BmwManifest = ({ settings, receipt = {} }) => {
   const r = receipt;
   const bags = Array.isArray(r.bags) ? r.bags : [];
-  const totals = r.totals || (() => {
-    const t = { yellow: 0, red: 0, white: 0, blue: 0, count: bags.length, weight: 0 };
+  // R7hr(BMW-FIX): read the BmwTransportManifest SCHEMA names first
+  // (bagColor / weight_kg / totalBags / totalWeight_kg) — the original
+  // reads only knew the gallery-demo payload's names, so a real manifest
+  // doc rendered 0.00 everywhere. Legacy names stay as fallback so the
+  // demo payload keeps working.
+  const bagColor  = (b) => String(b.bagColor || b.color || "yellow").toLowerCase();
+  const bagWeight = (b) => toNum(b.weight_kg != null ? b.weight_kg : b.weight);
+  const totals = (() => {
+    const t = { yellow: 0, red: 0, white: 0, blue: 0, black: 0, cytotoxic: 0, count: 0, weight: 0 };
     bags.forEach((b) => {
-      const c = (b.color || "yellow").toLowerCase();
-      if (t[c] != null) t[c] += toNum(b.weight);
-      t.weight += toNum(b.weight);
+      const c = bagColor(b);
+      if (t[c] != null) t[c] += bagWeight(b);
+      t.weight += bagWeight(b);
     });
-    return t;
+    t.count  = toNum(r.totalBags) || bags.length;
+    t.weight = toNum(r.totalWeight_kg) || t.weight;
+    // legacy hand-built totals object wins when supplied (gallery demo)
+    return r.totals ? { ...t, ...r.totals } : t;
   })();
+  // The 4 classical colours always show; black/cytotoxic tiles appear
+  // only when that waste stream exists on this manifest.
+  const tileColors = ["yellow", "red", "white", "blue",
+    ...["black", "cytotoxic"].filter((c) => toNum(totals[c]) > 0)];
 
   return (
     <PrintShell
       settings={settings}
       documentTitle="Bio-Medical Waste Manifest (BMW Rules Form-IV)"
-      serialNo={r.manifestNo}
+      serialNo={r.manifestNumber || r.manifestNo}
       printCount={toNum(r.printCount)}
       infoItems={[
-        { label: "Manifest #",       value: r.manifestNo },
+        { label: "Manifest #",       value: r.manifestNumber || r.manifestNo },
         { label: "Date",             value: fmtDate(r.manifestDate || new Date()) },
         { label: "CBWTF Name",       value: r.cbwtfName },
-        { label: "CBWTF Licence #",  value: r.cbwtfLicenceNo },
+        { label: "CBWTF Licence #",  value: r.cbwtfLicenceNumber || r.cbwtfLicenceNo },
         { label: "Hospital Licence", value: settings.bmwLicenceNo || settings.registrationNo },
-        { label: "Pick-up At",       value: fmtDateTime(r.pickupAt) },
+        { label: "Pick-up At",       value: fmtDateTime(r.handedOverAt || r.pickupAt) },
       ]}
       signatureLabels={["Hospital BMW Officer", "CBWTF Driver / Operator"]}
     >
@@ -59,8 +78,8 @@ const BmwManifest = ({ settings, receipt = {} }) => {
       <div className="pr-section">
         <div className="pr-section__title">Manifest Totals</div>
         <div className="pr-section__body" style={{ fontSize: 11 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 8 }}>
-            {["yellow", "red", "white", "blue"].map((c) => {
+          <div style={{ display: "grid", gridTemplateColumns: `repeat(${tileColors.length + 1}, 1fr)`, gap: 8 }}>
+            {tileColors.map((c) => {
               const s = COLOR_STYLE[c];
               return (
                 <div key={c} style={{ border: `1.5px solid ${s.border}`, background: s.bg, borderRadius: 6, padding: 8, textAlign: "center" }}>
@@ -98,7 +117,7 @@ const BmwManifest = ({ settings, receipt = {} }) => {
             {bags.length === 0 ? (
               <tr><td colSpan={8} className="muted center" style={{ padding: 12 }}>No bags recorded.</td></tr>
             ) : bags.map((b, i) => {
-              const c = (b.color || "yellow").toLowerCase();
+              const c = bagColor(b);
               const s = COLOR_STYLE[c] || COLOR_STYLE.yellow;
               return (
                 <tr key={i} style={{ pageBreakInside: "avoid" }}>
@@ -112,9 +131,9 @@ const BmwManifest = ({ settings, receipt = {} }) => {
                     }}>{s.label}</span>
                   </td>
                   <td>{b.category || "—"}</td>
-                  <td className="right">{toNum(b.weight).toFixed(2)}</td>
+                  <td className="right">{bagWeight(b).toFixed(2)}</td>
                   <td>{b.fromWard || b.source || "—"}</td>
-                  <td>{fmtDate(b.generatedAt || b.generatedDate)}</td>
+                  <td>{fmtDate(b.generatedDate || b.generatedAt)}</td>
                   <td style={{ fontSize: 9.5 }}>{b.notes || ""}</td>
                 </tr>
               );
@@ -136,15 +155,17 @@ const BmwManifest = ({ settings, receipt = {} }) => {
             </tr>
             <tr>
               <td style={{ fontWeight: 700 }}>Driver Contact</td>
-              <td>{r.driverContact || "—"}</td>
+              <td>{r.driverPhone || r.driverContact || "—"}</td>
               <td style={{ fontWeight: 700 }}>Receipt Timestamp</td>
-              <td>{fmtDateTime(r.cbwtfReceiptAt || r.pickupAt)}</td>
+              <td>{fmtDateTime(r.cbwtfReceivedAt || r.cbwtfReceiptAt || r.handedOverAt || r.pickupAt)}</td>
             </tr>
             <tr>
               <td style={{ fontWeight: 700 }}>SPCB Return #</td>
-              <td>{r.spcbReturnNo || "—"}</td>
+              <td>{r.pcbReturnRefNumber || r.spcbReturnNo || "—"}</td>
+              {/* Schema has no disposalFacility — the CBWTF IS the disposal
+                  facility; fall back to its name for real docs. */}
               <td style={{ fontWeight: 700 }}>Disposal Facility</td>
-              <td>{r.disposalFacility || "—"}</td>
+              <td>{r.disposalFacility || r.cbwtfName || "—"}</td>
             </tr>
           </tbody>
         </table>
