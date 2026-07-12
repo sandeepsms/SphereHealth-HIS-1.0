@@ -2064,12 +2064,33 @@ class BillingService {
           : `REFUND: ${String(reason).trim()}`,
       });
 
-      // Fully refunded → REFUNDED, partial refund of PAID → PARTIAL.
-      // Pre-save hook recomputes advancePaid + balanceAmount.
+      // Fully refunded → REFUNDED, partial refund of a PARTIAL bill stays
+      // PARTIAL. Pre-save hook recomputes advancePaid + balanceAmount.
       // R7hr-188: a live DRAFT bill stays DRAFT even on full refund —
       // REFUNDED is terminal and would orphan the running admission's
       // auto-billing. The refund rows still land in payments[].
       const newPaid = paid - amt;
+
+      // R7hr-REFUND-STATE (E2E-OPD): a PARTIAL refund that leaves money
+      // still on a fully-PAID bill cannot downgrade PAID → PARTIAL. The
+      // status guard (A7-HIGH-2) blocks that move on purpose: PARTIAL means
+      // "amount still due", so re-opening a settled bill would resurrect a
+      // PHANTOM RECEIVABLE (balanceAmount recomputes to the refunded amount)
+      // and the patient would show up in outstanding-dues chasing money we
+      // just handed back. Pre-fix this path threw an opaque 409 "Illegal
+      // PatientBill transition"; now we fail fast with an actionable 400 that
+      // points to the sanctioned mechanisms. Full refunds (net collected → 0)
+      // still legitimately close the bill as REFUNDED below.
+      if (bill.billStatus === "PAID" && newPaid > 0.5) {
+        const err = new Error(
+          `Cannot partially refund a fully-PAID bill (refund ₹${amt} of ₹${paid.toFixed(2)} collected) — ` +
+          `it would re-open the bill with a ₹${amt} balance due. ` +
+          `Issue a Credit Note for the over-charged/un-rendered amount (reduces the charge AND refunds), ` +
+          `or refund the full collected amount to close the bill as REFUNDED.`,
+        );
+        err.code = "PARTIAL_REFUND_OF_PAID_BLOCKED"; err.status = 400; throw err;
+      }
+
       if (bill.billStatus === "DRAFT") {
         /* stay DRAFT */
       } else if (newPaid <= 0.5) {

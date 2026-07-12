@@ -3,6 +3,23 @@ const Patient   = require("../../models/Patient/patientModel");
 const Admission = require("../../models/Patient/admissionModel");
 const { nextSequence } = require("../../utils/counter");
 
+// R7hr-OPD-PAY-ENUM — Patient.paymentType accepts the receptionist UI's
+// title-case labels ("Cash"/"Insurance"/"Corporate") AND legacy upper-case,
+// but OPDRegistration.paymentType + admissionModel.paymentType only allow
+// ["GENERAL","TPA","CORPORATE","CASH"]. Passing "Cash" (the Patient default!)
+// straight through made `new OPD(opdData).save()` throw a validation error,
+// which the auto-dispatch in patientService swallowed as non-fatal → the OPD
+// visit + consult bill were NEVER created ("OPD 1, Bills 0"). Normalise to the
+// OPD enum so every registration path lands the visit + bill.
+function normalizeOpdPaymentType(pt) {
+  const key = String(pt || "").trim().toUpperCase();
+  const map = {
+    CASH: "CASH", GENERAL: "GENERAL", TPA: "TPA",
+    CORPORATE: "CORPORATE", INSURANCE: "TPA",
+  };
+  return map[key] || "GENERAL";
+}
+
 // R7hg — OPD.patientId is `type: String` (legacy denormalised reference,
 // no `ref`), so mongoose .populate() silently no-ops. We hand-merge the
 // allergy data by UHID after fetching the visit batch.
@@ -194,6 +211,7 @@ class OPDService {
     const seq = (patient.totalOPDVisits || 0) + 1;
     opdData.patientVisitSeq = seq;
     opdData.UHID = patient.UHID; // always pull fresh from Patient record
+    opdData.paymentType = normalizeOpdPaymentType(opdData.paymentType); // R7hr-OPD-PAY-ENUM
 
     // Denormalize patient info for quick display (avoids populate on every queue fetch)
     opdData.patientName   = patient.fullName || `${patient.firstName || ""} ${patient.lastName || ""}`.trim() || patient.name || "";
