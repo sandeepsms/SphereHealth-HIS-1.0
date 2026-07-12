@@ -4,6 +4,8 @@
 > **Standards:** NABH Hospital Accreditation Standards (5th ed.) — AAC, COP, MOM, PRE, HIC, PSQ/CQI, IMS/MRD, FMS/HRM; and NABL 112 / **ISO 15189:2022** for the medical laboratory.
 > **Method:** 10 expert auditors (one per chapter/domain) mapped the code against each standard; an **adversarial verifier then re-checked every claimed gap** against the codebase to eliminate false positives. Every finding is grounded in `file:line` evidence. A register that exists only as a schema — never populated by a real clinical-event hook, or never surfaced to a surveyor — is scored **Partial**, not compliant.
 > **Software-scope caveat:** an HIS can satisfy only the *record / workflow-enforcement / documentation* elements of NABH/NABL. Physical infrastructure, staffing, training delivery and committee *processes* are out of software scope (`N/A (non-software)`) — the hospital's responsibility, not a product defect.
+>
+> **Remediation status (2026-07-12, commit `1954f573`):** 4 quick genuine-defect fixes landed and runtime-verified (full E2E still 136/136): readmission-register diagnosis field-drift (#152), medication-error auto-capture dead code (#140), MAR five-rights bypass on the marController path (#139), and the NMC_REG gate accepting a bare degree (#132). The remaining 17 Major + 26 Minor items are queued (tasks #130–176) pending owner prioritisation.
 
 ## Executive summary
 
