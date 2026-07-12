@@ -34,6 +34,9 @@ import PrintShell from "@/templates/PrintShell";
 import { fmtDate, fmtDayMonth, pronoun } from "./normalizeData";
 // R7hr(THEME-REG): coverage records + NABH registers — previously Narrative-only.
 import SharedRegisterSections from "./SharedRegisterSections";
+// R7hr(DOCS-FULL-FU): six full formal documents appendix (order sheet, MAR,
+// NABL labs, diagnostic reports, consents, diet, discharge).
+import SharedFormalDocSections from "./SharedFormalDocSections";
 
 /* ── Small text helpers (component-local) ─────────────────────────
    Same prose-joining helpers used by Narrative — kept inline so the
@@ -1016,6 +1019,7 @@ const EditorialTheme = ({ settings = {}, file, events = [] }) => {
         ) : null}
       </div>
       <SharedRegisterSections file={file} />
+      <SharedFormalDocSections file={file} />
     </PrintShell>
   );
 };
