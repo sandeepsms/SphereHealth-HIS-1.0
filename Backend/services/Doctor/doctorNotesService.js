@@ -775,6 +775,12 @@ const updateDoctorNote = async (id, data, doctorUserId) => {
     "icd10Code",
     "icd10Description",
     "shift",
+    // R7hr(EMER-IA): per-type specifics live under noteDetails (ICU vent
+    // settings, procedure record, emergency assessment…). The create path
+    // has always persisted it, but re-saving a draft dropped every
+    // noteDetails change — the ER page's second "Save Draft" silently
+    // reverted the assessment to its first-save content.
+    "noteDetails",
   ];
 
   if (note.status === "signed") {

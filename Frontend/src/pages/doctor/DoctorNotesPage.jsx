@@ -989,6 +989,25 @@ function DoctorNotesContent({ selectedPatient }) {
 
   const modDef = (id) => MODULES.find(m => m.id === id);
 
+  // R7hr(ICU-VITALS) — shared Objective Vitals row, rendered by the Daily
+  // Progress AND ICU modals (the ICU form previously captured no vitals at
+  // all — vent settings only). Plain render function, NOT a component:
+  // defining a component inside the page would remount the inputs on every
+  // keystroke and drop focus. Writes the shared `vitals` state that
+  // saveNote() already maps to the note's top-level vitals for every type.
+  const renderVitalsRow = () => (
+    <div style={{ background: "#f8fafc", border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px" }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>Objective Vitals (NABH COP.2)</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8 }}>
+        {[{k:"bp_sys",l:"Systolic BP (mmHg)",p:"120"},{k:"bp_dia",l:"Diastolic BP (mmHg)",p:"80"},{k:"pulse",l:"Pulse (/min)",p:"80"},{k:"temp",l:"Temp (°F)",p:"98.6"},{k:"spo2",l:"SpO₂ (%)",p:"98"},{k:"rr",l:"RR (/min)",p:"16"},{k:"bsl",l:"BSL (mg/dL)",p:"110"},{k:"gcs",l:"GCS",p:"E4V5M6"},{k:"urine",l:"Urine (mL/hr)",p:"50"}].map(v => (
+          <FL key={v.k} label={v.l}>
+            <input type={v.k==="gcs"?"text":"number"} className="his-field" style={{ fontSize: 12 }} value={vitals[v.k]} placeholder={v.p} onChange={e => setVitals(p => ({ ...p, [v.k]: e.target.value }))} />
+          </FL>
+        ))}
+      </div>
+    </div>
+  );
+
   /* ── Stats ── */
   const totalNotes  = notes.length;
   const signedNotes = notes.filter(n => n.status === "signed").length;
@@ -2369,17 +2388,7 @@ function DoctorNotesContent({ selectedPatient }) {
               {/* ══ DAILY PROGRESS NOTE (SOAP) ══ */}
               {activeModal === "daily" && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                  {/* Vitals Row */}
-                  <div style={{ background: "#f8fafc", border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px" }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>Objective Vitals (NABH COP.2)</div>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8 }}>
-                      {[{k:"bp_sys",l:"Systolic BP (mmHg)",p:"120"},{k:"bp_dia",l:"Diastolic BP (mmHg)",p:"80"},{k:"pulse",l:"Pulse (/min)",p:"80"},{k:"temp",l:"Temp (°F)",p:"98.6"},{k:"spo2",l:"SpO₂ (%)",p:"98"},{k:"rr",l:"RR (/min)",p:"16"},{k:"bsl",l:"BSL (mg/dL)",p:"110"},{k:"gcs",l:"GCS",p:"E4V5M6"},{k:"urine",l:"Urine (mL/hr)",p:"50"}].map(v => (
-                        <FL key={v.k} label={v.l}>
-                          <input type={v.k==="gcs"?"text":"number"} className="his-field" style={{ fontSize: 12 }} value={vitals[v.k]} placeholder={v.p} onChange={e => setVitals(p => ({ ...p, [v.k]: e.target.value }))} />
-                        </FL>
-                      ))}
-                    </div>
-                  </div>
+                  {renderVitalsRow()}
                   {/* SOAP */}
                   {[
                     {k:"subjective", l:"S — Subjective", c:C.blue, ph:"Patient's complaints today: pain, nausea, fever, functional status, how they feel…"},
@@ -2419,6 +2428,7 @@ function DoctorNotesContent({ selectedPatient }) {
                   <div style={{ background: C.redL, border: `1.5px solid #fca5a5`, borderRadius: 8, padding: "10px 14px", fontSize: 12, color: C.red, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
                     <i className="pi pi-exclamation-triangle" style={{ fontSize: 13 }} /> ICU/HDU Critical Care Note — NABH COP.4 · Enhanced Monitoring Required
                   </div>
+                  {renderVitalsRow()}
                   {/* Ventilator */}
                   <div style={{ background: "#f8fafc", border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px" }}>
                     <div style={{ fontSize: 11, fontWeight: 700, color: C.red, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>Ventilator Parameters</div>

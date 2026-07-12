@@ -326,39 +326,57 @@ export function EmergencyAssessmentPageContent({ selectedPatient }) {
     }
     setSaving(true);
     try {
+      // R7hr(EMER-IA): persist as a TYPED doctor note. The old payload put
+      // the whole assessment under a `formData` key no backend field ever
+      // matched — strict-mode Mongoose dropped it, so signed ER assessments
+      // saved as EMPTY "general" notes (content unrecoverable). The
+      // schema-backed shape is noteType "emergency" + noteDetails.emergency;
+      // top-level vitals / provisionalDiagnosis feed the shared card
+      // renderer's generic strips and the vitals trends.
+      const _n = (x) => { const n = parseFloat(x); return Number.isFinite(n) ? n : undefined; };
+      const _bpSys = _n(vitals.bpSys), _bpDia = _n(vitals.bpDia);
       const payload = {
-        visitType: "Emergency",
         patientUHID: patient.UHID || uhid,
         patientId: patient._id,
         patientName: patient.fullName || "",
         doctorName: user?.fullName || `${user?.firstName || ""} ${user?.lastName || ""}`.trim(),
         doctorId: user?._id,
         status: sign ? "signed" : "draft",
-        assessmentDate: new Date().toISOString(),
-        formData: {
-          triageLevel, triageTime, arrivalMode, isMLC, mlcNumber,
-          chiefComplaint, complaintDuration,
-          vitals, abcde, pmh, allergy, exam, provDx,
-          generalExamination: { consciousness, nutritionalStatus, ...physicalSigns, painScoreVAS },
-          systemicExamination: { rs, cvs, abdomen, cns },
-          // R7ay — meds + infusions replace the legacy flat `orders` array.
-          // Services / lab / radiology orders go through the in-Panel DRAFT
-          // bill flow (ServicesOrdersPanel) so they don't ride this payload.
-          medications: meds.filter(m => (m.name || "").trim()),
-          infusions: infusions.filter(f => (f.name || "").trim()),
-          disposition, dispNotes,
-          // R7bs — doctor-allotted bed travels with the assessment so the
-          // downstream admission flow (Reception → register IPD) can pre-fill
-          // the bed picker with what the ER doctor already chose.
-          dispositionBed: isAdmitDisposition && bedData.bedId ? {
-            buildingId: bedData.buildingId,
-            floorId:    bedData.floorId,
-            wardId:     bedData.wardId,
-            roomId:     bedData.roomId,
-            bedId:      bedData.bedId,
-            bedNumber:  bedData.bedNumber,
-            reservedAt: new Date().toISOString(),
-          } : null,
+        visitDate: new Date().toISOString(),
+        noteType: "emergency",
+        // Level I (resuscitation) / II (emergent) triage = critical event.
+        isCritical: ["I", "II"].includes(triageLevel),
+        provisionalDiagnosis: provDx,
+        vitals: {
+          ...(_bpSys !== undefined || _bpDia !== undefined ? { bp: { systolic: _bpSys, diastolic: _bpDia } } : {}),
+          pulse: _n(vitals.pulse), temp: _n(vitals.temp), rr: _n(vitals.rr), spo2: _n(vitals.spo2),
+        },
+        noteDetails: {
+          emergency: {
+            triageLevel, triageTime, arrivalMode, isMLC, mlcNumber,
+            chiefComplaint, complaintDuration,
+            vitals, abcde, pmh, allergy, exam,
+            generalExamination: { consciousness, nutritionalStatus, ...physicalSigns, painScoreVAS },
+            systemicExamination: { rs, cvs, abdomen, cns },
+            // R7ay — meds + infusions replace the legacy flat `orders` array.
+            // Services / lab / radiology orders go through the in-Panel DRAFT
+            // bill flow (ServicesOrdersPanel) so they don't ride this payload.
+            medications: meds.filter(m => (m.name || "").trim()),
+            infusions: infusions.filter(f => (f.name || "").trim()),
+            disposition, dispNotes,
+            // R7bs — doctor-allotted bed travels with the assessment so the
+            // downstream admission flow (Reception → register IPD) can pre-fill
+            // the bed picker with what the ER doctor already chose.
+            dispositionBed: isAdmitDisposition && bedData.bedId ? {
+              buildingId: bedData.buildingId,
+              floorId:    bedData.floorId,
+              wardId:     bedData.wardId,
+              roomId:     bedData.roomId,
+              bedId:      bedData.bedId,
+              bedNumber:  bedData.bedNumber,
+              reservedAt: new Date().toISOString(),
+            } : null,
+          },
         },
       };
       let res;

@@ -45,7 +45,15 @@ const VitalsSchema = new mongoose.Schema(
     pulse: Number,
     temp: Number,
     rr: Number,
-    spo2: Number },
+    spo2: Number,
+    // R7hr(ICU-VITALS): the Daily Progress / ICU vitals row also captures
+    // BSL, GCS and urine output — strict mode silently dropped all three
+    // because they had no schema slot (the form + edit-restore handled
+    // them all along). GCS is a String: doctors record "E4V5M6" as often
+    // as the numeric total.
+    bsl: Number,
+    gcs: String,
+    urine: Number },
   { _id: false },
 );
 
@@ -166,14 +174,25 @@ const DoctorNotesSchema = new mongoose.Schema(
         // posted by the Initial Assessment surface.
         "general",
         "initial",
+        // R7hr(EMER-IA): typed Emergency Assessment posted by
+        // EmergencyAssessmentPage (content under noteDetails.emergency).
+        // Pre-fix the page sent an unpersisted `formData` key with no
+        // noteType, so signed ER assessments landed as EMPTY "general"
+        // notes — the clinical content was silently dropped.
+        "emergency",
         "daily",
         "icu",
         "procedure",
         "consultation",
-        "discharge",
+        // R7hr(NOTE-TYPES): "discharge" and "operative" removed from the
+        // enum — both were orphaned write-side. Real discharge summaries
+        // live in DischargeSummaryModel (the picker's Discharge tile opens
+        // that flow, not a note), and the "operative" tile was removed in
+        // R7gb P0-8 (duplicated procedure + postop, no form). Zero rows of
+        // either type exist; the renderer keeps their labels/builders for
+        // read-side tolerance, but the API can no longer create them.
         "death",
         "amendment",
-        "operative",
         "preop",
         "postop",
       ],
