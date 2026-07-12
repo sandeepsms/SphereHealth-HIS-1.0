@@ -287,9 +287,13 @@ function credentialExpiryBlocker(typeOrTypes) {
         expiryDate: newest.expiryDate || null,
       });
     } catch (e) {
-      // Fail-open: Mongo blip should not lock down the hospital.
+      // Fail-open: a Mongo blip should not lock down the hospital — BUT this
+      // is a licence-gate bypass, so it must be LOUD + monitorable, never a
+      // silent console.error. Ops should alert on the FAIL_OPEN tag. (NABH
+      // HRD.3 / control-integrity — R7hr-NABH-FMS.)
       // eslint-disable-next-line no-console
-      console.error("[credentialExpiryBlocker] check failed (fail-open):", e.message);
+      console.error(`[credentialExpiryBlocker] FAIL_OPEN user=${req.user?._id || req.user?.id} type=${types[0]} route=${req.originalUrl || req.path} err=${e.message} — licence gate BYPASSED (DB error)`);
+      req.credentialFailOpen = true; // downstream can flag the record for later re-verification
       return next();
     }
   };
@@ -362,9 +366,9 @@ async function assertValidCredential(userId, typeOrTypes) {
       expiryDate: newest.expiryDate || null,
     };
   } catch (e) {
-    // Fail-open at the service layer too.
+    // Fail-open at the service layer too — same loud, alertable FAIL_OPEN tag.
     // eslint-disable-next-line no-console
-    console.error("[assertValidCredential] check failed (fail-open):", e.message);
+    console.error(`[assertValidCredential] FAIL_OPEN type=${types[0]} err=${e.message} — licence check BYPASSED (DB error)`);
     return { ok: true, credential: null, softFail: true };
   }
 }

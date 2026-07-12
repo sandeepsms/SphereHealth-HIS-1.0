@@ -38,6 +38,15 @@ const ReleaseLogSchema = new mongoose.Schema({
   UHID:          { type: String, trim: true, default: "" },
   reason:        { type: String, trim: true, required: true },
   retainUntilAt: { type: Date, default: null },
+  // NABH IMS (release of information) + DPDP lawful-disclosure — who asked,
+  // why, to whom, and under what authorisation. Previously the log recorded
+  // only who RELEASED, not the requestor / purpose / recipient / consent.
+  requestedBy:          { type: String, trim: true, default: "" },
+  requestorRelationship:{ type: String, trim: true, default: "" }, // Patient / Kin / Insurer / Court / Police / Other
+  purpose:              { type: String, trim: true, default: "" },
+  releasedToName:       { type: String, trim: true, default: "" },
+  releasedToAgency:     { type: String, trim: true, default: "" },
+  consentReference:     { type: String, trim: true, default: "" }, // signed authorisation / ConsentForm id
   releasedBy:    { type: String, trim: true, default: "" },
   releasedById:  { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
   releasedByRole:{ type: String, trim: true, default: "" },
@@ -106,8 +115,18 @@ exports.releaseFile = async (req, res) => {
       if (!a) return sendErr(res, "Admission not found", "NOT_FOUND", 404);
       UHID = a.UHID;
       fileRef = a.admissionNumber || String(a._id);
+    } else if (fileType === "DISCHARGE_SUMMARY") {
+      const DischargeSummary = require("../../models/Clinical/DischargeSummaryModel");
+      const d = await DischargeSummary.findById(fileId).select("UHID admissionId patientName").lean();
+      if (!d) return sendErr(res, "Discharge summary not found", "NOT_FOUND", 404);
+      UHID = d.UHID || "";
+      fileRef = String(d._id);
+    } else {
+      // Never silently release an unknown/unresolved artefact type.
+      return sendErr(res, `Unsupported fileType "${fileType}" — expected AUDIT_ROW / ADMISSION / DISCHARGE_SUMMARY`, "VALIDATION", 400);
     }
 
+    const b = req.body || {};
     const entry = await MrdReleaseLog.create({
       fileType,
       fileId,
@@ -115,6 +134,13 @@ exports.releaseFile = async (req, res) => {
       UHID,
       reason,
       retainUntilAt,
+      // NABH IMS / DPDP release-of-information capture.
+      requestedBy:           String(b.requestedBy || "").trim(),
+      requestorRelationship: String(b.requestorRelationship || "").trim(),
+      purpose:               String(b.purpose || "").trim(),
+      releasedToName:        String(b.releasedToName || "").trim(),
+      releasedToAgency:      String(b.releasedToAgency || "").trim(),
+      consentReference:      String(b.consentReference || "").trim(),
       releasedBy:     req.user.fullName || req.user.employeeId || "MRD",
       releasedById:   req.user._id || req.user.id || null,
       releasedByRole: req.user.role,

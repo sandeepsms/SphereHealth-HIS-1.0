@@ -1,6 +1,7 @@
 const InvestigationOrder = require("../../models/Investigation/InvestigationOrderModel");
 const InvestigationMaster = require("../../models/Investigation/InvestigationMasterModel");
 const InvestigationPricing = require("../../models/Investigation/InvestigationPricingModel");
+const { nextSequence: _nextSeq } = require("../../utils/counter");
 
 // NABL / ISO 15189 7.4.1 — compute the biological flag SERVER-SIDE from the
 // numeric reference interval + critical thresholds carried on the result, so
@@ -189,6 +190,7 @@ class InvestigationOrderService {
       throw new Error("Cannot collect sample for cancelled order");
 
     const now = new Date();
+    const accDate = now.toISOString().slice(0, 10).replace(/-/g, "");
     for (const item of order.items) {
       if (item.performedAt === "EXTERNAL") continue;
       if (itemIds && !itemIds.includes(item._id.toString())) continue;
@@ -196,6 +198,11 @@ class InvestigationOrderService {
       item.sampleStatus = "COLLECTED";
       item.sampleCollectedAt = now;
       item.sampleCollectedBy = collectedBy || "Lab Staff";
+      // NABL 7.2.5 — mint a unique accession number per sample at receipt.
+      if (!item.accessionNumber) {
+        const seq = await _nextSeq(`accession:${accDate}`);
+        item.accessionNumber = `ACC-${accDate}-${String(seq).padStart(4, "0")}`;
+      }
     }
 
     order.orderStatus = "SAMPLE_COLLECTED";
@@ -293,10 +300,11 @@ class InvestigationOrderService {
 
     const now = new Date();
     const criticalHits = []; // { item, r, severity } → auto-alert after save
-    for (const { itemId, results, interpretation, analyser } of itemResults) {
+    for (const { itemId, results, interpretation, analyser, analyserCalibratedOn } of itemResults) {
       const item = order.items.id(itemId);
       if (!item) continue;
       if (analyser) item.analyser = String(analyser).trim(); // NABL — drives the QC-release gate at verify
+      if (analyserCalibratedOn) item.analyserCalibratedOn = new Date(analyserCalibratedOn); // NABL 7.3.3
       // NABL 7.2.6 — a REJECTED sample cannot carry results; recollect first.
       if (item.sampleStatus === "REJECTED") {
         const err = new Error(`Sample for "${item.investigationName}" was REJECTED (${item.rejectionReason || "no reason"}) — recollect before entering results`);

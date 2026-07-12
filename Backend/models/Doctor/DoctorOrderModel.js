@@ -273,7 +273,26 @@ const DoctorOrderSchema = new mongoose.Schema({
         "frequency is required for Medication orders",
       ],
     },
-    duration: String,
+    // NABH MOM.4 — generic name (INN) for generic-prescribing intent, distinct
+    // from the brand medicineName. Surfaced on the Rx + claim.
+    genericName: { type: String, default: "" },
+    // NABH MOM.4 — duration is required for a scheduled Medication order (a
+    // course without a length is incomplete). STAT / SOS / single ("Once")
+    // doses are exempt — they are a one-time administration, not a course.
+    duration: {
+      type: String,
+      required: [
+        function () {
+          const owner = (this.ownerDocument && this.ownerDocument()) || this.parent?.() || this;
+          if (owner?.orderType !== "Medication") return false;
+          // Read frequency from whichever context holds the sibling field.
+          const od = owner?.orderDetails || this;
+          const f = String(od?.frequency || this.frequency || "").toUpperCase();
+          return !/(STAT|SOS|ONCE|PRN|SINGLE)/.test(f); // single-dose orders need no course length
+        },
+        "duration is required for a scheduled Medication order (use STAT/SOS/Once for single doses)",
+      ],
+    },
     route: {
       type: String,
       required: [

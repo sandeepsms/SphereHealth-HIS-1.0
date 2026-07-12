@@ -366,10 +366,20 @@ exports.getLabTat = async (req, res, next) => {
           ] },
           _category: { $ifNull: ["$items.category", "Other"] },
       } },
+      // NABL / ISO 15189 7.4.1 — join each item's TAT TARGET (InvestigationMaster
+      // .tatHours) so we can flag breaches + report % within target, not just
+      // raw averages. Tests with no target are counted but excluded from the
+      // within-target denominator.
+      { $lookup: { from: "investigationmasters", localField: "items.investigationId", foreignField: "_id", as: "_mst" } },
       { $addFields: {
           _tatMins: { $divide: [{ $subtract: ["$items.verifiedAt", "$_startedAt"] }, 1000 * 60] },
+          _targetMins: { $multiply: [{ $ifNull: [{ $arrayElemAt: ["$_mst.tatHours", 0] }, 0] }, 60] },
       } },
       { $match: { _tatMins: { $gt: 0 } } },
+      { $addFields: {
+          _targeted:    { $cond: [{ $gt: ["$_targetMins", 0] }, 1, 0] },
+          _withinTarget: { $cond: [{ $and: [{ $gt: ["$_targetMins", 0] }, { $lte: ["$_tatMins", "$_targetMins"] }] }, 1, 0] },
+      } },
       { $group: {
           _id: "$_category",
           count: { $sum: 1 },
@@ -380,6 +390,8 @@ exports.getLabTat = async (req, res, next) => {
           mins: { $push: "$_tatMins" },
           maxMins: { $max: "$_tatMins" },
           minMins: { $min: "$_tatMins" },
+          targetedCount: { $sum: "$_targeted" },
+          withinCount:   { $sum: "$_withinTarget" },
       } },
       { $sort: { count: -1 } },
     ]).option({ allowDiskUse: true, maxTimeMS: 20_000 });
@@ -399,14 +411,23 @@ exports.getLabTat = async (req, res, next) => {
       medianMins: Math.round(median(r.mins)),
       maxMins:    Math.round(r.maxMins),
       minMins:    Math.round(r.minMins),
+      // NABL TAT-vs-target
+      targetedCount:   r.targetedCount,
+      breachCount:     r.targetedCount - r.withinCount,
+      pctWithinTarget: r.targetedCount ? Math.round((100 * r.withinCount) / r.targetedCount) : null,
     }));
     // R7hr(LAB-TAT tile): overall rollup mirroring getErTat so a KPI strip
     // can consume one block instead of re-weighting the category rows.
     const totalCount = items.reduce((s, r) => s + r.count, 0);
+    const totTargeted = items.reduce((s, r) => s + r.targetedCount, 0);
+    const totWithin   = totTargeted - items.reduce((s, r) => s + r.breachCount, 0);
     const overall = totalCount > 0 ? {
       count:   totalCount,
       avgMins: Math.round(items.reduce((s, r) => s + r.avgMins * r.count, 0) / totalCount),
       maxMins: Math.max(...items.map((r) => r.maxMins)),
+      targetedCount:   totTargeted,
+      breachCount:     totTargeted - totWithin,
+      pctWithinTarget: totTargeted ? Math.round((100 * totWithin) / totTargeted) : null,
     } : { count: 0 };
     return sendOk(res,
       { from: fromStr, to: toStr, rows: items, overall },

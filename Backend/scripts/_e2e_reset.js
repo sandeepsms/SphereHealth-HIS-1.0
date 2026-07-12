@@ -63,6 +63,24 @@ const PRESERVE = new Set([
     bedsFreed = r.modifiedCount;
   }
 
+  // Restock pharmacy batches — the E2E IPD flow's indent-release consumes stock
+  // (quantityOut↑ / remaining↓) but the reset preserves inventory, so batches
+  // deplete across repeated runs and eventually 409 INSUFFICIENT_STOCK. Restore
+  // every batch to full (remaining = quantityIn, quantityOut = 0).
+  let batchesRestocked = 0;
+  if (apply) {
+    const cols = new Set((await db.listCollections().toArray()).map((c) => c.name));
+    for (const c of ["pharmacydrugbatches", "drugbatches"]) {
+      if (!cols.has(c)) continue;
+      const rows = await db.collection(c).find({}, { projection: { quantityIn: 1, quantity: 1 } }).toArray();
+      for (const r of rows) {
+        const full = r.quantityIn ?? r.quantity ?? 0;
+        await db.collection(c).updateOne({ _id: r._id }, { $set: { quantityOut: 0, remaining: full } });
+      }
+      batchesRestocked += rows.length;
+    }
+  }
+
   // legacy plain-unique billNumber_1 index → drop (dup-null E11000 landmine).
   let idxDropped = "n/a";
   try {

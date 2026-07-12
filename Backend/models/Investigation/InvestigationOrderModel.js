@@ -19,6 +19,8 @@ const TestResultSchema = new mongoose.Schema(
     // Server-stamped biological flag: N normal · H high · L low · HH critical-
     // high (panic) · LL critical-low (panic) · A abnormal (non-numeric).
     flag: { type: String, enum: ["N", "H", "L", "HH", "LL", "A", ""], default: "" },
+    // NABL / ISO 15189 7.3.3 — measurement method printed on the report.
+    method: { type: String, default: "" },
   },
   { _id: false },
 );
@@ -91,6 +93,10 @@ const OrderItemSchema = new mongoose.Schema(
     // verify (a value released off an analyser whose latest QC FAILED is
     // blocked). Optional — items without an analyser verify as before.
     analyser: { type: String, default: "" },
+    analyserCalibratedOn: { type: Date, default: null }, // NABL 7.3.3 — last calibration, printed on report
+    // NABL / ISO 15189 7.2.5 — unique lab-side accession number, distinct from
+    // the order number, minted at sample receipt (ACC-YYYYMMDD-####).
+    accessionNumber: { type: String, default: "", index: true },
     // NABL 7.4.1.7 — append-only amendment trail for verified results.
     amendments: { type: [AmendmentSchema], default: [] },
 
