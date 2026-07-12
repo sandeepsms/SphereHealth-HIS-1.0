@@ -2495,7 +2495,11 @@ function NursingNotesContent({ selectedPatient }) {
                 return (
                   <div key={note._id || i}
                     className={`dnp-note dnp-note--nurse ${note.isCriticalEvent ? "dnp-note--critical" : ""}`}
-                    style={{ "--dnp-accent": ns.color, "--dnp-tint": ns.bg }}>
+                    // R7hr(NOTE-WRAP, owner 2026-07-12) — "halka wrapper":
+                    // neutral slate instead of the per-type accent (drives the
+                    // rail, time pill, dot, type-badge tint, hover). Status
+                    // badge + CRITICAL ring + date line keep their colour.
+                    style={{ "--dnp-accent": "#64748b", "--dnp-tint": "#f1f5f9" }}>
                     {/* ── Time gutter ── */}
                     <div className="dnp-note__time">
                       <div className="dnp-note__time-pill">
@@ -2511,11 +2515,9 @@ function NursingNotesContent({ selectedPatient }) {
                     <div className="dnp-note__body">
                       <div className="dnp-note__badge-row">
                         <span className="dnp-note__type-badge">
-                          {mod
-                            ? <i className={`pi ${mod.icon}`} style={{ fontSize: 10 }} />
-                            : note.noteType === "initial"
-                              ? <i className="pi pi-clipboard" style={{ fontSize: 10 }} />
-                              : null}
+                          {/* R7hr(NOTE-WRAP) — type icon dropped ("halka
+                              wrapper"); the badge itself neutralises via the
+                              --dnp-tint/--dnp-accent vars above. */}
                           {/* R7fm — friendlier label for the dual-written
                               IPD Initial Assessment (no MODULES entry by
                               design — R7bj removed the inline picker). */}
