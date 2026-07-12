@@ -348,6 +348,45 @@ exports.listMortality = async (req, res) => {
   }
 };
 
+// Mortality review — NABH COP.18 (monthly mortality-review committee).
+// R7hr-NABH-PSQ: pre-fix the register was read-only, so the committee could
+// see deaths but never record its review (reviewedByCommittee / reviewDate /
+// reviewFindings / preventableFlag). Adds the write path + a REVIEWED audit
+// entry. Gated on compliance.nabh.write (route).
+exports.reviewMortality = async (req, res) => {
+  try {
+    const row = await MortalityRegister.findById(req.params.id);
+    if (!row) return res.status(404).json({ success: false, message: "Mortality row not found" });
+
+    const body = req.body || {};
+    const actorMeta = {
+      byUserId: req.user?._id || req.user?.id || null,
+      byName:   req.user?.fullName || req.user?.name || "",
+      byRole:   req.user?.role || "",
+    };
+
+    let touched = false;
+    if (body.reviewedByCommittee !== undefined) { row.reviewedByCommittee = !!body.reviewedByCommittee; touched = true; }
+    if (body.preventableFlag !== undefined)     { row.preventableFlag = !!body.preventableFlag; touched = true; }
+    if (typeof body.reviewFindings === "string"){ row.reviewFindings = body.reviewFindings; touched = true; }
+    if (body.reviewDate)                        { row.reviewDate = new Date(body.reviewDate); touched = true; }
+    else if (body.reviewedByCommittee && !row.reviewDate) { row.reviewDate = new Date(); }
+
+    if (!touched) {
+      return res.status(400).json({ success: false, message: "Nothing to update — provide reviewedByCommittee, preventableFlag, reviewFindings, or reviewDate" });
+    }
+    row.auditTrail.push({
+      action: "REVIEWED",
+      ...actorMeta,
+      notes: `committee=${row.reviewedByCommittee} preventable=${row.preventableFlag}${body.reviewFindings ? " · findings recorded" : ""}`,
+    });
+    await row.save();
+    return res.json({ success: true, data: row });
+  } catch (e) {
+    sendErr(res, e);
+  }
+};
+
 // Restraint Register — NABH COP.17
 exports.listRestraint = async (req, res) => {
   try {

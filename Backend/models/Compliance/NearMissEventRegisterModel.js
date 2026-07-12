@@ -74,7 +74,12 @@ const NearMissEventRegisterSchema = new Schema({
 
   // ── What was done ──
   interventionTaken: { type: String, required: true, default: "" },
-  recommendation:    { type: String, required: true, default: "" },
+  // R7hr-NABH-PSQ: was `required: true, default: ""` — a self-contradiction
+  // (the "" default never satisfies required), so EVERY near-miss create
+  // without a recommendation 400'd with an opaque "could not write". A
+  // recommendation is optional at capture and can be added later during
+  // review via PATCH.
+  recommendation:    { type: String, default: "" },
 
   // ── Optional link to a Sentinel event row (clustering analysis) ──
   linkedSentinelId: { type: Schema.Types.ObjectId, ref: "SentinelEventRegister", default: null, index: true },

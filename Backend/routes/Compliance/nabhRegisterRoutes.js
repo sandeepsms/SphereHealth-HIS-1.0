@@ -43,6 +43,8 @@ router.get("/ot-register",            requireAction("compliance.read"), ctrl.lis
 router.get("/asa-register",           requireAction("compliance.read"), ctrl.listASA);
 router.get("/readmission-register",   requireAction("compliance.read"), ctrl.listReadmission);
 router.get("/mortality-register",     requireAction("compliance.read"), ctrl.listMortality);
+// NABH COP.18 — record the mortality-review committee's decision (write tier).
+router.patch("/mortality-register/:id", validateObjectIdParam("id"), requireAction("compliance.nabh.write"), ctrl.reviewMortality);
 router.get("/restraint-register",     requireAction("compliance.read"), ctrl.listRestraint);
 router.get("/antimicrobial-register", requireAction("compliance.read"), ctrl.listAntimicrobial);
 
