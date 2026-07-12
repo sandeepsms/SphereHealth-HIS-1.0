@@ -244,7 +244,21 @@ exports.getCompleteFile = async (req, res) => {
       if (_scopeAdm.admissionNumber) or.push({ admissionNumber: _scopeAdm.admissionNumber });
       const startRaw = _scopeAdm.admissionDate || _scopeAdm.createdAt;
       if (startRaw) {
-        const start = new Date(new Date(startRaw).getTime() - 72 * 3600e3);
+        const admTs = new Date(startRaw).getTime();
+        let start = new Date(admTs - 72 * 3600e3);
+        // R7hr(re-audit C2) — clamp the 72h lead-in so it can't reach back
+        // into a PRIOR admission's stay: if the patient was discharged from
+        // an earlier admission and readmitted within the grace window, the
+        // date clause would otherwise pull the previous encounter's records
+        // in. Floor `start` at the most recent prior discharge (+1s).
+        const priorDischarge = admissions
+          .filter((a) => a._id?.toString() !== _scopeAdm._id?.toString())
+          .map((a) => a.actualDischargeDate || a.dischargeDate)
+          .filter(Boolean)
+          .map((d) => new Date(d).getTime())
+          .filter((t) => t < admTs)
+          .sort((x, y) => y - x)[0];
+        if (priorDischarge && priorDischarge > start.getTime()) start = new Date(priorDischarge + 1000);
         const endRaw = _scopeAdm.actualDischargeDate || _scopeAdm.dischargeDate;
         const end = endRaw ? new Date(new Date(endRaw).getTime() + 24 * 3600e3) : now;
         or.push({ createdAt: { $gte: start, $lte: end } });

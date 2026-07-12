@@ -686,8 +686,10 @@ const AuditTheme = ({ settings = {}, file, events = [] }) => {
         </>
       )}
 
-      {/* 12. CONSENT FORMS */}
-      {consentRows.length > 0 && (
+      {/* 12. CONSENT FORMS — R7hr(re-audit C3): suppress this compact
+          register when the full Consent Records appendix (DOCS-FULL) will
+          render the same consents, so they don't print twice. */}
+      {consentRows.length > 0 && !(f.consents || []).some((c) => c.full) && (
         <>
           <SectionHeading title="Consent Forms" nabh="PRE.4" />
           <MultiTable
@@ -704,8 +706,10 @@ const AuditTheme = ({ settings = {}, file, events = [] }) => {
         </>
       )}
 
-      {/* 13. DISCHARGE SUMMARY */}
-      {hasDischarge && (
+      {/* 13. DISCHARGE SUMMARY — R7hr(re-audit C3): suppress this compact
+          digest when the full Discharge Summary appendix (DOCS-FULL) rides,
+          so the discharge doesn't print twice. */}
+      {hasDischarge && !f.discharge?.full && (
         <>
           <SectionHeading title="Discharge Summary" nabh="AAC.7" />
           <FieldTable rows={dischargeRows} />

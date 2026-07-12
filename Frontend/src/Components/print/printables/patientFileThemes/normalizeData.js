@@ -143,7 +143,19 @@ export function normalizeFileData(receipt = {}) {
       gender:      toStr(r.gender || r.sex),
       mobile:      toStr(r.mobile || r.contactNumber || r.phone),
       bloodGroup:  toStr(r.bloodGroup),
-      address:     toStr(r.completeAddress || r.address),
+      // R7hr(re-audit) — patient.address can be an object
+      // {line1,line2,city,state,pincode,…}; toStr(object) prints
+      // "[object Object]" (seen on the Audit theme's identity table).
+      // Compose a string from the parts when it's an object.
+      address:     (() => {
+        if (r.completeAddress) return toStr(r.completeAddress);
+        const a = r.address;
+        if (a && typeof a === "object") {
+          return [a.line1 || a.line, a.line2, a.street, a.area, a.city, a.district, a.state, a.pincode || a.pin || a.zip]
+            .map((p) => toStr(p)).filter(Boolean).join(", ");
+        }
+        return toStr(a);
+      })(),
     },
 
     admission: {
