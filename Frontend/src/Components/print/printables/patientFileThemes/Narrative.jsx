@@ -67,6 +67,8 @@ import { COVERAGE_BLOCKS, COVERAGE_ORDER, REGISTER_META, REGISTER_HEADERS, REGIS
 import FullDischargeSection from "./FullDischargeSection";
 // R7hr(DOCS-FULL 2/6): NABL results tables + full diagnostic reports.
 import { FullLabTrends, FullDiagnosticReports } from "./FullLabSection";
+// R7hr(DOCS-FULL 3/6): full consent records (risks/biometric/refusals).
+import FullConsentSection from "./FullConsentSection";
 
 /* R7gd note-card embed wrapped in a component so the JWT-gated /uploads
    signature inlining hook can run per-card (hooks can't live in a .map). */
@@ -1970,6 +1972,12 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
       {(f.consents || []).length > 0 ? (
         <>
           <SectionHeader nabh="NABH PRE.1">Consent Forms</SectionHeader>
+          {/* R7hr(DOCS-FULL 3/6) — full consent records (risks/language/
+              biometric/refusal trail) when raw docs rode the receipt;
+              signed-status register kept for legacy payloads. */}
+          {f.consents.some((c) => c.full) ? (
+            <FullConsentSection file={f} />
+          ) : (
           <MiniTable
             headers={["Form", "Signed", "Signed by", "Witness", "Signed at"]}
             rows={f.consents.map((c) => [
@@ -1983,6 +1991,7 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
             ])}
             widths={["32%", "12%", "20%", "20%", "16%"]}
           />
+          )}
         </>
       ) : null}
 

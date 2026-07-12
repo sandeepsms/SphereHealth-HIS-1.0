@@ -337,6 +337,10 @@ export function normalizeFileData(receipt = {}) {
       signedAt:  toDate(c.signedAt || c.createdAt),
       signedBy:  toStr(c.signedBy || c.signedByName || c.patientSignature),
       witness:   toStr(c.witness || c.witnessName),
+      // R7hr(DOCS-FULL): raw ConsentFormModel doc — FullConsentSection
+      // prints the whole consent record (risks/language/biometric),
+      // not just the signed-status register row above.
+      full:      c,
     })),
 
     discharge: {
