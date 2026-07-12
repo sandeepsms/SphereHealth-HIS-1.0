@@ -71,6 +71,8 @@ import { FullLabTrends, FullDiagnosticReports } from "./FullLabSection";
 import FullConsentSection from "./FullConsentSection";
 // R7hr(DOCS-FULL 4/6): full meal-by-meal diet plans.
 import FullDietSection from "./FullDietSection";
+// R7hr(DOCS-FULL 5/6): consolidated MAR slot grid.
+import FullMarSection from "./FullMarSection";
 
 /* R7gd note-card embed wrapped in a component so the JWT-gated /uploads
    signature inlining hook can run per-card (hooks can't live in a .map). */
@@ -1879,6 +1881,20 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
               d.status || (d.removedAt ? "Removed" : "Active"),
             ])}
           />
+        </>
+      ) : null}
+
+      {/* ════════════════════════════════════════════════════════════
+          8b. MEDICATION ADMINISTRATION RECORD (MAR)      [NABH MOM.6]
+          R7hr(DOCS-FULL 5/6) — consolidated standalone-MARSheet-style
+          slot grid (06/10/14/18/22 + Other, glyph + time + nurse,
+          Given/Missed/Held totals). The day-wise journey keeps its
+          inline narrative; this is the formal MAR document.
+          ════════════════════════════════════════════════════════════ */}
+      {((f.doctorOrders || []).some((o) => (o.admin || []).length) || (f.mar || []).length > 0) ? (
+        <>
+          <SectionHeader nabh="NABH MOM.6">Medication Administration Record (MAR)</SectionHeader>
+          <FullMarSection file={f} />
         </>
       ) : null}
 
