@@ -96,7 +96,25 @@ export default function FullDischargeSection({ file }) {
             : <Para v={x.proceduresDone} />}
         </Sec>
       )}
-      {has(x.investigationsSummary || x.keyInvestigationsText) && <Sec title="Key / Pending Investigations"><Para v={x.investigationsSummary || x.keyInvestigationsText} /></Sec>}
+      {/* R7hr(re-audit) — keyInvestigationsText (string) is the primary
+          carrier; investigationsSummary is a subdoc ARRAY (always present as
+          [] on the model, so `array || string` would short-circuit to [] and
+          String(array) prints "[object Object]"). Handle each by type. */}
+      {(() => {
+        const rows = Array.isArray(x.investigationsSummary) ? x.investigationsSummary : [];
+        const txt = str(x.keyInvestigationsText);
+        if (!txt && !rows.length) return null;
+        return (
+          <Sec title="Key / Pending Investigations">
+            {txt ? <Para v={txt} /> : null}
+            {rows.map((r, i) => {
+              const line = typeof r === "string" ? r
+                : [str(r.testName || r.name), str(r.result), fmtD(r.date), str(r.remarks)].filter(Boolean).join(" · ");
+              return has(line) ? <div key={i} style={S.p}>• {line}</div> : null;
+            })}
+          </Sec>
+        );
+      })()}
       {has(x.bloodTransfusionsText || x.bloodTransfusions) && <Sec title="Blood Transfusions"><Para v={x.bloodTransfusionsText || x.bloodTransfusions} /></Sec>}
       {(has(x.operativeProcedure) || has(x.operativeFindings) || has(x.anaesthesiaType)) && (
         <Sec title="Operative Details">

@@ -40,14 +40,23 @@ const latestReading = (t) => {
   if (!rs.length) return null;
   return rs.reduce((a, b) => (new Date(a.date || 0) >= new Date(b.date || 0) ? a : b));
 };
+// R7hr(re-audit) — the reading is numeric-comparable only if the WHOLE
+// value is a number; parseFloat prefix-parsing ("10⁵ CFU/mL", "Trace") would
+// otherwise produce a spurious H/L. Non-numeric results (culture, "Nil") get
+// no flag and are NOT asserted Normal in the render.
+const numericVal = (v) => {
+  const s = String(v ?? "").trim();
+  return /^[+-]?\d*\.?\d+$/.test(s) ? Number(s) : null;
+};
 const flagOf = (t, reading) => {
   if (!reading) return "";
   if (reading.status === "critical") return "!!";
-  const n = parseFloat(reading.value);
-  if (!Number.isFinite(n)) return "";
+  if (reading.status === "borderline") return "±";
+  const n = numericVal(reading.value);
+  if (n === null) return "";        // non-numeric → no flag (caller shows "—")
   if (t.refMax !== null && t.refMax !== undefined && n > t.refMax) return "H";
   if (t.refMin !== null && t.refMin !== undefined && n < t.refMin) return "L";
-  return "";
+  return "N";                       // numeric & in-range → Normal
 };
 const refRange = (t) => {
   const lo = t.refMin, hi = t.refMax;
@@ -118,7 +127,7 @@ export function FullLabTrends({ file }) {
                       <td style={{ ...S.td, fontWeight: fl ? 800 : 400, color: fl ? "#b91c1c" : "#0f172a" }}>{str(r.value)}{r.date ? <span style={{ fontSize: 8, color: "#94a3b8" }}> ({fmtD(r.date)})</span> : null}</td>
                       <td style={S.td}>{str(x.unit) || "—"}</td>
                       <td style={S.td}>{refRange(x)}</td>
-                      <td style={{ ...S.td, fontWeight: 800, color: fl ? "#b91c1c" : "#16a34a" }}>{fl || "N"}</td>
+                      <td style={{ ...S.td, fontWeight: 800, color: (fl && fl !== "N") ? "#b91c1c" : fl === "N" ? "#16a34a" : "#94a3b8" }}>{fl || "—"}</td>
                       <td style={S.td}>{str(x.method) || "—"}</td>
                     </tr>
                   );

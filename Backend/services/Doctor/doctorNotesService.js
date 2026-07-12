@@ -781,6 +781,11 @@ const updateDoctorNote = async (id, data, doctorUserId) => {
     // noteDetails change — the ER page's second "Save Draft" silently
     // reverted the assessment to its first-save content.
     "noteDetails",
+    // R7hr(re-audit): the ER page derives isCritical from triage level and
+    // sends it on every PUT; without a slot a triage upgrade on a draft
+    // (III → I) never flipped the persisted critical flag.
+    "isCritical",
+    "patientStatus",
   ];
 
   if (note.status === "signed") {

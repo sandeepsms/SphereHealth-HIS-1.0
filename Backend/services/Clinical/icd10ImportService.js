@@ -14,8 +14,8 @@ const dot = (raw) => (raw.length > 3 ? `${raw.slice(0, 3)}.${raw.slice(3)}` : ra
 
 function parseCodesFile(buffer) {
   let text;
-  // gzip magic: 0x1f 0x8b
-  if (buffer[0] === 0x1f && buffer[1] === 0x8b) text = zlib.gunzipSync(buffer).toString("utf8");
+  // gzip magic: 0x1f 0x8b. Cap the inflated size (decompression-bomb guard).
+  if (buffer[0] === 0x1f && buffer[1] === 0x8b) text = zlib.gunzipSync(buffer, { maxOutputLength: 128 * 1024 * 1024 }).toString("utf8");
   else text = buffer.toString("utf8");
 
   const rows = [];

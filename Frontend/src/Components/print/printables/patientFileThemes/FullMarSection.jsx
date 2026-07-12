@@ -23,11 +23,25 @@ const S = {
 
 const SLOTS = [6, 10, 14, 18, 22];
 const str = (v) => (v === null || v === undefined ? "" : String(v).trim());
-const dayKey = (d) => { const x = new Date(d); return isNaN(x) ? "" : x.toISOString().slice(0, 10); };
+// R7hr(re-audit) — LOCAL calendar day (was toISOString/UTC, which bucketed
+// a 00:00–05:29 IST night dose under the previous day while its cell time
+// printed local — split a single day's MAR across two tables).
+const dayKey = (d) => {
+  const x = new Date(d);
+  if (isNaN(x)) return "";
+  return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
+};
 const fmtDay = (k) => new Date(k + "T00:00:00").toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short", year: "numeric" });
 const hhmm = (d) => { const x = new Date(d); return isNaN(x) ? "" : x.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false }); };
 const initials = (name) => str(name).split(/\s+/).map((w) => w[0]).join("").toUpperCase().slice(0, 3);
-const GLYPH = { given: "✓", missed: "✗", refused: "R", held: "H", pending: "○" };
+// R7hr(re-audit) — full AdminRecordSchema status enum (model writes "hold",
+// not "held"; skipped/not_available/delayed/partial were unmapped → "•").
+const GLYPH = {
+  given: "✓", missed: "✗", refused: "R", hold: "H", held: "H",
+  skipped: "S", not_available: "NA", delayed: "D", partial: "½", pending: "○",
+};
+// Statuses that count as a non-administration for the day's totals.
+const NOT_GIVEN = new Set(["missed", "refused", "skipped", "not_available"]);
 
 /* Slot index for an admin record: scheduledTime "HH:MM" wins, else givenAt
    hour; nearest fixed slot within ±2h, else the Other column (index 5). */
@@ -92,8 +106,8 @@ export default function FullMarSection({ file }) {
         dayRows.forEach((r) => {
           const s = str(r.a.status).toLowerCase();
           if (s === "given") totals.given++;
-          else if (s === "missed" || s === "refused") totals.missed++;
-          else if (s === "held") totals.held++;
+          else if (NOT_GIVEN.has(s)) totals.missed++;
+          else if (s === "hold" || s === "held") totals.held++;
         });
         return (
           <div key={dk}>
@@ -116,7 +130,7 @@ export default function FullMarSection({ file }) {
                           const s = str(a.status).toLowerCase();
                           const g = GLYPH[s] || "•";
                           return (
-                            <div key={ai} style={{ color: s === "given" ? "#15803d" : s === "pending" ? "#64748b" : "#b91c1c", fontWeight: 700 }}>
+                            <div key={ai} style={{ color: s === "given" ? "#15803d" : (s === "pending" || s === "delayed") ? "#64748b" : (s === "hold" || s === "held" || s === "partial") ? "#b45309" : "#b91c1c", fontWeight: 700 }}>
                               {g}{a.adverse ? "⚠" : ""} {a.givenAt ? hhmm(a.givenAt) : str(a.schedTime)}
                               {str(a.givenBy) ? <span style={{ fontSize: 7.5, color: "#64748b" }}> {initials(a.givenBy)}</span> : null}
                             </div>
@@ -138,7 +152,7 @@ export default function FullMarSection({ file }) {
           </div>
         );
       })}
-      <div style={S.legend}>✓ Given · ✗ Missed · R Refused · H Held · ○ Pending · ⚠ Adverse event · initials = administering nurse</div>
+      <div style={S.legend}>✓ Given · ✗ Missed · R Refused · H Hold · S Skipped · NA Not available · D Delayed · ½ Partial · ○ Pending · ⚠ Adverse event · initials = administering nurse</div>
     </>
   );
 }

@@ -2189,7 +2189,9 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
             {fullName} was <strong>discharged</strong>
             {f.admission?.dischargeDate ? <> on <strong>{fmtDate(f.admission.dischargeDate, true)}</strong></> : null}
             {f.discharge?.condition ? <> in <strong>{f.discharge.condition.toLowerCase()}</strong> condition</> : null}.
-            {dxFinal ? <> Final diagnosis: <strong>{dxFinal}</strong>{f.admission?.icd10 ? <> (ICD-10 {f.admission.icd10})</> : null}.</> : null}
+            {/* R7hr(re-audit) — the full section prints its own Final
+                Diagnosis; only append it to the intro on the legacy path. */}
+            {(!f.discharge?.full && dxFinal) ? <> Final diagnosis: <strong>{dxFinal}</strong>{f.admission?.icd10 ? <> (ICD-10 {f.admission.icd10})</> : null}.</> : null}
           </Para>
 
           {/* R7hr(DOCS-FULL, owner 2026-07-12) — when the raw DischargeSummary

@@ -181,6 +181,11 @@ const MODULES = [
   // the filter further down, not shown as a tile-card.
   { id: "general",     label: "General Note",          nabh: "IMS.1", description: "Free-text clinical narrative",
     icon: "pi-file",                border: "#cbd5e1", color: C.slate,  bg: "#f8fafc" },
+  // R7hr(re-audit) — print-only label so modDef() resolves the correct
+  // title for ER assessments (noteType "emergency", authored on the
+  // Emergency Assessment page); hidden from the picker by the filter below.
+  { id: "emergency",   label: "Emergency Assessment",  nabh: "AAC.1", description: "ER triage + initial doctor assessment",
+    icon: "pi-bolt",                border: C.redB,    color: C.red,    bg: C.redL    },
   { id: "initial",     label: "Initial Assessment",    nabh: "COP.1", description: "NABH COP.1 first-contact in-patient assessment",
     icon: "pi-id-card",             border: "#fcd34d", color: C.amber,  bg: C.amberL  },
   { id: "discharge",   label: "Discharge Summary",     nabh: "COP.21", description: "Final discharge summary",
@@ -816,6 +821,16 @@ function DoctorNotesContent({ selectedPatient }) {
 
   /* ── Open a draft note for editing ── */
   const openEditModal = (note) => {
+    // R7hr(re-audit) — ER assessments (noteType "emergency") are authored on
+    // the Emergency Assessment page and store their content under
+    // noteDetails.emergency. This doctor-notes editor has no emergency form,
+    // so saving here would PUT an empty noteDetails and wipe the assessment.
+    // Redirect the doctor to the ER page instead of opening a lossy editor.
+    if (note.noteType === "emergency") {
+      toast.info("Edit this ER assessment from the Emergency Assessment page.");
+      navigate(`/emergency-assessment/${note.patientUHID || uhid || ""}`.replace(/\/$/, ""));
+      return;
+    }
     setEditingNote(note);
 
     // Restore basic form
@@ -1693,7 +1708,7 @@ function DoctorNotesContent({ selectedPatient }) {
                     request ("hume nhi chahiye"). They likewise STAY in MODULES so
                     print headers + timeline labels for any existing notes of these
                     types still resolve. */}
-                {MODULES.filter(m => !["initial", "discharge", "general"].includes(m.id)).map(m => (
+                {MODULES.filter(m => !["initial", "discharge", "general", "emergency"].includes(m.id)).map(m => (
                     <button
                       key={m.id}
                       type="button"

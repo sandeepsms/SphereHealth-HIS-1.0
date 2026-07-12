@@ -27,6 +27,10 @@ const S = {
 const str = (v) => (v === null || v === undefined ? "" : String(v).trim());
 const has = (v) => Array.isArray(v) ? v.length > 0 : !!str(v);
 const fmtDT = (v) => { if (!v) return ""; const d = new Date(v); return isNaN(d) ? str(v) : d.toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }); };
+// String[] / object[] → "a; b; c" (never String()-comma-squished [object Object]).
+const joinList = (v) => Array.isArray(v)
+  ? v.map((r) => str(typeof r === "string" ? r : r.text || r.value || r.name)).filter(Boolean).join("; ")
+  : str(v);
 
 export default function FullConsentSection({ file }) {
   const consents = (file?.consents || []).filter((c) => c.full);
@@ -41,6 +45,10 @@ export default function FullConsentSection({ file }) {
           : statusRaw === "revoked" ? "⊘ REVOKED"
           : "PENDING";
         const bio = x.biometric || {};
+        const cp = x.consentingParty || {};
+        // bypass is a nested object with string defaults (always truthy);
+        // a real bypass has an authorisedAt or a non-empty reason.
+        const bypassed = !!(x.bypass && (x.bypass.authorisedAt || str(x.bypass.reason)));
         return (
           <div key={i} style={S.card}>
             <div style={S.title}>
@@ -55,23 +63,37 @@ export default function FullConsentSection({ file }) {
             </div>
             {has(x.procedureDescription) && <><div style={S.h}>Procedure / Scope</div><div style={S.p}>{str(x.procedureDescription)}</div></>}
             {has(x.risksDisclosed) && <><div style={S.h}>Risks Disclosed</div><div style={S.p}>{Array.isArray(x.risksDisclosed) ? x.risksDisclosed.map((r) => `• ${str(typeof r === "string" ? r : r.text || r.risk)}`).join("\n") : str(x.risksDisclosed)}</div></>}
-            {has(x.benefitsExplained) && <><div style={S.h}>Benefits Explained</div><div style={S.p}>{str(x.benefitsExplained)}</div></>}
-            {has(x.alternativesDisclosed) && <><div style={S.h}>Alternatives Disclosed</div><div style={S.p}>{str(x.alternativesDisclosed)}</div></>}
-            {(has(x.consentGivenBy) || has(x.guardianName)) && (
+            {/* R7hr(re-audit) — benefits/alternatives are String[] in the
+                model; join like risks, not raw String() comma-squish. */}
+            {has(x.benefitsExplained) && <><div style={S.h}>Benefits Explained</div><div style={S.p}>{joinList(x.benefitsExplained)}</div></>}
+            {has(x.alternativesDisclosed) && <><div style={S.h}>Alternatives Disclosed</div><div style={S.p}>{joinList(x.alternativesDisclosed)}</div></>}
+            {/* R7hr(re-audit) — consentingParty is a TOP-LEVEL object
+                (relation/name/idProof…), the identity of who signed the
+                paperless consent; legacy consentGivenBy/guardian fields
+                are the fallback for older records. */}
+            {(cp.name || has(cp.relation) || has(x.consentGivenBy) || has(x.guardianName)) && (
               <><div style={S.h}>Consenting Party</div>
               <div style={S.p}>
-                {str(x.consentGivenBy) || "Patient"}
-                {has(x.guardianName) ? ` — ${str(x.guardianName)}${has(x.guardianRelation) ? ` (${str(x.guardianRelation)})` : ""}${has(x.guardianContact) ? ` · ${str(x.guardianContact)}` : ""}` : ""}
+                {cp.name || has(cp.relation)
+                  ? [str(cp.name) || "Patient", has(cp.relation) && str(cp.relation) !== "SELF" ? `(${str(cp.relation)})` : "",
+                     has(cp.idProofType) ? `${str(cp.idProofType)} ${str(cp.idProofNumber)}`.trim() : "",
+                     has(cp.contactNumber) ? str(cp.contactNumber) : ""].filter(Boolean).join(" · ")
+                  : `${str(x.consentGivenBy) || "Patient"}${has(x.guardianName) ? ` — ${str(x.guardianName)}${has(x.guardianRelation) ? ` (${str(x.guardianRelation)})` : ""}${has(x.guardianContact) ? ` · ${str(x.guardianContact)}` : ""}` : ""}`}
               </div></>
             )}
-            {(bio.capturedAt || has(bio.consentingParty) || has(bio.credentialId)) && (
-              <><div style={S.h}>Biometric Authentication</div>
+            {/* R7hr(re-audit) — biometric block reads the real schema
+                fields (captured bool, method, credentialId); the BYPASSED
+                banner keys on bypass.authorisedAt (bypass is a nested
+                object with string defaults, so `x.bypass` is always
+                truthy — a boolean test flags every consent). */}
+            {(bio.captured || has(bio.method) || has(bio.credentialId) || bypassed) && (
+              <><div style={S.h}>{bypassed ? "Biometric — BYPASSED" : "Biometric Authentication"}</div>
               <div style={S.p}>
-                {[has(bio.consentingParty) ? `Party: ${str(bio.consentingParty)}` : "",
-                  bio.capturedAt ? `Captured ${fmtDT(bio.capturedAt)}` : "",
-                  has(bio.scanner || bio.aaguid) ? `Device: ${str(bio.scanner || bio.aaguid)}` : "",
-                  has(bio.credentialId) ? `Credential …${str(bio.credentialId).slice(-8)}` : "",
-                  x.bypass ? "⚠ BIOMETRIC BYPASSED" : ""].filter(Boolean).join(" · ")}
+                {bypassed
+                  ? `⚠ ${[str(x.bypass.reason) || "biometric bypassed", has(x.bypass.authorisedByName) ? `authorised by ${str(x.bypass.authorisedByName)}` : "", x.bypass.authorisedAt ? fmtDT(x.bypass.authorisedAt) : ""].filter(Boolean).join(" · ")}`
+                  : [has(bio.method) ? `Method: ${str(bio.method)}` : "",
+                     bio.captured ? "Captured on device" : "",
+                     has(bio.credentialId) ? `Credential …${str(bio.credentialId).slice(-8)}` : ""].filter(Boolean).join(" · ")}
               </div></>
             )}
             {statusRaw === "refused" && (

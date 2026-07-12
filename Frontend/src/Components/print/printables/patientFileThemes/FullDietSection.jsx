@@ -32,9 +32,19 @@ const has = (v) => Array.isArray(v) ? v.length > 0 : !!str(v);
 const fmtD = (v) => { if (!v) return ""; const d = new Date(v); return isNaN(d) ? str(v) : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" }); };
 // A bare ObjectId is an unresolved ref, not a name — never print it.
 const actor = (v) => (/^[0-9a-f]{24}$/i.test(str(v)) ? "" : str(v));
+// R7hr(re-audit) — MealItemSchema carries {en, hi, day, calories, protein,
+// notes}; items list shows en (+ day label for weekly plans).
 const itemsOf = (m) => Array.isArray(m.items)
-  ? m.items.map((it) => (typeof it === "string" ? it : str(it.name || it.en))).filter(Boolean).join(", ")
+  ? m.items.map((it) => (typeof it === "string" ? it
+      : [str(it.en || it.name), has(it.day) ? `(${str(it.day)})` : ""].filter(Boolean).join(" "))).filter(Boolean).join(", ")
   : str(m.items || m.name || m.en);
+// Nutrition lives per-ITEM, not per-meal — sum the meal's items.
+const mealNum = (m, key) => Array.isArray(m.items)
+  ? m.items.reduce((s, it) => s + (Number.isFinite(Number(it?.[key])) ? Number(it[key]) : 0), 0)
+  : 0;
+const mealNotes = (m) => Array.isArray(m.items)
+  ? m.items.map((it) => str(it?.notes)).filter(Boolean).join("; ")
+  : str(m.notes);
 
 export default function FullDietSection({ file }) {
   const plans = (file?.dietPlans || []).filter((d) => d.full);
@@ -81,15 +91,17 @@ export default function FullDietSection({ file }) {
               <table style={S.tbl}>
                 <thead><tr>{["Meal / Time", "Items", "Kcal", "Protein (g)", "Notes"].map((h) => <th key={h} style={S.th}>{h}</th>)}</tr></thead>
                 <tbody>
-                  {meals.map((mm, j) => (
+                  {meals.map((mm, j) => {
+                    const kcal = mealNum(mm, "calories"), prot = mealNum(mm, "protein"), notes = mealNotes(mm);
+                    return (
                     <tr key={j}>
                       <td style={S.td}><strong>{str(mm.time || mm.name || mm.en) || "—"}</strong>{has(mm.timeHi) ? <div style={{ fontSize: 8, color: "#64748b" }}>{str(mm.timeHi)}</div> : null}</td>
                       <td style={S.td}>{itemsOf(mm) || "—"}</td>
-                      <td style={S.td}>{has(mm.calories) ? mm.calories : "—"}</td>
-                      <td style={S.td}>{has(mm.protein) ? mm.protein : "—"}</td>
-                      <td style={S.td}>{str(mm.notes) || "—"}</td>
+                      <td style={S.td}>{kcal > 0 ? kcal : "—"}</td>
+                      <td style={S.td}>{prot > 0 ? prot : "—"}</td>
+                      <td style={S.td}>{notes || "—"}</td>
                     </tr>
-                  ))}
+                  ); })}
                 </tbody>
               </table>
             )}
