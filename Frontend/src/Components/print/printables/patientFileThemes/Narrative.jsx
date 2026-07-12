@@ -69,6 +69,8 @@ import FullDischargeSection from "./FullDischargeSection";
 import { FullLabTrends, FullDiagnosticReports } from "./FullLabSection";
 // R7hr(DOCS-FULL 3/6): full consent records (risks/biometric/refusals).
 import FullConsentSection from "./FullConsentSection";
+// R7hr(DOCS-FULL 4/6): full meal-by-meal diet plans.
+import FullDietSection from "./FullDietSection";
 
 /* R7gd note-card embed wrapped in a component so the JWT-gated /uploads
    signature inlining hook can run per-card (hooks can't live in a .map). */
@@ -2001,6 +2003,13 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
       {(f.dietPlans || []).length > 0 ? (
         <>
           <SectionHeader nabh="NABH COP.4">Dietetic Care</SectionHeader>
+          {/* R7hr(DOCS-FULL 4/6) — full meal-by-meal plans (allergen banner,
+              anchors, targets) when raw docs rode the receipt; register row
+              kept for legacy payloads. */}
+          {f.dietPlans.some((dp) => dp.full) ? (
+            <FullDietSection file={f} />
+          ) : (
+          <>
           <MiniTable
             headers={["Date", "Diet", "Kcal", "Restrictions", "Assigned by"]}
             rows={f.dietPlans.map((dp) => [
@@ -2017,6 +2026,8 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
               <em>{dp.templateName || "Diet"} ({fmtDate(dp.at)}): {dp.notes}</em>
             </Para>
           ))}
+          </>
+          )}
         </>
       ) : null}
 

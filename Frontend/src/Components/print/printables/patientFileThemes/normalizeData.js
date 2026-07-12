@@ -531,6 +531,9 @@ export function normalizeFileData(receipt = {}) {
       assignedBy:   toStr(d.assignedByName || d.dieticianName || d.assignedBy),
       notes:        toStr(d.notes || d.dietitianNotes),
       status:       toStr(d.status),
+      // R7hr(DOCS-FULL): raw PatientDietPlan doc — FullDietSection prints
+      // the meal-by-meal plan + clinical anchors + allergen banner.
+      full:         d,
     })),
 
     icuBundles: toArr(r.icuBundles).map(b => {
