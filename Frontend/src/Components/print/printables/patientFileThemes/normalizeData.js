@@ -340,6 +340,11 @@ export function normalizeFileData(receipt = {}) {
     })),
 
     discharge: {
+      // R7hr(DOCS-FULL): raw DischargeSummaryModel doc (owner call — the
+      // Complete File shows the FULL summary, standalone-level detail).
+      // FullDischargeSection reads this with its own field fallbacks;
+      // the compact keys below stay for legacy payloads + other themes.
+      full:         r.dischargeSummaryDoc || null,
       summary:      toStr(r.dischargeSummary),
       advice:       toStr(r.dischargeAdvice),
       followUpDate: toDate(r.followUpDate),

@@ -4450,6 +4450,10 @@ export default function CompletePatientFilePage() {
           dischargeAdvice: head?.advice || head?.finalAdvice || "",
           dischargeMedications: head?.dischargeMeds || head?.medsOnDischarge || head?.dischargeMedications || [],
           followUpDate: head?.followUpDate, dischargeCondition: head?.conditionOnDischarge,
+          // R7hr(DOCS-FULL, owner 2026-07-12): the file must print the FULL
+          // discharge summary, not the 5-field digest above (kept for
+          // back-compat). The API already returns the whole lean doc.
+          dischargeSummaryDoc: head || null,
         };
       })(data.dischargeSummary),
       printCount: 1, printedAt: new Date().toISOString(),

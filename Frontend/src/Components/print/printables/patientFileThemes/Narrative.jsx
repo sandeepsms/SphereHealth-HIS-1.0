@@ -63,6 +63,8 @@ import { useInlinedUploadsHtml } from "@/utils/secureUploads";
 // R7hr(THEME-REG): coverage/register row logic now shared across all 5
 // themes from registerRows.js — one source of truth for field names.
 import { COVERAGE_BLOCKS, COVERAGE_ORDER, REGISTER_META, REGISTER_HEADERS, REGISTER_WIDTHS, registerRow } from "./registerRows";
+// R7hr(DOCS-FULL): full standalone-level discharge summary in the file.
+import FullDischargeSection from "./FullDischargeSection";
 
 /* R7gd note-card embed wrapped in a component so the JWT-gated /uploads
    signature inlining hook can run per-card (hooks can't live in a .map). */
@@ -2112,16 +2114,21 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
         <>
           <SectionHeader nabh="NABH AAC.11">Discharge Summary</SectionHeader>
 
-          {f.discharge?.summary ? (
-            <Para>{cleanSentence(f.discharge.summary)}</Para>
-          ) : null}
-
           <Para>
             {fullName} was <strong>discharged</strong>
             {f.admission?.dischargeDate ? <> on <strong>{fmtDate(f.admission.dischargeDate, true)}</strong></> : null}
             {f.discharge?.condition ? <> in <strong>{f.discharge.condition.toLowerCase()}</strong> condition</> : null}.
             {dxFinal ? <> Final diagnosis: <strong>{dxFinal}</strong>{f.admission?.icd10 ? <> (ICD-10 {f.admission.icd10})</> : null}.</> : null}
           </Para>
+
+          {/* R7hr(DOCS-FULL, owner 2026-07-12) — when the raw DischargeSummary
+              doc rode the receipt, print the FULL standalone-level summary via
+              the shared section; legacy payloads keep the old digest below. */}
+          {f.discharge?.full ? <FullDischargeSection file={f} /> : (
+          <>
+          {f.discharge?.summary ? (
+            <Para>{cleanSentence(f.discharge.summary)}</Para>
+          ) : null}
 
           {dischargeMeds.length > 0 ? (
             <>
@@ -2214,6 +2221,8 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
               </Para>
             </>
           ) : null}
+          </>
+          )}
 
           <Para style={{ marginTop: 6 }}>
             <em>
