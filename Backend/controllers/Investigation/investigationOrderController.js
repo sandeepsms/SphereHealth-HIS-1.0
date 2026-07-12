@@ -88,6 +88,28 @@ exports.collectSample = async (req, res) => {
   }
 };
 
+// NABL 7.2.6 — reject a pre-analytical sample with a structured reason.
+exports.rejectSample = async (req, res) => {
+  const { sendOk, sendErr } = env();
+  try {
+    const data = await svc.rejectSample(req.params.id, req.body);
+    return sendOk(res, data);
+  } catch (e) {
+    return sendErr(res, e, e.code || "VALIDATION", e.status || 400);
+  }
+};
+
+// NABL 7.4.1.7 — amend a VERIFIED (released) result via the append-only trail.
+exports.amendResult = async (req, res) => {
+  const { sendOk, sendErr } = env();
+  try {
+    const data = await svc.amendResult(req.params.id, req.body);
+    return sendOk(res, data);
+  } catch (e) {
+    return sendErr(res, e, e.code || "VALIDATION", e.status || 400);
+  }
+};
+
 exports.enterResults = async (req, res) => {
   const { sendOk, sendErr } = env();
   try {
@@ -101,7 +123,8 @@ exports.enterResults = async (req, res) => {
     }
     return sendOk(res, data);
   } catch (e) {
-    return sendErr(res, e, "VALIDATION", 400);
+    // Honour typed conflicts: SAMPLE_REJECTED / RESULT_VERIFIED_LOCKED (409).
+    return sendErr(res, e, e.code || "VALIDATION", e.status || 400);
   }
 };
 
@@ -128,7 +151,8 @@ exports.verify = async (req, res) => {
     }
     return sendOk(res, data);
   } catch (e) {
-    return sendErr(res, e, "VALIDATION", 400);
+    // Honour the QC-release gate conflict (409 QC_FAILED).
+    return sendErr(res, e, e.code || "VALIDATION", e.status || 400);
   }
 };
 

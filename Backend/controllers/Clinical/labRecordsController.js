@@ -213,6 +213,14 @@ exports.trendCreate = async (req, res) => {
 exports.trendUpdate = async (req, res) => {
   try {
     const body = { ...(req.body || {}) };
+    // NABL / ISO 15189 7.4.1.7 — a VERIFIED (released) sheet's result VALUES
+    // are locked; a generic update must not silently overwrite them. Only a
+    // recorded amendment may correct a released report.
+    const existing = await LabTrend.findById(req.params.id).select("status").lean();
+    if (!existing) return res.status(404).json({ success: false, message: "Not found" });
+    if (existing.status === "verified" && (body.tests !== undefined || body.results !== undefined)) {
+      return res.status(409).json({ success: false, code: "REPORT_VERIFIED_LOCKED", message: "This sheet is verified — result values are locked. Correct a released report through a recorded amendment, not a generic edit." });
+    }
     // R7hr(LAB-P4) — same guard as reportUpdate (R7hr-233): verification is
     // the lab.records.verify transition; a generic write must never forge
     // the verified status or the signatory stamps on a NABL report.
@@ -296,10 +304,18 @@ exports.reportCreate = async (req, res) => {
 
 exports.reportUpdate = async (req, res) => {
   try {
+    const body = { ...(req.body || {}) };
+    // NABL / ISO 15189 7.4.1.7 — a VERIFIED (released) report's content is
+    // locked; a generic update must not silently overwrite results/findings.
+    const existing = await LabReport.findById(req.params.id).select("status").lean();
+    if (!existing) return res.status(404).json({ success: false, message: "Not found" });
+    const VALUE_FIELDS = ["findings", "impression", "clinicalDetails", "organism", "sensitivity", "parameters", "results", "recommendation", "microMethod"];
+    if (existing.status === "verified" && VALUE_FIELDS.some((f) => body[f] !== undefined)) {
+      return res.status(409).json({ success: false, code: "REPORT_VERIFIED_LOCKED", message: "This report is verified — its content is locked. Correct a released report through a recorded amendment, not a generic edit." });
+    }
     // R7hr-233 (audit: lab self-verify escalation) — verification is the
     // doctor-only transition and must go through reportVerify; never let a
     // generic field update forge the verified status or its identity stamps.
-    const body = { ...(req.body || {}) };
     if (body.status === "verified") delete body.status;
     delete body.verifiedBy;
     delete body.verifiedAt;

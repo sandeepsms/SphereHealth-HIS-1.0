@@ -2,6 +2,32 @@ const InvestigationOrder = require("../../models/Investigation/InvestigationOrde
 const InvestigationMaster = require("../../models/Investigation/InvestigationMasterModel");
 const InvestigationPricing = require("../../models/Investigation/InvestigationPricingModel");
 
+// NABL / ISO 15189 7.4.1 — compute the biological flag SERVER-SIDE from the
+// numeric reference interval + critical thresholds carried on the result, so
+// the H/L/critical flag is derived, not a manually-typed isAbnormal. Returns
+// { flag, isAbnormal, critical, severity } — critical drives the auto-alert.
+// (Age/sex-stratified interval SELECTION from a reference-range master is a
+// separate follow-up; here the interval is supplied on the result payload.)
+function _classifyResult(r) {
+  const out = { flag: "", isAbnormal: false, critical: false, severity: null };
+  const v = parseFloat(r.value);
+  const fin = (x) => typeof x === "number" && Number.isFinite(x);
+  if (!Number.isFinite(v)) {
+    out.isAbnormal = !!r.isAbnormal;
+    out.flag = r.isAbnormal ? "A" : "";
+    return out;
+  }
+  if (fin(r.criticalLow) && v <= r.criticalLow)   { return { flag: "LL", isAbnormal: true, critical: true, severity: "PANIC" }; }
+  if (fin(r.criticalHigh) && v >= r.criticalHigh) { return { flag: "HH", isAbnormal: true, critical: true, severity: "PANIC" }; }
+  if (fin(r.refLow) && v < r.refLow)   { return { flag: "L", isAbnormal: true, critical: false, severity: null }; }
+  if (fin(r.refHigh) && v > r.refHigh) { return { flag: "H", isAbnormal: true, critical: false, severity: null }; }
+  if (fin(r.refLow) || fin(r.refHigh)) { return { flag: "N", isAbnormal: false, critical: false, severity: null }; }
+  // No interval supplied — fall back to the manually-supplied isAbnormal.
+  out.isAbnormal = !!r.isAbnormal;
+  out.flag = r.isAbnormal ? "A" : "";
+  return out;
+}
+
 class InvestigationOrderService {
   // ── CREATE ORDER ──────────────────────────────────────────────
   // items = [{ investigationId, performedAt?, externalLabName? }]
@@ -183,6 +209,81 @@ class InvestigationOrderService {
     return this._populate(order._id);
   }
 
+  // ── REJECT SAMPLE ─────────────────────────────────────────────
+  // NABL / ISO 15189 7.2.6 — pre-analytical sample rejection with a structured
+  // reason. A rejected item's sampleStatus → REJECTED and result entry is
+  // blocked (enterResults throws SAMPLE_REJECTED) until the sample is recollected.
+  static get REJECTION_REASONS() {
+    return ["Hemolysed", "Clotted", "Insufficient-quantity", "Mislabelled", "Wrong-container", "Contaminated", "Delayed-transport", "Improper-storage", "Other"];
+  }
+
+  async rejectSample(orderId, { itemIds = null, rejectionReason, rejectedBy }) {
+    const valid = InvestigationOrderService.REJECTION_REASONS;
+    if (!rejectionReason || !valid.includes(rejectionReason)) {
+      const err = new Error(`rejectionReason is required and must be one of: ${valid.join(", ")}`);
+      err.code = "INVALID_REJECTION_REASON"; err.status = 400; throw err;
+    }
+    const order = await InvestigationOrder.findById(orderId);
+    if (!order) throw new Error("Order not found");
+    if (order.orderStatus === "CANCELLED") throw new Error("Cannot reject sample for a cancelled order");
+
+    const now = new Date();
+    let n = 0;
+    for (const item of order.items) {
+      if (item.performedAt === "EXTERNAL") continue;
+      if (itemIds && !itemIds.includes(item._id.toString())) continue;
+      if (item.resultStatus === "VERIFIED") continue; // never reject an already-released result
+      item.sampleStatus   = "REJECTED";
+      item.rejectionReason = rejectionReason;
+      item.rejectedBy     = rejectedBy || "Lab Staff";
+      item.rejectedAt     = now;
+      item.resultStatus   = "PENDING";
+      n++;
+    }
+    if (!n) { const err = new Error("No eligible sample items to reject"); err.status = 400; throw err; }
+
+    order.actionLog.push({ action: "SAMPLE_REJECTED", performedBy: rejectedBy || "Lab Staff", performedAt: now, remarks: `${n} item(s): ${rejectionReason}` });
+    await order.save();
+    return this._populate(order._id);
+  }
+
+  // ── AMEND VERIFIED RESULT ─────────────────────────────────────
+  // NABL / ISO 15189 7.4.1.7 — a released (VERIFIED) result may only be
+  // corrected through a recorded amendment: the old→new value + reason are
+  // kept in an append-only trail, never a silent overwrite.
+  async amendResult(orderId, { itemId, amendments = [], amendedBy }) {
+    const order = await InvestigationOrder.findById(orderId);
+    if (!order) throw new Error("Order not found");
+    const item = order.items.id(itemId);
+    if (!item) throw new Error("Test item not found");
+    if (item.resultStatus !== "VERIFIED") {
+      const err = new Error("Amendment applies only to a VERIFIED (released) result — edit the draft directly otherwise");
+      err.code = "NOT_VERIFIED"; err.status = 409; throw err;
+    }
+    if (!Array.isArray(amendments) || !amendments.length) {
+      const err = new Error("amendments[] with { parameterName, newValue, reason } is required"); err.status = 400; throw err;
+    }
+    const now = new Date();
+    for (const am of amendments) {
+      if (!am.reason || !String(am.reason).trim()) { const e = new Error("Each amendment needs a reason (ISO 15189 7.4.1.7)"); e.status = 400; throw e; }
+      const r = item.results.find((x) => x.parameterName === am.parameterName);
+      if (!r) { const e = new Error(`Parameter "${am.parameterName}" not found on this result`); e.status = 400; throw e; }
+      const oldVal = r.value;
+      item.amendments.push({ field: `${am.parameterName}.value`, oldValue: String(oldVal), newValue: String(am.newValue), reason: String(am.reason).trim(), amendedBy: amendedBy || "Pathologist", amendedAt: now });
+      r.value = String(am.newValue);
+      const c = _classifyResult(r); r.flag = c.flag; r.isAbnormal = c.isAbnormal;
+    }
+    // Re-attest the amended report.
+    item.verifiedBy = amendedBy || item.verifiedBy;
+    item.verifiedAt = now;
+    order.actionLog.push({ action: "RESULTS_AMENDED", performedBy: amendedBy || "Pathologist", performedAt: now, remarks: `${amendments.length} field(s) on ${item.investigationName}` });
+    // Sanctioned amendment path — bypass the post-verification result lock
+    // (the old→new value + reason is preserved in item.amendments[] above).
+    order._amendmentInProgress = true;
+    await order.save();
+    return this._populate(order._id);
+  }
+
   // ── ENTER RESULTS ─────────────────────────────────────────────
   async enterResults(orderId, { itemResults = [], enteredBy }) {
     const order = await InvestigationOrder.findById(orderId);
@@ -191,10 +292,33 @@ class InvestigationOrderService {
       throw new Error("Cannot enter results for cancelled order");
 
     const now = new Date();
-    for (const { itemId, results, interpretation } of itemResults) {
+    const criticalHits = []; // { item, r, severity } → auto-alert after save
+    for (const { itemId, results, interpretation, analyser } of itemResults) {
       const item = order.items.id(itemId);
       if (!item) continue;
-      item.results = results || [];
+      if (analyser) item.analyser = String(analyser).trim(); // NABL — drives the QC-release gate at verify
+      // NABL 7.2.6 — a REJECTED sample cannot carry results; recollect first.
+      if (item.sampleStatus === "REJECTED") {
+        const err = new Error(`Sample for "${item.investigationName}" was REJECTED (${item.rejectionReason || "no reason"}) — recollect before entering results`);
+        err.code = "SAMPLE_REJECTED"; err.status = 409; throw err;
+      }
+      // NABL 7.4.1.7 — a VERIFIED (released) result is locked; corrections
+      // must go through the amend endpoint, never a silent re-entry.
+      if (item.resultStatus === "VERIFIED") {
+        const err = new Error(`Results for "${item.investigationName}" are VERIFIED and locked — use /amend to correct a released result`);
+        err.code = "RESULT_VERIFIED_LOCKED"; err.status = 409; throw err;
+      }
+      const rows = (results || []).map((r) => {
+        const c = _classifyResult(r);
+        r.flag = c.flag;
+        r.isAbnormal = c.isAbnormal;
+        if (!r.normalRange && (typeof r.refLow === "number" || typeof r.refHigh === "number")) {
+          r.normalRange = `${r.refLow ?? ""} - ${r.refHigh ?? ""}`.trim();
+        }
+        if (c.critical) criticalHits.push({ item, r, severity: c.severity });
+        return r;
+      });
+      item.results = rows;
       item.interpretation = interpretation || "";
       item.resultStatus = "COMPLETED";
       item.resultEnteredBy = enteredBy || "Lab Technician";
@@ -220,10 +344,38 @@ class InvestigationOrderService {
       action: "RESULTS_ENTERED",
       performedBy: enteredBy || "Lab Technician",
       performedAt: now,
-      remarks: `${itemResults.length} test(s)`,
+      remarks: `${itemResults.length} test(s)${criticalHits.length ? ` · ${criticalHits.length} critical` : ""}`,
     });
 
     await order.save();
+
+    // NABL / ISO 15189 7.4.1(h) + IPSG.2 — auto-fire a critical-value alert for
+    // every panic result the moment it is charted (the clinician read-back is
+    // captured on the alert's acknowledge). Best-effort; never blocks the save.
+    if (criticalHits.length) {
+      try {
+        const alerter = require("../Notification/criticalValueAlerter");
+        for (const h of criticalHits) {
+          await alerter.emit({
+            kind: "LAB",
+            patientUHID: order.UHID,
+            patientName: order.patientName || "",
+            sourceRef: order._id,
+            sourceKind: "InvestigationOrder",
+            valueLabel: `${h.r.parameterName} ${h.r.value}${h.r.unit ? " " + h.r.unit : ""} (${h.r.flag})`,
+            severity: h.severity === "PANIC" ? "PANIC" : "CRITICAL",
+            emittedBy: enteredBy || "Lab",
+            notes: `Test: ${h.item.investigationName}; order ${order.orderNumber || order._id}`,
+          });
+        }
+        order.actionLog.push({ action: "CRITICAL_VALUE_ALERTED", performedBy: enteredBy || "Lab", performedAt: new Date(), remarks: `${criticalHits.length} panic value(s)` });
+        await order.save();
+      } catch (e) {
+        try { require("../../utils/logErr").logErr("criticalValueAlerter", `emit on lab results ${order._id}`)(e); }
+        catch { console.error("[investigationOrderService] critical-alert emit failed:", e?.message); }
+      }
+    }
+
     return this._populate(order._id);
   }
 
@@ -262,6 +414,27 @@ class InvestigationOrderService {
   async verifyResults(orderId, { verifiedBy, itemIds = null }) {
     const order = await InvestigationOrder.findById(orderId);
     if (!order) throw new Error("Order not found");
+
+    // NABL / ISO 15189 7.3.7 — QC-release gate. Any item run on an analyser
+    // whose LATEST QC control FAILED must not be released until a passing
+    // control is logged. Items with no analyser verify as before (parity with
+    // the LabTrend verify gate).
+    const analysers = [...new Set(
+      order.items
+        .filter((i) => (!itemIds || itemIds.includes(i._id.toString())) && i.analyser && i.resultStatus === "COMPLETED")
+        .map((i) => i.analyser.trim()),
+    )];
+    if (analysers.length) {
+      const LabQCLog = require("../../models/Lab/LabQCLogModel");
+      const { escapeRegex } = require("../../utils/queryGuards");
+      for (const a of analysers) {
+        const lastQc = await LabQCLog.findOne({ equipmentName: new RegExp(`^${escapeRegex(a)}$`, "i") }).sort({ performedAt: -1 }).lean();
+        if (lastQc && lastQc.result === "FAIL") {
+          const err = new Error(`Release blocked — latest QC on ${a} FAILED (${new Date(lastQc.performedAt).toLocaleString("en-IN")}). Log a passing control, then verify.`);
+          err.code = "QC_FAILED"; err.status = 409; throw err;
+        }
+      }
+    }
 
     const now = new Date();
     for (const item of order.items) {

@@ -8,6 +8,32 @@ const TestResultSchema = new mongoose.Schema(
     normalRange: { type: String },
     isAbnormal: { type: Boolean, default: false },
     remarks: { type: String },
+    // NABL / ISO 15189 7.4.1 — numeric reference interval + critical (panic)
+    // thresholds so the H/L/critical flag is computed + stamped SERVER-SIDE at
+    // result entry (not a manual isAbnormal assertion), and a value crossing a
+    // critical threshold auto-fires a critical-value alert.
+    refLow:       { type: Number, default: null },
+    refHigh:      { type: Number, default: null },
+    criticalLow:  { type: Number, default: null },
+    criticalHigh: { type: Number, default: null },
+    // Server-stamped biological flag: N normal · H high · L low · HH critical-
+    // high (panic) · LL critical-low (panic) · A abnormal (non-numeric).
+    flag: { type: String, enum: ["N", "H", "L", "HH", "LL", "A", ""], default: "" },
+  },
+  { _id: false },
+);
+
+// NABL / ISO 15189 7.4.1.7 — append-only amendment trail. A VERIFIED result
+// can only be corrected through a recorded amendment (never a silent
+// overwrite); each entry preserves the old→new value + reason + actor.
+const AmendmentSchema = new mongoose.Schema(
+  {
+    field:     { type: String, required: true }, // e.g. "Hemoglobin.value"
+    oldValue:  { type: String, default: "" },
+    newValue:  { type: String, default: "" },
+    reason:    { type: String, required: true },
+    amendedBy: { type: String, default: "" },
+    amendedAt: { type: Date, default: Date.now },
   },
   { _id: false },
 );
@@ -57,7 +83,16 @@ const OrderItemSchema = new mongoose.Schema(
     sampleCollectedAt: { type: Date },
     sampleCollectedBy: { type: String },
     sampleBarcode: { type: String },
+    // NABL — structured sample-rejection reason (ISO 15189 7.2.6).
     rejectionReason: { type: String },
+    rejectedBy:      { type: String },
+    rejectedAt:      { type: Date },
+    // NABL — analyser this item was run on; drives the QC-release gate at
+    // verify (a value released off an analyser whose latest QC FAILED is
+    // blocked). Optional — items without an analyser verify as before.
+    analyser: { type: String, default: "" },
+    // NABL 7.4.1.7 — append-only amendment trail for verified results.
+    amendments: { type: [AmendmentSchema], default: [] },
 
     // Result
     resultStatus: {
@@ -233,7 +268,11 @@ InvestigationOrderSchema.pre("save", async function (next) {
   // reference range, and interpretation become immutable to anything except
   // an explicit Admin amendment workflow. We snapshot the verified items at
   // load time on the doc-level `_verifiedSnapshot` and compare on save.
-  if (!this.isNew && Array.isArray(this.items)) {
+  // The sanctioned amendment workflow (investigationOrderService.amendResult,
+  // NABL 7.4.1.7) sets `_amendmentInProgress` after recording the old→new
+  // value + reason in the append-only item.amendments[] trail — that path is
+  // the one this message tells the user to use, so it bypasses the lock.
+  if (!this.isNew && Array.isArray(this.items) && !this._amendmentInProgress) {
     const snap = this._verifiedSnapshot || {};
     for (const item of this.items) {
       const prior = snap[String(item._id)];
