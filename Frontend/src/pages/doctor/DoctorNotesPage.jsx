@@ -63,6 +63,7 @@ import SignaturePad from "../../Components/signature/SignaturePad";
 // Pre-Op, Post-Op, Discharge, Consult, Emergency, Referral, Death etc.
 // all render with the same polished layout as Daily Progress.
 import TimelineNoteCard from "../../Components/notes/TimelineNoteCard";
+import Icd10Picker from "../../Components/clinical/Icd10Picker";   // R7hr(PCS-P1) — system="pcs" on the procedure form
 
 /* ── Design tokens (blue/indigo — doctor theme) ── */
 const C = {
@@ -415,9 +416,10 @@ function DoctorNotesContent({ selectedPatient }) {
 
   /* ICU-specific */
   const [icu, setIcu] = useState({ ventMode: "CPAP/PSV", fio2: "", peep: "", tv: "", ventRR: "", pip: "", map: "", cvp: "", rassScore: "0", bpsScore: "", dailyGoals: "", neuro: "Intact", cvs: "Stable", resp: "Supported", renal: "Adequate", gi: "Active", haem: "Normal", infective: "None", sedation: "", vasopressors: false, vasopressorDetail: "" });
+  // R7hr(PCS-P1) — pcsCode rides noteDetails alongside procedureName.
 
   /* Procedure-specific */
-  const [proc, setProc] = useState({ procedureName: "", indication: "", time: "", surgeon: "", assistant: "", anaesthesia: "None (Awake)", position: "Supine", consentObtained: true, technique: "", findings: "", complications: "None", bloodLoss: "Minimal (<50mL)", specimenSent: false, specimenType: "", postInstructions: "" });
+  const [proc, setProc] = useState({ procedureName: "", pcsCode: "", indication: "", time: "", surgeon: "", assistant: "", anaesthesia: "None (Awake)", position: "Supine", consentObtained: true, technique: "", findings: "", complications: "None", bloodLoss: "Minimal (<50mL)", specimenSent: false, specimenType: "", postInstructions: "" });
 
   /* Consultation-specific */
   const [consult, setConsult] = useState({ consultantName: "", speciality: "", consultantRegNo: "", referredBy: "", reason: "", clinicalSummary: "", investigations: "", findings: "", impression: "", recommendations: "", followUp: "" });
@@ -2486,7 +2488,16 @@ function DoctorNotesContent({ selectedPatient }) {
               {activeModal === "procedure" && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-                    <FL label="Procedure Name *"><input className="his-field" value={proc.procedureName} placeholder="e.g. Central venous line insertion" onChange={e=>setProc(p=>({...p,procedureName:e.target.value}))} /></FL>
+                    {/* R7hr(PCS-P1) — ICD-10-PCS typeahead; pick stamps pcsCode
+                        into noteDetails (Mixed) alongside procedureName. */}
+                    <FL label="Procedure Name *">
+                      <Icd10Picker system="pcs" className="his-field" style={{ width: "100%" }}
+                        value={proc.procedureName}
+                        placeholder="e.g. Central venous line insertion"
+                        onChange={(v)=>setProc(p=>({...p,procedureName:v, ...(p.pcsCode ? {pcsCode:""} : {})}))}
+                        onPick={({code, description})=>setProc(p=>({...p,procedureName:description,pcsCode:code}))} />
+                      {proc.pcsCode ? <div style={{ fontSize: 10, color: "#5b21b6", fontFamily: "'DM Mono', monospace", marginTop: 2 }}>PCS {proc.pcsCode}</div> : null}
+                    </FL>
                     <FL label="Indication *"><input className="his-field" value={proc.indication} placeholder="Reason for procedure" onChange={e=>setProc(p=>({...p,indication:e.target.value}))} /></FL>
                     <FL label="Time of Procedure *"><input type="time" className="his-field" value={proc.time} onChange={e=>setProc(p=>({...p,time:e.target.value}))} /></FL>
                   </div>

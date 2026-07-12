@@ -26,6 +26,9 @@ const InvestigationSummarySchema = new mongoose.Schema(
 const ProcedureSchema = new mongoose.Schema(
   {
     procedureName: { type: String, trim: true },
+    // R7hr(PCS-P1) — ICD-10-PCS code picked from the master (7-char
+    // alphanumeric); optional so free-text procedures still save.
+    pcsCode: { type: String, trim: true, uppercase: true, default: "" },
     date: { type: Date },
     performedBy: { type: String, trim: true },
     notes: { type: String } },

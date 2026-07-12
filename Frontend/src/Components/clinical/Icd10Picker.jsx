@@ -20,7 +20,16 @@ import { API_ENDPOINTS } from "../../config/api";
 
 const authHeaders = () => ({ Authorization: `Bearer ${sessionStorage.getItem("his_token")}` });
 
-const Icd10Picker = ({ value, onChange, onPick, placeholder = "Type code or diagnosis…", style, className }) => {
+// R7hr(PCS-P1) — endpoint + footer label are now props (defaults preserve
+// the original ICD-10-CM behaviour byte-for-byte) so the same typeahead
+// serves the ICD-10-PCS procedure master via <Icd10Picker system="pcs" />.
+const SYSTEMS = {
+  cm:  { searchPath: "/icd10/search",     metaPath: "/icd10/meta",     label: "ICD-10-CM"  },
+  pcs: { searchPath: "/icd10/pcs/search", metaPath: "/icd10/pcs/meta", label: "ICD-10-PCS" },
+};
+
+const Icd10Picker = ({ value, onChange, onPick, placeholder = "Type code or diagnosis…", style, className, system = "cm" }) => {
+  const sys = SYSTEMS[system] || SYSTEMS.cm;
   const [open, setOpen]   = useState(false);
   const [rows, setRows]   = useState([]);
   const [hi, setHi]       = useState(-1);           // highlighted row (keyboard nav)
@@ -34,9 +43,9 @@ const Icd10Picker = ({ value, onChange, onPick, placeholder = "Type code or diag
 
   // one-time release meta (shows the coder the data is current)
   useEffect(() => {
-    axios.get(`${API_ENDPOINTS.BASE}/icd10/meta`, { headers: authHeaders() })
+    axios.get(`${API_ENDPOINTS.BASE}${sys.metaPath}`, { headers: authHeaders() })
       .then(r => setMeta(r.data?.data || null)).catch(() => {});
-  }, []);
+  }, [sys.metaPath]);
 
   // Anchor the portaled dropdown to the input rect; flip up if the field
   // sits low in the viewport. Recomputed on open + while scrolling/resizing.
@@ -83,7 +92,7 @@ const Icd10Picker = ({ value, onChange, onPick, placeholder = "Type code or diag
 
   const search = (q) => {
     const seq = ++seqRef.current;
-    axios.get(`${API_ENDPOINTS.BASE}/icd10/search`, { params: { q }, headers: authHeaders() })
+    axios.get(`${API_ENDPOINTS.BASE}${sys.searchPath}`, { params: { q }, headers: authHeaders() })
       .then(r => {
         if (seq !== seqRef.current) return;           // a newer query answered already
         const data = r.data?.data || [];
@@ -143,7 +152,7 @@ const Icd10Picker = ({ value, onChange, onPick, placeholder = "Type code or diag
       ))}
       {meta?.version && (
         <div style={{ padding: "5px 12px", fontSize: 10.5, color: "#94a3b8", background: "#f8fafc", position: "sticky", bottom: 0 }}>
-          ICD-10-CM {meta.version} · {Number(meta.count || 0).toLocaleString("en-IN")} codes
+          {sys.label} {meta.version} · {Number(meta.count || 0).toLocaleString("en-IN")} codes
         </div>
       )}
     </div>,

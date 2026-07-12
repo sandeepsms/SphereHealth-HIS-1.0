@@ -305,6 +305,11 @@ function claimFieldValues(claim) {
     hospitalName: h.name, rohiniId: h.rohiniId, gstin: h.gstin, pan: h.pan,
     ipNo: a.ipNo || a.admissionNumber, admissionDate: fmtDate(a.admissionDate), dischargeDate: fmtDate(a.dischargeDate),
     roomCategory: a.roomCategory, consultant: a.consultant, diagnosis: a.finalDiagnosis || a.provisionalDiagnosis, icdCode: a.icdCode,
+    // R7hr(PCS-P1) — coded procedures line for insurer forms:
+    // "Laparoscopic Appendicectomy (0DTJ4ZZ); …"
+    procedures: (a.procedures || [])
+      .map((pr) => [pr.name, pr.pcsCode ? `(${pr.pcsCode})` : ""].filter(Boolean).join(" "))
+      .filter(Boolean).join("; "),
     grossAmount: inr(t.gross || t.net), discount: inr(t.discount), tax: inr(t.tax), netAmount: inr(t.net),
     tpaPayable: inr(t.tpaPayable), patientPayable: inr(t.patientPayable),
     preAuthNumber: pa.number, approvedAmount: pa.approvedAmount ? inr(pa.approvedAmount) : "",

@@ -92,7 +92,7 @@ export default function FullDischargeSection({ file }) {
       {has(x.proceduresDone) && (
         <Sec title="Procedures Performed">
           {Array.isArray(x.proceduresDone)
-            ? x.proceduresDone.map((p, i) => <div key={i} style={S.p}>• {typeof p === "string" ? p : [p.procedureName || p.name || p.procedure, fmtD(p.date), p.performedBy, p.notes].filter(Boolean).join(" · ")}</div>)
+            ? x.proceduresDone.map((p, i) => <div key={i} style={S.p}>• {typeof p === "string" ? p : [[p.procedureName || p.name || p.procedure, p.pcsCode ? `(PCS ${p.pcsCode})` : ""].filter(Boolean).join(" "), fmtD(p.date), p.performedBy, p.notes].filter(Boolean).join(" · ")}</div>)
             : <Para v={x.proceduresDone} />}
         </Sec>
       )}

@@ -22,4 +22,10 @@ router.get("/search", requireAction("icd10.read"), ctrl.search);
 router.get("/meta",   requireAction("icd10.read"), ctrl.meta);
 router.post("/import", requireAction("icd10.manage"), uploadCodes.single("file"), ctrl.importFile);
 
+// R7hr(PCS-P1) — ICD-10-PCS procedure master (same gates as CM: every
+// clinical role searches, Admin/MRD refresh the yearly file).
+router.get("/pcs/search", requireAction("icd10.read"), ctrl.pcsSearch);
+router.get("/pcs/meta",   requireAction("icd10.read"), ctrl.pcsMeta);
+router.post("/pcs/import", requireAction("icd10.manage"), uploadCodes.single("file"), ctrl.pcsImportFile);
+
 module.exports = router;

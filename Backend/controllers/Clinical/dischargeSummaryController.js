@@ -31,6 +31,7 @@ function _normaliseDischargeArrays(data) {
   if (Array.isArray(data.procedures) && data.proceduresDone === undefined) {
     data.proceduresDone = data.procedures.map((p) => ({
       procedureName: p.procedureName || p.name || "",
+      pcsCode: p.pcsCode || "",                        // R7hr(PCS-P1)
       date: p.date || undefined, performedBy: p.performedBy || p.surgeon || "",
       notes: p.notes || [p.findings, p.complications && `Complications: ${p.complications}`].filter(Boolean).join(". "),
     })).filter((p) => p.procedureName);

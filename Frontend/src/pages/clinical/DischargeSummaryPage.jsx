@@ -556,7 +556,7 @@ const INV_COLS = [
   { label: "Unit", w: "1fr" }, { label: "Status", w: "1fr" },
 ];
 const PROC_COLS = [
-  { label: "Procedure", w: "2fr" }, { label: "Date", w: "1fr" },
+  { label: "Procedure (ICD-10-PCS picker)", w: "2fr" }, { label: "Date", w: "1fr" },
   { label: "Surgeon / Operator", w: "1.5fr" }, { label: "Findings", w: "2fr" },
   { label: "Complications", w: "1.5fr" },
 ];
@@ -627,7 +627,25 @@ function ProcRow({ proc, idx, onChange, onRemove }) {
       gridTemplateColumns: PROC_COLS.map(c => c.w).join(" ") + " auto",
       gap: 8, marginBottom: 8, alignItems: "center",
     }}>
-      <input className="his-field" value={proc.name} onChange={e => onChange(idx, "name", e.target.value)} placeholder="Procedure name" />
+      {/* R7hr(PCS-P1) — ICD-10-PCS typeahead over the 79k CMS master. Pick
+          → official description fills the name + pcsCode rides the row
+          (→ proceduresDone.pcsCode → claims). Free text still works. */}
+      <div>
+        <Icd10Picker
+          system="pcs"
+          className="his-field"
+          style={{ width: "100%" }}
+          value={proc.name}
+          onChange={(v) => { onChange(idx, "name", v); if (proc.pcsCode) onChange(idx, "pcsCode", ""); }}
+          onPick={({ code, description }) => { onChange(idx, "name", description); onChange(idx, "pcsCode", code); }}
+          placeholder="Procedure name or PCS code…"
+        />
+        {proc.pcsCode ? (
+          <div style={{ fontSize: 10, color: "#5b21b6", fontFamily: "'DM Mono', monospace", marginTop: 2 }}>
+            PCS {proc.pcsCode}
+          </div>
+        ) : null}
+      </div>
       <input className="his-field" type="date" value={proc.date} onChange={e => onChange(idx, "date", e.target.value)} />
       <input className="his-field" value={proc.surgeon} onChange={e => onChange(idx, "surgeon", e.target.value)} placeholder="Dr. …" />
       <input className="his-field" value={proc.findings} onChange={e => onChange(idx, "findings", e.target.value)} placeholder="Key findings" />
@@ -1479,7 +1497,7 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
   const updateInv = (idx, field, val) => setInvestigations(p => p.map((m, i) => i === idx ? { ...m, [field]: val } : m));
   const removeInv = (idx) => setInvestigations(p => p.filter((_, i) => i !== idx));
 
-  const addProc = () => setProcedures(p => [...p, { name: "", date: "", surgeon: "", findings: "", complications: "" }]);
+  const addProc = () => setProcedures(p => [...p, { name: "", pcsCode: "", date: "", surgeon: "", findings: "", complications: "" }]);
   const updateProc = (idx, field, val) => setProcedures(p => p.map((m, i) => i === idx ? { ...m, [field]: val } : m));
   const removeProc = (idx) => setProcedures(p => p.filter((_, i) => i !== idx));
 

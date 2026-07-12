@@ -321,6 +321,7 @@ const buildBuilder = (note, opts = {}) => {
       // position, technique, findings, bloodLoss, specimenType, postInstructions)
       // alongside the legacy aliases. Bools → readable text.
       const proc = _section(`Procedure — ${nd.procedureName || "—"}`, "#ea580c", _grid([
+        _kv("ICD-10-PCS", nd.pcsCode),               // R7hr(PCS-P1)
         _kv("Indication", nd.indication, true),
         _kv("Anatomical Site / Position", nd.anatomicalSite || nd.position),
         _kv("Operator / Surgeon", nd.operator || nd.surgeon),

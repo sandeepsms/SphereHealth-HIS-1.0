@@ -85,6 +85,17 @@ async function buildClaimData(billId) {
     for (const c of comorbid) diagnoses.push({ type: "Secondary", code: "", description: c });
   }
 
+  // R7hr(PCS-P1) — coded procedures for the claim: the discharge form's
+  // proceduresDone rows now carry an ICD-10-PCS code alongside the name.
+  const procedures = (ds?.proceduresDone || [])
+    .filter((p) => p.procedureName || p.pcsCode)
+    .map((p) => ({
+      name: p.procedureName || "",
+      pcsCode: p.pcsCode || "",
+      date: p.date || null,
+      performedBy: p.performedBy || "",
+    }));
+
   // ── Category rollup (billable lines only, mirrors FinalBill) ──
   const buckets = {};
   let gross = 0, discount = 0, tax = 0, net = 0;
@@ -181,9 +192,10 @@ async function buildClaimData(billId) {
       icdDescription: finalDx,
       comorbidities: comorbid,
       diagnoses,                                   // [{type, code, description}] — primary + secondary
+      procedures,                                  // R7hr(PCS-P1): [{name, pcsCode, date, performedBy}]
       reasonForAdmission: admission.reasonForAdmission || "",
       isMLC: !!admission.isMLC, mlcNumber: admission.mlcNumber || "",
-    } : { admissionNumber: seed.admissionNumber, type: seed.visitType, diagnoses: [] },
+    } : { admissionNumber: seed.admissionNumber, type: seed.visitType, diagnoses: [], procedures: [] },
     preAuth: {
       number: tpaBill.tpaPreAuthNumber || "",
       sanctionedAmount: toNum(tpaBill.tpaPreAuthAmount) || null,
