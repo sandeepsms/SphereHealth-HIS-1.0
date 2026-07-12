@@ -65,6 +65,8 @@ import { useInlinedUploadsHtml } from "@/utils/secureUploads";
 import { COVERAGE_BLOCKS, COVERAGE_ORDER, REGISTER_META, REGISTER_HEADERS, REGISTER_WIDTHS, registerRow } from "./registerRows";
 // R7hr(DOCS-FULL): full standalone-level discharge summary in the file.
 import FullDischargeSection from "./FullDischargeSection";
+// R7hr(DOCS-FULL 2/6): NABL results tables + full diagnostic reports.
+import { FullLabTrends, FullDiagnosticReports } from "./FullLabSection";
 
 /* R7gd note-card embed wrapped in a component so the JWT-gated /uploads
    signature inlining hook can run per-card (hooks can't live in a .map). */
@@ -1879,7 +1881,8 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
       {/* ════════════════════════════════════════════════════════════
           9. INVESTIGATIONS & REPORTS               [NABH AAC.7 / AAC.8]
           ════════════════════════════════════════════════════════════ */}
-      {(invs.length > 0 || (f.labReports || []).length > 0) ? (
+      {(invs.length > 0 || (f.labReports || []).length > 0
+        || (f.labTrends || []).some((t) => (t.tests || []).some((x) => (x.readings || []).length))) ? (
         <>
           <SectionHeader nabh="NABH AAC.7 / AAC.8">Investigations & Reports</SectionHeader>
 
@@ -1928,7 +1931,22 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
             </>
           ) : null}
 
+          {/* R7hr(DOCS-FULL) — NABL results tables (labTrends were never
+              printed before) + full diagnostic reports when the raw docs rode
+              the receipt; one-line digest kept for legacy payloads. */}
+          {(f.labTrends || []).some((t) => (t.tests || []).some((x) => (x.readings || []).length)) ? (
+            <>
+              <SubHeader>Laboratory Results (NABL format)</SubHeader>
+              <FullLabTrends file={f} />
+            </>
+          ) : null}
           {(f.labReports || []).length > 0 ? (
+            (f.labReports || []).some((r) => r.full) ? (
+              <>
+                <SubHeader>Lab & Imaging Reports</SubHeader>
+                <FullDiagnosticReports file={f} />
+              </>
+            ) : (
             <>
               <SubHeader>Lab & Imaging Reports</SubHeader>
               <MiniTable
@@ -1941,6 +1959,7 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
                 widths={["28%", "16%", "56%"]}
               />
             </>
+            )
           ) : null}
         </>
       ) : null}

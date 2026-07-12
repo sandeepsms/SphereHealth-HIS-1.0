@@ -438,6 +438,10 @@ export function normalizeFileData(receipt = {}) {
       date:       toDate(rp.reportDate || rp.createdAt),
       impression: toStr(rp.impression || rp.findings || rp.result),
       status:     toStr(rp.status),
+      // R7hr(DOCS-FULL): raw LabReport doc — FullLabSection prints the
+      // whole diagnostic report (findings/organism/verifier), not just
+      // the one-line impression digest above.
+      full:       rp,
     })),
 
     labTrends: toArr(r.labTrends).map(t => ({
@@ -446,6 +450,15 @@ export function normalizeFileData(receipt = {}) {
       dates:    toArr(t.dates),
       status:   toStr(t.status),
       createdAt:toDate(t.createdAt),
+      // R7hr(DOCS-FULL): NABL sample-meta + verifier (LAB-P4 fields) so the
+      // file's results table matches the standalone lab report's detail.
+      sampleId:          toStr(t.sampleId),
+      sampleCollectedAt: toDate(t.sampleCollectedAt),
+      sampleReceivedAt:  toDate(t.sampleReceivedAt),
+      referringDoctor:   toStr(t.referringDoctor),
+      equipmentId:       toStr(t.equipmentId),
+      verifiedByName:    toStr(t.verifiedByName),
+      verifiedAt:        toDate(t.verifiedAt),
     })),
 
     shiftHandovers: toArr(r.shiftHandovers).map(h => ({
