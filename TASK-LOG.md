@@ -20,11 +20,12 @@
 3. **One-time seed/migrate scripts** (Backend/scripts/): `seedPharmacistCredential.js` (warna GRN/dispense/release 403 — D&C Rules 65 gate), `migrateNumberShortFormat.js`, `backfillEcgRegister.js` (purane ECG orders → register), `importIcd10.js` (74k CM), **`importIcd10Pcs.js` (79k PCS — NAYA)**. + insurer official PDFs (A2 upar).
 4. **InvestigationMaster real ref-ranges** — data entry (LabResultsEntry ka panel-catalog prefill code-side ready; ranges product/lab data hai).
 
-**C. Known limitations (documented, fix zaroori nahi):**
-- Complete File ka Doctor Order Sheet: standalone ke diet/restrictions/standingOrders block rounds-payload-only hai, file API me nahi → parity data-limited (by-design).
-- `_covScope`: <24h readmit ke grace-window me pichli admission ke records aa sakte hain (clinically continuous — accepted).
-- Themes (Timeline/Executive/Audit/Editorial): apni compact discharge summary + full appendix dono chapte hain (by-design — compact + full).
-- SHOW_OUTSIDE_UPLOAD flag OFF (owner: manual entry only; backend ready, 1-line flip jab chahiye).
+**C. Known limitations — ADDRESSED `9c08da57` (owner: "do C"):**
+- ✅ `_covScope` readmit-window clamp — 72h lead-in ab prior admission ke discharge pe floor hota hai (fast-readmit pe pichli encounter ke records leak nahi hote). E2E 4/4.
+- ✅ Audit theme dedup — compact Consent register + Discharge digest ab suppress hote hain jab full DOCS-FULL appendix wahi content deta hai (do baar nahi chapta). Executive/Editorial prose digest real docs pe khaali → self-suppress.
+- ✅ Pre-existing bug bhi mila: normalizeData `patient.address` object pe toStr() → Audit identity table "Address: [object Object]" chapta tha → object parts compose kiye.
+- ⏭ Order Sheet diet/restrictions parity — NOT NEEDED (wo data file ke apne Dietetic Care + per-day Orders sections me already hai, missing nahi).
+- ⏭ SHOW_OUTSIDE_UPLOAD OFF — standing owner decision, chhua nahi.
 
 **D. Optional:** aur koi adversarial re-audit / visual pass VPS go-live se pehle (recommended-but-optional).
 
