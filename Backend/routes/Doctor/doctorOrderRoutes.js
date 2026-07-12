@@ -1329,7 +1329,14 @@ router.post("/:id/administer", validateObjectIdParam("id"), requireAction("mar.w
       holdReason, holdUntil, delayedTo, delayReason,
       prnEffect, prnReassessTime, adverseEvent, adverseDetails,
       isStatDose, statReason, nextDoseAdjustedAt,
+      nurseError, errorDetails,
     } = req.body;
+
+    // NABH MOM.4 — a nurse-flagged administration error must carry an NCC-MERP
+    // severity so the auto-emitted MedicationError row (and its sentinel gate)
+    // is classified; otherwise emitMedicationError would silently no-op.
+    if (nurseError === true && !errorDetails?.severityNCC)
+      return res.status(422).json({ ok: false, message: "errorDetails.severityNCC (NCC-MERP A–I) is required when nurseError is true" });
 
     if (!scheduledTime || !givenBy || !status)
       return res.status(400).json({ ok: false, message: "scheduledTime, givenBy, status required" });
@@ -1379,6 +1386,8 @@ router.post("/:id/administer", validateObjectIdParam("id"), requireAction("mar.w
       holdReason, holdUntil, delayedTo, delayReason,
       prnEffect, prnReassessTime,
       adverseEvent: adverseEvent || false, adverseDetails,
+      nurseError: nurseError || false,
+      errorDetails: nurseError ? errorDetails : undefined,
       isStatDose:  isStatDose  || false,
       statReason:  statReason  || undefined,
       nextDoseAdjustedAt: nextDoseAdjustedAt || undefined,
@@ -1536,6 +1545,39 @@ router.post("/:id/administer", validateObjectIdParam("id"), requireAction("mar.w
         // Service file failed to load — non-fatal.
         const { logErr } = require("../../utils/logErr");
         logErr("intakeOutput", "load failure on order.administer")(e);
+      }
+    }
+
+    // NABH MOM.4 — auto-capture a MedicationError register row when the nurse
+    // flags this administration as an error/deviation. Best-effort + idempotent
+    // (sourceRef keyed on order+slot+day); never fails the administer call.
+    if (nurseError === true) {
+      try {
+        const { emitMedicationError } = require("../../services/Compliance/nabhRegisterEmitter");
+        const dayKey = new Date(); dayKey.setHours(0, 0, 0, 0);
+        const sourceRef = `MAR_${order._id}_${scheduledTime || "prn"}_${dayKey.toISOString().slice(0, 10)}`;
+        await emitMedicationError({
+          patient:   { UHID: order.UHID, _id: order.patientId, fullName: order.patientName },
+          admission: { _id: order.admissionId, admissionNumber: order.admissionNumber || order.ipdNo || "" },
+          error: {
+            errorPhase:    errorDetails?.errorPhase || "Administering", // MedicationErrorRegister enum value for the admin phase
+            severityNCC:   errorDetails?.severityNCC,
+            category:      errorDetails?.category || "",
+            medicationName: order.orderDetails?.medicineName || order.orderDetails?.drugName || "",
+            expectedDose:  order.orderDetails?.dose || "",
+            actualDose:    doseGiven || "",
+            expectedRoute: order.orderDetails?.route || "",
+            actualRoute:   routeUsed || "",
+            actionTakenImmediate: errorDetails?.description || "",
+            admissionId:   order.admissionId || null,
+            sourceRef,
+            sourceType:    "MAR",
+          },
+          actor: { byUserId: req.user?._id || req.user?.id, byName: givenBy, byRole: req.user?.role },
+        });
+      } catch (e) {
+        const { logErr } = require("../../utils/logErr");
+        logErr("nabhRegisterEmitter", "emitMedicationError on order.administer")(e);
       }
     }
 

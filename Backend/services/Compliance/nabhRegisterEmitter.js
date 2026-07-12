@@ -1430,7 +1430,11 @@ async function emitReadmission(args = {}) {
       actualDischargeDate: { $ne: null, $exists: true },
     })
       .sort({ actualDischargeDate: -1 })
-      .select("_id admissionNumber admissionDate actualDischargeDate primaryDiagnosis department dischargeWorkflow")
+      // R7hr-NABH-READMIT-DX: Admission has no `primaryDiagnosis` field — the
+      // real fields are `provisionalDiagnosis` / `reasonForAdmission`. Selecting
+      // (and reading) the non-existent field left currentDiagnosis /
+      // previousDiagnosis / sameDiagnosis silently blank on every readmission row.
+      .select("_id admissionNumber admissionDate actualDischargeDate provisionalDiagnosis reasonForAdmission department dischargeWorkflow")
       .lean();
 
     if (!previous?.actualDischargeDate) return null;
@@ -1445,9 +1449,13 @@ async function emitReadmission(args = {}) {
     if (existing) return existing;
 
     const actorMeta = _actor(actor);
-    const sameDiagnosis = !!(admission.primaryDiagnosis && previous.primaryDiagnosis
-      && String(admission.primaryDiagnosis).trim().toLowerCase()
-        === String(previous.primaryDiagnosis).trim().toLowerCase());
+    // Best available diagnosis at admission time = provisional dx, else the
+    // reason for admission (the discharge/final dx lives on the DischargeSummary,
+    // not the Admission row).
+    const currentDx = admission.provisionalDiagnosis || admission.reasonForAdmission || "";
+    const previousDx = previous.provisionalDiagnosis || previous.reasonForAdmission || "";
+    const sameDiagnosis = !!(currentDx && previousDx
+      && String(currentDx).trim().toLowerCase() === String(previousDx).trim().toLowerCase());
 
     const row = await ReadmissionRegister.create({
       patientId: patient._id || null,
@@ -1458,13 +1466,13 @@ async function emitReadmission(args = {}) {
       currentAdmissionId: admission._id,
       currentAdmissionNumber: admission.admissionNumber || "",
       currentAdmissionDate,
-      currentDiagnosis: admission.primaryDiagnosis || "",
+      currentDiagnosis: currentDx,
       currentDepartment: admission.department || "",
       currentAttendingDoctor: admission.attendingDoctor || admission.consultantIncharge || "",
       previousAdmissionId: previous._id,
       previousAdmissionNumber: previous.admissionNumber || "",
       previousDischargeDate: previous.actualDischargeDate,
-      previousDiagnosis: previous.primaryDiagnosis || "",
+      previousDiagnosis: previousDx,
       previousDepartment: previous.department || "",
       previousDischargeType: previous.dischargeWorkflow?.dischargeType || "",
       daysSinceDischarge: days,
@@ -1581,7 +1589,7 @@ async function emitMortality(args = {}) {
       primaryCause: dischargeSummary?.causeOfDeath
         || deathNote?.primaryCause
         || deathNote?.causeDeath1 // R7em-7 — "I (a) Immediate Cause" doubles as the primary registry cause
-        || dischargeSummary?.primaryDiagnosis
+        || dischargeSummary?.finalDiagnosis // DischargeSummary has no primaryDiagnosis field (it is finalDiagnosis)
         || "Not Specified",
       // R7em-7 — frontend posts causeDeath1/2/3 + `contributing`; alias to
       // the registry field names without losing existing callers.

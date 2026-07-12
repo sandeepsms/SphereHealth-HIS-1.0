@@ -105,6 +105,22 @@ const AdminRecordSchema = new mongoose.Schema({
       "adverseDetails are required when adverseEvent is true",
     ],
   },
+  // NABH MOM.4 — nurse-flagged medication administration error/deviation.
+  // When nurseError=true the /administer (and MAR) path auto-emits a
+  // MedicationError register row via emitMedicationError; NCC-MERP severity
+  // E–I additionally chains a Sentinel event. Previously this field did not
+  // exist and no administration path ever called emitMedicationError, so the
+  // documented auto-capture was dead — errors were only captured via the
+  // manual compliance-officer form.
+  nurseError:     { type: Boolean, default: false },
+  errorDetails: {
+    // Phase matches MedicationErrorRegister enum: Prescribing/Transcribing/
+    // Dispensing/Administering/Monitoring (the /administer path is Administering).
+    errorPhase:  { type: String, default: "Administering" },
+    severityNCC: { type: String },  // NCC-MERP A–I
+    category:    { type: String },  // Wrong dose / Wrong route / Wrong time / Omission / Wrong drug …
+    description: { type: String },
+  },
   // STAT / Emergency dose (given outside the scheduled window)
   isStatDose:     { type: Boolean, default: false },
   statReason:     { type: String },

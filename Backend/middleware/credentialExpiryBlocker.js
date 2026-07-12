@@ -34,12 +34,11 @@
  * the route file stays readable. We translate to the underlying
  * `Credential.credentialType` enum values (CredentialModel.js):
  *
- *   NMC_REG               → ["LICENCE"]               + councilName ~ NMC/MCI
- *                           (the doctor's state/national medical council
- *                           registration; falls back to MBBS/MD if no
- *                           LICENCE row is on file — the registration
- *                           paperwork is sometimes attached to the
- *                           primary-degree row).
+ *   NMC_REG               → ["LICENCE", "NMC_REG"]     (the doctor's
+ *                           state/national medical council PRACTISING
+ *                           registration. A bare degree row — MBBS/MD/… — is
+ *                           NOT accepted: a degree certificate is not proof of
+ *                           current council registration.)
  *   IAP_REG               → ["IAP_REG"]               (Indian Association
  *                           of Physiotherapists membership)
  *   FSSAI_FOOD_HANDLER    → ["FSSAI_FOOD_HANDLER"]    (FSSAI Schedule IV
@@ -90,12 +89,20 @@ const Credential = require("../models/HR/CredentialModel");
 const LOGICAL_TYPE_MAP = {
   NMC_REG: {
     description: "NMC / state medical council registration",
-    // Look first for an explicit LICENCE row; if a hospital captured the
-    // council registration on the primary-degree row (some onboarding
-    // workflows do), accept MBBS / MD / MS too. Council name match is
-    // case-insensitive substring on NMC or MCI.
+    // A practising registration is a LICENCE (council-registration) row. A
+    // bare DEGREE certificate (MBBS/MD/MS/MCh/DM) is NOT proof of current
+    // council registration and must NOT satisfy this gate — dropping the old
+    // degree fallback closes a hole where a degree-only user could prescribe.
+    // We accept any LICENCE (state medical councils carry diverse names, so we
+    // deliberately do not hard-match councilName ~ NMC/MCI, which would reject
+    // legitimate state-council rows) plus a future-proof first-class NMC_REG
+    // enum. Discriminating medical- vs other-council LICENCE rows by councilName
+    // is a future refinement (see NABH-FMS/HRM backlog).
     filter: {
-      credentialType: { $in: ["LICENCE", "MBBS", "MD", "MS", "MCh", "DM"] },
+      $or: [
+        { credentialType: "NMC_REG" },
+        { credentialType: "LICENCE" },
+      ],
     },
   },
   IAP_REG: {

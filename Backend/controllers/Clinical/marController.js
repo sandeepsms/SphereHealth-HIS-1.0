@@ -152,8 +152,20 @@ class MARController {
   // violation.
   recordAdministration = handle(async (req, res) => {
     const { scheduledTime, status, nurseName, nurseStaffId, batchNumber, reason, remarks,
-            witnessUserId, witnessNurseName, witnessNurseStaffId } = req.body;
+            witnessUserId, witnessNurseName, witnessNurseStaffId, fiveRightsChecked } = req.body;
     const finalStatus = normalizeStatus(status);
+
+    // NABH MOM.4 / IPSG.3 — five-rights must be confirmed before a dose is
+    // charted GIVEN. Parity with the DoctorOrder /administer path (which
+    // returns 422 without fiveRightsChecked); previously this MAR path had no
+    // such gate, so a GIVEN dose could be charted without the check.
+    if (finalStatus === "GIVEN" && fiveRightsChecked !== true) {
+      return res.status(422).json({
+        success: false,
+        code: "FIVE_RIGHTS_REQUIRED",
+        message: "5 Rights must be confirmed before marking a dose GIVEN (fiveRightsChecked: true)",
+      });
+    }
 
     // Actor + signature must be resolvable
     const resolvedNurseName  = nurseName    || req.user?.fullName   || "";
@@ -248,6 +260,7 @@ class MARController {
       batchNumber,
       reason,
       remarks,
+      fiveRightsChecked: fiveRightsChecked === true,
       // R7bb-FIX-E-19: stamp both witnesses on HAM doses for audit.
       ...(hamWitness ? {
         administeredByUser1Id: resolvedUserId,
