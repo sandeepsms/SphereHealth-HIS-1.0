@@ -73,6 +73,8 @@ import FullConsentSection from "./FullConsentSection";
 import FullDietSection from "./FullDietSection";
 // R7hr(DOCS-FULL 5/6): consolidated MAR slot grid.
 import FullMarSection from "./FullMarSection";
+// R7hr(DOCS-FULL 6/6): consolidated doctor order sheet.
+import FullOrderSheetSection from "./FullOrderSheetSection";
 
 /* R7gd note-card embed wrapped in a component so the JWT-gated /uploads
    signature inlining hook can run per-card (hooks can't live in a .map). */
@@ -1881,6 +1883,20 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
               d.status || (d.removedAt ? "Removed" : "Active"),
             ])}
           />
+        </>
+      ) : null}
+
+      {/* ════════════════════════════════════════════════════════════
+          8a. DOCTOR ORDER SHEET                          [NABH MOM.4]
+          R7hr(DOCS-FULL 6/6) — consolidated standalone-style order
+          sheet (Medication / Investigations / Other, generic+indication
+          sub-lines, duration, STAT highlight). Per-day "Orders raised"
+          in the journey stays as-is.
+          ════════════════════════════════════════════════════════════ */}
+      {(f.doctorOrders || []).length > 0 ? (
+        <>
+          <SectionHeader nabh="NABH MOM.4">Doctor Order Sheet</SectionHeader>
+          <FullOrderSheetSection file={f} />
         </>
       ) : null}
 
