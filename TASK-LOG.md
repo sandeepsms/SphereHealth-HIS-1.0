@@ -3,11 +3,32 @@
 > **Ye file kya hai:** Har session ka running task log. Naya session shuru karo toh **sirf ye file padho** — 2 minute me pata chal jayega kya chal raha tha, kaha se pick karna hai, aage kya karna hai.
 > **Rule:** Har work-session ke END pe ye file update karke commit karni hai.
 
-**Last updated:** 2026-07-12 · **Branch:** `claude/multi-hospital-deploy` · **Tree:** clean ✅ · **npm audit:** 0/0 ✅ · **Build:** green ✅
+**Last updated:** 2026-07-12 · **Branch:** `claude/multi-hospital-deploy` · **Tree:** clean ✅ · **Build:** green ✅ · **Head:** `9891fca2` · **Pending:** koi code-task nahi — sirf VPS dry-run + insurer PDFs + per-deploy scripts (neeche 📌 PENDING WORK)
 
 ---
 
 ## 🎯 ABHI YAHA HAI (resume point)
+
+### 📌 PENDING WORK — poora list (2026-07-12)
+**Status:** Saare 123 tracked tasks COMPLETE. Chaaro owner-decisions (2026-07-12) shipped + ek independent adversarial re-audit bhi pass (`0fc29e2d`, 11 fixes). Coding queue KHAALI. Jo bacha hai wo **owner-input / hardware ka wait** karta hai ya **per-hospital go-live operational** hai — koi pending code-task nahi.
+
+**A. Owner-input / hardware pe blocked (jab resource mile tab):**
+1. **VPS Docker dry-run** — ek Linux/VPS host chahiye (is Windows box pe Docker/WSL nahi). Steps: `cd deploy && ./provision-hospital.sh <slug> <public_url> [port]` (ya `docker compose --env-file deploy/<slug>.env -p <slug> up -d --build`) → smoke test: login → patient register/admit → Complete File print → feedback (staff + public QR) → uploads volume PHI-persist + backup + TLS-proxy note verify. Static validation pehle se clean (compose valid, nginx same-origin proxy, non-root backend, strong-secrets provision). Files: `docker-compose.yml`, `Backend/Dockerfile`, `Frontend/Dockerfile`+`nginx.conf`, `deploy/DEPLOY.md`, `deploy/provision-hospital.sh`, `deploy/.env.example`.
+2. **Insurer official blank claim PDFs** — /insurer-forms pe har insurer ki asli blank PDF upload + field-map (CLAIM-P4.3 + CLAIM-P5 visual mapper ready hai; abhi generated-standard fallback chal raha hai). PDFs owner/hospital se aane hain.
+
+**B. Per-hospital go-live operational — har deployment pe EK BAAR (coding nahi):**
+3. **One-time seed/migrate scripts** (Backend/scripts/): `seedPharmacistCredential.js` (warna GRN/dispense/release 403 — D&C Rules 65 gate), `migrateNumberShortFormat.js`, `backfillEcgRegister.js` (purane ECG orders → register), `importIcd10.js` (74k CM), **`importIcd10Pcs.js` (79k PCS — NAYA)**. + insurer official PDFs (A2 upar).
+4. **InvestigationMaster real ref-ranges** — data entry (LabResultsEntry ka panel-catalog prefill code-side ready; ranges product/lab data hai).
+
+**C. Known limitations (documented, fix zaroori nahi):**
+- Complete File ka Doctor Order Sheet: standalone ke diet/restrictions/standingOrders block rounds-payload-only hai, file API me nahi → parity data-limited (by-design).
+- `_covScope`: <24h readmit ke grace-window me pichli admission ke records aa sakte hain (clinically continuous — accepted).
+- Themes (Timeline/Executive/Audit/Editorial): apni compact discharge summary + full appendix dono chapte hain (by-design — compact + full).
+- SHOW_OUTSIDE_UPLOAD flag OFF (owner: manual entry only; backend ready, 1-line flip jab chahiye).
+
+**D. Optional:** aur koi adversarial re-audit / visual pass VPS go-live se pehle (recommended-but-optional).
+
+---
 
 **Abhi hua:** **RE-AUDIT + FIXES DONE** `0fc29e2d` — Fable adversarial review (5 finders × 2 refuters) over `284eccfa..HEAD` (COV-SCOPE + notes trio + NOTE-WRAP + DOCS-FULL 8 commits + PCS-P1). 29 raw findings, verify-phase Fable-limit pe maraa (switched to Opus, self-verified rest against schemas). **11 real fix kiye** (schema-mismatch dominant — DOCS-FULL ke naye Full*Section renderers model me na-honewale keys padh rahe the): **(1)** FullDischargeSection investigations — investigationsSummary subdoc ARRAY (hamesha []) `array||string` short-circuit + [object Object] → type-wise handle; **(2)** FullConsentSection — bypass nested-object hamesha truthy (har biometric consent pe "BIOMETRIC BYPASSED" chapta, asli bypass pe kabhi nahi) → authorisedAt/reason pe key; consentingParty TOP-LEVEL object (biometric ke andar nahi); benefits/alternatives String[] joined; **(3)** FullDietSection cal/protein/notes MealItemSchema pe (per-item) → items sum + day label; **(4)** FullMarSection model "hold" (na "held") + skipped/not_available/delayed/partial GLYPH + UTC→local dayKey; **(5)** FullLabSection sirf numeric-whole-value flag, culture/text pe green-N assert nahi; **(6)** doctorNotesService allowed-list +isCritical+patientStatus (ER draft triage III→I PUT pe critical flag flip); **(7)** DoctorNotesPage emergency MODULES label + openEditModal ER-note → ER page redirect (lossy edit block); **(8)** Narrative final-dx double-print; **(9)** gunzip maxOutputLength bomb-guard (PCS+CM). Verify: build green + backend E2E (isCritical restart) + render harness 13/13 + browser clean. Refuted/skip (by-design/edge): .full-passthrough legacy dead-branch (demo payload me .full nahi), seed discharge-noteType (NurseNotes model, DoctorNotes nahi), theme appendix duplication (by-design), _covScope readmit-<24h grace (clinically continuous), pf-avoid-break-inside no-op (cosmetic).
 
@@ -21,7 +42,7 @@
 
 **Abhi hua:** **DOCS-FULL 1/6 (Discharge) DONE** `1ad9bc74` — Complete File ab FULL standalone-level Discharge Summary chapta hai: naya shared `FullDischargeSection.jsx` (model-key-first chains: medicationsOnDischarge[].medicineName, historyOfPresentIllness, significantFindings, emergencyWarnings, woundCareInstructions, totalDaysAdmitted…), receipt me `dischargeSummaryDoc` (poora lean doc), normalizeData me `discharge.full`; Narrative full doc hone par shared section, warna purana digest byte-identical. **Latent bug bhi mila:** purana digest summary/advice jaise keys padhta tha jo model me HAIN HI NAHI — real docs ka digest hamesha lagbhag khali chapta tha. Browser 12/12 markers ZZ fixture se verified (cleaned). **BACHA (task #43):** Lab Report, MAR slot-grid, Doctor Order Sheet, Consent, Diet Plan ke full sections (same FullXxxSection pattern: receipt-passthrough → normalize `.full` → shared component → Narrative splice) + other-theme embeds; Lab ke liye receipt me labReports tests[]/sample-meta/verifier bhi chahiye (backend select check karna).
 
-**AGLA (owner decisions 2026-07-12):** **(1) DOCS-FULL** — Complete File ke andar 6 formal docs (MAR/DoctorOrderSheet/DischargeSummary/LabReport/Consent/DietPlan) ki compact summaries ko FULL detail me upgrade karo (standalones bhi full rahenge, shared renderers). **(3) PCS-P1** — ICD-10-PCS procedure coding (ICD-10 diagnosis wale pattern pe), NAMASTE skip. **(4) SHOW_OUTSIDE_UPLOAD OFF hi rahega** — closed, koi kaam nahi.
+**~~AGLA (owner decisions 2026-07-12)~~ — SAB DONE:** (1) DOCS-FULL ✅ (#43 + #122), (2) NOTE-WRAP ✅ (#120), (3) PCS-P1 ✅ (#121), (4) SHOW_OUTSIDE_UPLOAD OFF ✅ closed. + RE-AUDIT ✅ (11 fixes `0fc29e2d`). Live pending list upar "📌 PENDING WORK" me.
 
 **Abhi hua:** **NOTE-WRAP DONE (decision 2)** — on-screen note list-wrapper ab HALKA: per-type colored accent (left rail, time pill/dot, hover tint, type chip) neutral slate pe (`--dnp-accent #64748b` / `--dnp-tint #f1f5f9`), type chip ka icon + colors gone (grey chip, type NAAM rehta hai), **Signed/Draft badge + CRITICAL ring + date/time rail apne colors ke saath intact**. Surfaces: TimelineNoteCard (DoctorNotesPage timeline — browser-verified: border #e2e8f0, 0 icons, grey chip, ✓ SIGNED green) + NursingNotes standalone timeline (NOTE: wo view R7hr-318 se `{false &&}` DEAD hai — live nurse list = NursePatientPanel → PatientPanelTabs `NoteCardEmbed`, jo pehle se chrome-less hai; dead view me bhi edits consistent rakhe). Print + Complete File untouched.
 
