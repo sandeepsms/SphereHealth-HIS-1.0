@@ -886,6 +886,57 @@ class AdmissionController {
     return res.json({ success: true, data: updated });
   });
 
+  // NABH COP.10/COP.11 (#131) — PATCH /api/admissions/:id/vulnerability
+  // Set / update the vulnerable-patient flags (rebuilds the special-care
+  // checklist, preserving ticked items) and/or tick checklist items.
+  //   body: { flags?: [String], notes?, checklistUpdates?: [{item, done}] }
+  updateVulnerability = handle(async (req, res) => {
+    const Admission = require("../../models/Patient/admissionModel");
+    const { buildSpecialCareChecklist, VULNERABILITY_FLAGS } = require("../../services/Patient/vulnerabilityChecklist");
+    const adm = await Admission.findById(req.params.id).select("vulnerability admissionNumber");
+    if (!adm) return res.status(404).json({ success: false, message: "Admission not found" });
+    const actor = req.user?.fullName || req.user?.employeeId || "Staff";
+    const b = req.body || {};
+    let touched = false;
+
+    if (Array.isArray(b.flags)) {
+      const bad = b.flags.filter((f) => !VULNERABILITY_FLAGS.includes(f));
+      if (bad.length) {
+        return res.status(400).json({ success: false, message: `Unknown vulnerability flag(s): ${bad.join(", ")}. Allowed: ${VULNERABILITY_FLAGS.join(", ")}` });
+      }
+      const prior = (adm.vulnerability?.specialCareChecklist || []).map((c) => (c.toObject ? c.toObject() : c));
+      adm.vulnerability = adm.vulnerability || {};
+      adm.vulnerability.flags = b.flags;
+      adm.vulnerability.identifiedAt = adm.vulnerability.identifiedAt || new Date();
+      adm.vulnerability.identifiedByName = adm.vulnerability.identifiedByName || actor;
+      if (b.notes !== undefined) adm.vulnerability.notes = b.notes;
+      adm.vulnerability.specialCareChecklist = buildSpecialCareChecklist(b.flags, prior);
+      touched = true;
+    } else if (b.notes !== undefined) {
+      adm.vulnerability = adm.vulnerability || {};
+      adm.vulnerability.notes = b.notes;
+      touched = true;
+    }
+
+    if (Array.isArray(b.checklistUpdates) && adm.vulnerability?.specialCareChecklist?.length) {
+      const wanted = new Map(b.checklistUpdates.map((u) => [u.item, !!u.done]));
+      for (const row of adm.vulnerability.specialCareChecklist) {
+        if (wanted.has(row.item)) {
+          row.done = wanted.get(row.item);
+          row.completedByName = row.done ? actor : "";
+          row.completedAt = row.done ? new Date() : null;
+        }
+      }
+      touched = true;
+    }
+
+    if (!touched) {
+      return res.status(400).json({ success: false, message: "Nothing to update — pass flags and/or checklistUpdates" });
+    }
+    await adm.save();
+    return res.json({ success: true, data: { admissionNumber: adm.admissionNumber, vulnerability: adm.vulnerability } });
+  });
+
   // R7hr(DC-P2) — POST /api/admissions/:id/convert-to-ipd
   // Day-care complication → overnight stay. Flips the SAME admission to
   // IPD (admissionType "Planned") so the episode/bed/bills continue —

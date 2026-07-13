@@ -164,6 +164,22 @@ const DischargeSummarySchema = new mongoose.Schema(
     // attending isn't flagged mustCosign.
     selfFinalizeAck: { type: Boolean, default: false },
 
+    // ── Finalize override evidence (NABH audit trail) ────────────
+    // These were written by the finalize controller but were NOT declared
+    // here — under Mongoose strict mode findOneAndUpdate silently dropped
+    // them, so the override justification never persisted. Declared now so
+    // the evidence travels with the (immutable) discharge record.
+    nursingHandoverOverride:       { type: Boolean, default: false },
+    nursingHandoverOverrideReason: { type: String, default: "" },
+    nursingHandoverOverrideAt:     { type: Date, default: null },
+    nursingHandoverOverrideBy:     { type: String, default: "" },
+    // NABH AAC.3 (#130) — mandatory-content gate override.
+    contentGateOverride:       { type: Boolean, default: false },
+    contentGateOverrideReason: { type: String, default: "" },
+    contentGateMissing:        { type: [String], default: [] },
+    contentGateOverrideAt:     { type: Date, default: null },
+    contentGateOverrideBy:     { type: String, default: "" },
+
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" },
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" },
 

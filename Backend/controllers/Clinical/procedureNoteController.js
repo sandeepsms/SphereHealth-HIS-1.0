@@ -212,15 +212,23 @@ exports.create = async (req, res, next) => {
           );
         }
         existing.procedureNoteId   = noteDoc._id;
-        existing.locked            = true;
-        existing.lockedAt          = new Date();
+        // NABH PSQ (#150) — gate the row lock on the WHO Sign-Out. If a
+        // checklist was started but Sign-Out isn't confirmed, leave the row
+        // Completed-but-unlocked so it stays editable until the checklist is
+        // closed. A row that never used the checklist (legacy / non-surgical)
+        // locks as before — backward compatible.
+        const checklistStarted = !!(existing.whoChecklist?.signIn?.done || existing.whoChecklist?.timeOut?.done || existing.whoChecklist?.signOut?.done);
+        const signOutDone = !!existing.whoChecklist?.signOut?.done;
+        const canLock = !checklistStarted || signOutDone;
+        existing.locked            = canLock;
+        existing.lockedAt          = canLock ? new Date() : null;
         existing.auditTrail.push({
           action: "COMPLETED",
           at:     new Date(),
           byUserId: _asObjectId(me._id),
           byName:   me.fullName,
           byRole:   me.role,
-          notes:   `transition Scheduled→Completed via procedureNoteId=${noteDoc._id}`,
+          notes:   `transition Scheduled→Completed via procedureNoteId=${noteDoc._id}${canLock ? "" : " (NOT locked — WHO Sign-Out pending)"}`,
         });
         await existing.save();
       } else {

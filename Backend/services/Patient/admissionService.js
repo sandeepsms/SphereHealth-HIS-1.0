@@ -247,6 +247,21 @@ class AdmissionService {
             erType:        data.erType || "",
             modeOfArrival: data.modeOfArrival || "",
             broughtBy:     data.broughtBy || "",
+            // NABH COP.10/11 — vulnerable-patient flags at admission auto-build
+            // the special-care checklist so nursing can action + evidence it.
+            vulnerability: (() => {
+              const flags = Array.isArray(data.vulnerabilityFlags) ? data.vulnerabilityFlags
+                : (data.vulnerability && Array.isArray(data.vulnerability.flags) ? data.vulnerability.flags : []);
+              if (!flags.length) return { flags: [], specialCareChecklist: [] };
+              const { buildSpecialCareChecklist } = require("./vulnerabilityChecklist");
+              return {
+                flags,
+                identifiedAt: new Date(),
+                identifiedByName: data.vulnerabilityIdentifiedBy || data.admittedByName || "",
+                notes: data.vulnerability?.notes || "",
+                specialCareChecklist: buildSpecialCareChecklist(flags),
+              };
+            })(),
             status: "Active",
           },
         ],

@@ -301,6 +301,53 @@ exports.reactionBloodTransfusion = async (req, res) => {
   } catch (e) { sendErr(res, e); }
 };
 
+// ── NABH PSQ (#150) — WHO Surgical Safety Checklist ────────────────────────
+// PATCH /registers/nabh/ot-register/:id/who-checklist — record one phase.
+// body: { phase: "signIn"|"timeOut"|"signOut", byName?, ...item booleans }.
+// Completing Sign-Out sets whoChecklistComplete + auto-locks the OT row.
+const _WHO_ITEMS = {
+  signIn: ["patientIdentityConfirmed", "siteMarked", "anaesthesiaSafetyChecked", "pulseOximeterOn", "knownAllergyReviewed", "difficultAirwayRisk", "aspirationRisk"],
+  timeOut: ["teamIntroduced", "patientSiteProcedureConfirmed", "antibioticProphylaxisGiven", "anticipatedCriticalEvents", "imagingDisplayed"],
+  signOut: ["procedureNameConfirmed", "instrumentSpongeNeedleCountCorrect", "specimenLabelled", "equipmentIssuesNoted"],
+};
+exports.recordWhoChecklist = async (req, res) => {
+  try {
+    const row = await OTRegister.findById(req.params.id);
+    if (!row) return res.status(404).json({ success: false, message: "OT record not found" });
+    if (row.locked) return res.status(409).json({ success: false, code: "OT_LOCKED", message: "OT record is locked" });
+    const b = req.body || {};
+    const phase = b.phase;
+    if (!_WHO_ITEMS[phase]) {
+      return res.status(400).json({ success: false, message: "phase must be signIn | timeOut | signOut" });
+    }
+    const u = req.user || {};
+    row.whoChecklist = row.whoChecklist || {};
+    const ph = row.whoChecklist[phase] || {};
+    for (const item of _WHO_ITEMS[phase]) if (b[item] !== undefined) ph[item] = !!b[item];
+    if (phase === "signOut" && b.keyRecoveryConcerns !== undefined) ph.keyRecoveryConcerns = String(b.keyRecoveryConcerns);
+    ph.done = b.done !== undefined ? !!b.done : true;
+    ph.at = new Date();
+    ph.byName = b.byName || u.fullName || u.name || "";
+    row.whoChecklist[phase] = ph;
+    row.markModified("whoChecklist");
+
+    const complete = !!(row.whoChecklist.signIn?.done && row.whoChecklist.timeOut?.done && row.whoChecklist.signOut?.done);
+    row.whoChecklistComplete = complete;
+    // Sign-Out closes the loop → the row may now lock (if the surgery is done).
+    if (complete && row.status === "Completed" && !row.locked) {
+      row.locked = true;
+      row.lockedAt = new Date();
+    }
+    row.auditTrail.push({
+      action: "AMENDED", at: new Date(),
+      byUserId: u._id || null, byName: ph.byName, byRole: u.role || "",
+      notes: `WHO checklist ${phase} recorded${complete ? " — checklist COMPLETE" : ""}`,
+    });
+    await row.save();
+    return res.json({ success: true, data: { _id: row._id, otNumber: row.otNumber, whoChecklist: row.whoChecklist, whoChecklistComplete: row.whoChecklistComplete, locked: row.locked } });
+  } catch (e) { sendErr(res, e); }
+};
+
 // ─────────────────────────────────────────────────────────────────────────
 // Pain / Fall-Risk / Pressure-Ulcer Registers (R7bp — auto-popped)
 // ─────────────────────────────────────────────────────────────────────────

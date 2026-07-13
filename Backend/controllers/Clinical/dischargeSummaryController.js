@@ -323,6 +323,54 @@ class DischargeSummaryController {
       }
     }
 
+    // ── Mandatory-content gate (NABH AAC.3 / #130) ────────────────
+    // A discharge summary must carry the AAC-mandated content before it
+    // locks: a final diagnosis, discharge medications, and follow-up
+    // advice. Pre-fix a summary could finalize (and become immutable) with
+    // blank diagnosis / no meds / no follow-up — the printable then showed
+    // em-dashes for mandated fields. Death/Expired and LAMA/DAMA/Absconded
+    // cases legitimately lack discharge meds + follow-up (patient left /
+    // deceased) so those two requirements are waived for them; the final
+    // diagnosis (or cause of death, gated above) is always required.
+    // Overridable via { allowOverride, overrideReason } like the gates above.
+    if (draftSummary) {
+      const dType = draftSummary.dischargeType || "";
+      const cond = draftSummary.conditionOnDischarge || "";
+      const isDeathCase = dType === "Death" || cond === "Expired";
+      const leftAgainstAdvice = ["LAMA", "DAMA", "Absconded"].includes(dType);
+      const missing = [];
+      if (!String(draftSummary.finalDiagnosis || "").trim() &&
+          !(Array.isArray(draftSummary.codedDiagnoses) && draftSummary.codedDiagnoses.length)) {
+        missing.push("final diagnosis");
+      }
+      if (!isDeathCase && !leftAgainstAdvice) {
+        if (!(Array.isArray(draftSummary.medicationsOnDischarge) && draftSummary.medicationsOnDischarge.length)) {
+          missing.push("discharge medications");
+        }
+        const hasFollowUp = !!(String(draftSummary.followUpInstructions || "").trim() ||
+          draftSummary.followUpDate || String(draftSummary.followUpDoctor || "").trim());
+        if (!hasFollowUp) missing.push("follow-up advice");
+      }
+      if (missing.length && !allowOverride) {
+        return res.status(409).json({
+          success: false,
+          code: "DISCHARGE_CONTENT_INCOMPLETE",
+          message: `Cannot finalize — the discharge summary is missing NABH-mandated content: ${missing.join(", ")}. Complete it, OR pass { allowOverride: true, overrideReason: "..." } with justification.`,
+          missing,
+        });
+      }
+      if (missing.length && allowOverride && !String(overrideReason || "").trim()) {
+        return res.status(400).json({
+          success: false,
+          code: "OVERRIDE_REASON_REQUIRED",
+          message: "Override requires a documented reason for the incomplete discharge content.",
+        });
+      }
+      // Stash for the CAS-update override-evidence block below.
+      req._contentGateOverridden = missing.length > 0 && allowOverride;
+      req._contentGateMissing = missing;
+    }
+
     // runValidators added per audit C-07 — without it, the status flip
     // and the date/condition writes bypass the schema's enum/format
     // checks; a future bad value (e.g. status: "FINAL_GREATEST") would
@@ -347,6 +395,15 @@ class DischargeSummaryController {
           nursingHandoverOverrideReason: String(overrideReason || "").trim(),
           nursingHandoverOverrideAt: new Date(),
           nursingHandoverOverrideBy: finalizedByName || req.user?.fullName || "Doctor",
+        } : {}),
+        // NABH AAC.3 (#130) — when the mandatory-content gate was bypassed,
+        // stamp WHAT was missing + WHY so the auditor sees the justification.
+        ...(req._contentGateOverridden ? {
+          contentGateOverride: true,
+          contentGateOverrideReason: String(overrideReason || "").trim(),
+          contentGateMissing: req._contentGateMissing || [],
+          contentGateOverrideAt: new Date(),
+          contentGateOverrideBy: finalizedByName || req.user?.fullName || "Doctor",
         } : {}),
       },
       { new: true, runValidators: true }

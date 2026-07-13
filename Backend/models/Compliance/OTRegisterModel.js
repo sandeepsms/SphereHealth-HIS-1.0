@@ -85,6 +85,46 @@ const OTRegisterSchema = new Schema({
   bloodLossMl:        { type: Number, default: null },
   specimensSent:      { type: [String], default: [] },        // histopath / culture / frozen
 
+  // ── WHO Surgical Safety Checklist (NABH PSQ / #150) ──
+  // Three structured phases. `whoChecklistComplete` is derived (all three
+  // phases done) and gates the OT row lock — an unlocked row means the
+  // Sign-Out was never confirmed, which a surveyor treats as a red flag.
+  whoChecklist: {
+    signIn: {
+      done: { type: Boolean, default: false },
+      at: { type: Date, default: null },
+      byName: { type: String, default: "" },
+      patientIdentityConfirmed:  { type: Boolean, default: false },
+      siteMarked:                { type: Boolean, default: false },
+      anaesthesiaSafetyChecked:  { type: Boolean, default: false },
+      pulseOximeterOn:           { type: Boolean, default: false },
+      knownAllergyReviewed:      { type: Boolean, default: false },
+      difficultAirwayRisk:       { type: Boolean, default: false },
+      aspirationRisk:            { type: Boolean, default: false },
+    },
+    timeOut: {
+      done: { type: Boolean, default: false },
+      at: { type: Date, default: null },
+      byName: { type: String, default: "" },
+      teamIntroduced:               { type: Boolean, default: false },
+      patientSiteProcedureConfirmed:{ type: Boolean, default: false },
+      antibioticProphylaxisGiven:   { type: Boolean, default: false },
+      anticipatedCriticalEvents:    { type: Boolean, default: false },
+      imagingDisplayed:             { type: Boolean, default: false },
+    },
+    signOut: {
+      done: { type: Boolean, default: false },
+      at: { type: Date, default: null },
+      byName: { type: String, default: "" },
+      procedureNameConfirmed:          { type: Boolean, default: false },
+      instrumentSpongeNeedleCountCorrect: { type: Boolean, default: false },
+      specimenLabelled:                { type: Boolean, default: false },
+      equipmentIssuesNoted:            { type: Boolean, default: false },
+      keyRecoveryConcerns:             { type: String, default: "" },
+    },
+  },
+  whoChecklistComplete: { type: Boolean, default: false, index: true },
+
   // ── Status / lifecycle ──
   status: {
     type: String,

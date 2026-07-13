@@ -47,6 +47,8 @@ router.get("/dvt",             requireAction("compliance.read"), ctrl.listDVT);
 // All gated on compliance.read (Admin + Doctor + Nurse + MRD) to match
 // the surveyor-access policy used by the other NABH register endpoints.
 router.get("/ot-register",            requireAction("compliance.read"), ctrl.listOT);
+// NABH PSQ — WHO Surgical Safety Checklist phase capture (Sign-In/Time-Out/Sign-Out).
+router.patch("/ot-register/:id/who-checklist", requireAction("compliance.nabh.write"), ctrl.recordWhoChecklist);
 router.get("/asa-register",           requireAction("compliance.read"), ctrl.listASA);
 router.get("/readmission-register",   requireAction("compliance.read"), ctrl.listReadmission);
 router.get("/mortality-register",     requireAction("compliance.read"), ctrl.listMortality);
