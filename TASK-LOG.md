@@ -3,7 +3,7 @@
 > **Ye file kya hai:** Har session ka running task log. Naya session shuru karo toh **sirf ye file padho** — 2 minute me pata chal jayega kya chal raha tha, kaha se pick karna hai, aage kya karna hai.
 > **Rule:** Har work-session ke END pe ye file update karke commit karni hai.
 
-**Last updated:** 2026-07-13 · **Branch:** `claude/multi-hospital-deploy` · **Tree:** clean ✅ · **Build:** green ✅ · **Head:** `2e564241` · **Pending:** **SAARE 25 Minor + SAARE 10 Major NABH/NABL DONE + ABDM integration framework DONE (disabled by default).** Ab ABDM sirf sandbox-creds + milestone certification ka wait karta hai (engineering complete). E2E **136/136** hold.
+**Last updated:** 2026-07-13 · **Branch:** `claude/multi-hospital-deploy` · **Tree:** clean ✅ · **Build:** green ✅ · **Head:** `5c1129f5` · **Pending:** **SAARE 25 Minor + SAARE 10 Major NABH/NABL DONE + ABDM framework DONE (disabled) + FULL-SCALE CAPABILITY AUDIT DONE.** Audit ne 19 confirmed defect nikale (report `SYSTEM-CAPABILITY-AUDIT.md`) — 1 HIGH turant fix+verify (ER Death/DAMA register), baaki 18 owner-priority pe pending. E2E **136/136** hold.
 
 ---
 
@@ -37,7 +37,14 @@
 
 ---
 
-**Abhi hua (2026-07-13, part 3):** **ABDM INTEGRATION FRAMEWORK DONE + VERIFIED** (owner: "ab ABDM integration framework ready kro") — 4 sub-tasks, discovery 2 parallel Explore-agents se, feature-flagged OFF (`ABDM_ENABLED` unset → stock HIS pe zero asar), commit `2e564241`, doc `ABDM-INTEGRATION.md`. Hospital ab ABDM **HIP** ban sakta hai:
+**Abhi hua (2026-07-13, part 4):** **FULL-SCALE SYSTEM CAPABILITY & WORKING AUDIT DONE** (owner: "do all system working and capabilities audit for full scale from receptionist work to final discharge and billing all aspects") — commit `5c1129f5`, report `SYSTEM-CAPABILITY-AUDIT.md` + interactive visual audit-board artifact (claude.ai).
+- **Method:** 16 parallel auditor-agents (ek per subsystem) real models/services/controllers/routes padh ke `file:line` evidence ke saath maturity+strengths+gaps+risks report kiye → cross-cutting synthesis. Top findings code-read se re-verify; sabse HIGH compliance bug live-probe se verify.
+- **Verdict:** **12/15 subsystem Strong, 3 Partial (Medication, ABDM, Deployment/Ops), 0 weak.** Core clinical+revenue loop **production-ready** (E2E 136/136), lekin **100+ hospital scale pe turnkey NAHI** jab tak 3 go-live blocker close na hon: (1) in-container backup TOOTA (mongodump Alpine image me nahi) — sabse critical; (2) point-of-care safety controls inert (LASA/allergy warnings UI pe nahi, HAM two-nurse charting primary UI se fail, WHO checklist non-gating); (3) ABDM live-interop + audit tamper-proofing cert-ready nahi.
+- **19 confirmed defect** severity-ranked (report §7): 1 Critical (D2 backup), 4 High (D1 fixed, D3 HAM witness, D4 mortality-register field bug, D5 ABDM GCM IV reuse), 11 Medium, 2 Low.
+- **FIX (turant, standing "security/compliance turant fix" directive):** **D1 — ER register Death/DAMA enum mismatch** [HIGH/compliance]. `emitEmergencyDisposition` visit-disposition "Expired"/"Left Against Medical Advice" ko raw register pe likhta tha (register enum sirf "Death"/"DAMA") → Mongoose enum ValidationError → catch me swallow → **NABH Emergency Register do sabse legally-sensitive exit (Death, LAMA/DAMA) ke liye kabhi update/lock nahi hota tha.** Ab visit→register map (Expired→Death, LAMA→DAMA, DOA) + non-terminal ("Pending") pe safe no-op. **Verify: `Backend/scripts/_probe_er_disposition_fix.js` 8/8** (real register model + Mongo).
+- **BAAKI 18 defect OPEN — owner-priority pe pending** (report §8 remediation sequence). Sprint-0 blockers: D2 (backup image), D3 (HAM witness name accept), D4 (`summary.patient` field). Yeh sab AUDIT findings hain — owner decide kare kaunse ab fix karein.
+
+**Pichla arc (2026-07-13, part 3):** **ABDM INTEGRATION FRAMEWORK DONE + VERIFIED** (owner: "ab ABDM integration framework ready kro") — 4 sub-tasks, discovery 2 parallel Explore-agents se, feature-flagged OFF (`ABDM_ENABLED` unset → stock HIS pe zero asar), commit `2e564241`, doc `ABDM-INTEGRATION.md`. Hospital ab ABDM **HIP** ban sakta hai:
 - **Config+identity:** `config/abdm.js` (env, disabled default, requireAbdmEnabled/publicConfig). Patient pe `abhaNumber/abhaAddress/abhaId/abhaLinked/abhaKycVerified` (`abhaId` wahi field jo fhirExporter pehle se padhta tha). `abdm.read/write` perms (Admin) + FE mirror.
 - **Models:** `AbdmCareContext` (encounter↔ABHA), `AbdmConsentArtefact` (M3 scope+validity), `AbdmTransaction` (gateway journal).
 - **Crypto (real):** `abdmCrypto.js` X25519 ECDH → HKDF-SHA256 → AES-256-GCM (HIE end-to-end) — round-trip + GCM tamper-detect verified, Node native crypto, no deps.
