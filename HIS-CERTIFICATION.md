@@ -15,7 +15,7 @@
 |---|:---:|---|
 | Statutory (GST/IT-Rule-46 · D&C/NDPS pharmacy · NABH/NABL support) | **83% 🟢** | Strong — enforced, not just modelled |
 | Security & DPDP technical controls (ISO 27001 / VAPT base) | **72% 🟢** | Genuinely strong auth/RBAC/audit; real gaps in encryption-at-rest + DPDP rights |
-| ABDM / FHIR interoperability (M1/M2/M3) | **18% 🔴** | FHIR *export* foundation only; **zero gateway integration** |
+| ABDM / FHIR interoperability (M1/M2/M3) | **~60% 🟡** | Framework built 2026-07-13 (`2e564241`) — HIP callbacks, ABHA link, consent + care-context models, X25519/AES-GCM HIE, FHIR R4 document bundle; disabled by default. Needs sandbox creds + milestone certification |
 
 - **Fastest path to first sales (weeks, low cost):** VAPT report + DPDP privacy pack + India-region hosting. Sellable to small/mid hospitals immediately.
 - **Biggest single build gap:** ABDM live-gateway integration (needed for govt/PM-JAY empanelment).
@@ -100,7 +100,11 @@ A pure HIS/EMR (billing, records, workflow, advisory) is **not a medical device*
 - 🟡 PHI sometimes in URL/query params; 2FA present but not enforced as step-up on high-risk actions.
 - ⚪ **ISO 27001 + VAPT are external deliverables** — commission separately (code readiness only shortens them).
 
-### ABDM / FHIR interoperability — **18% 🔴** (weakest — mostly missing)
+### ABDM / FHIR interoperability — **~60% 🟡** (framework built 2026-07-13, `2e564241` — see ABDM-INTEGRATION.md)
+
+**Framework now in place (feature-flagged OFF):** `config/abdm.js` + `models/Abdm/*` (care context, consent artefact, transaction) + Patient ABHA fields + `services/Abdm/*` (X25519→HKDF→AES-256-GCM HIE crypto, gateway client with session/signed-request/on-* helpers, FHIR R4 **document** bundle builder with Composition, link + data-flow services) + HMAC callback middleware + pre-JWT gateway callback routes (`/api/abdm/v0.5/*`) + admin ops (`/api/abdm/status|link-abha|care-contexts|fhir-preview`). Verified: crypto round-trip + full HIP→HIU encrypted data-flow round-trip; E2E 136/136 with the flag off. **Remaining for certification:** align crypto to the certified ABDM library version, swap HMAC→JWS if the milestone needs it, enrich the FHIR bundle (consume DischargeSummary + emit lab Observations/SNOMED), HFR/HPR onboarding, and run the NHA-sandbox M1–M4 milestone suite.
+
+**Original assessment (pre-framework) — 18% 🔴:**
 
 **What exists:** a real server-side FHIR bundle exporter — `services/Clinical/fhirExporter.js` — emitting Organization/Patient/Encounter/Condition/Observation/MedicationRequest/DiagnosticReport/Consent, with LOINC-coded vitals (`:134-163`) + ICD-10 conditions (`:120-125`), and a disclosure-audit log on release.
 
