@@ -31,11 +31,13 @@ const SECTION_TITLES = {
   Condition:                "Diagnoses",
   AllergyIntolerance:       "Allergies",
   MedicationRequest:        "Medications",
+  MedicationStatement:      "Medications",
   MedicationAdministration: "Medication Administration",
   DiagnosticReport:         "Investigations",
-  Observation:              "Observations / Vitals",
+  Observation:              "Observations (Vitals & Lab Results)",
   DocumentReference:        "Clinical Notes / Documents",
   Procedure:                "Procedures",
+  CarePlan:                 "Follow-up / Care Plan",
   Consent:                  "Consent",
 };
 

@@ -70,9 +70,12 @@ node index.js
    the ABDM `Encryption/Decryption` reference for the target milestone.
 2. **Swap the callback signature scheme** if the milestone uses detached JWS
    (JWKS) instead of a body HMAC (`middleware/abdmSignature.js`).
-3. **Enrich the FHIR bundle** — consume `DischargeSummary` (currently the
-   exporter fetches but drops it) and emit lab-result `Observation`s with LOINC
-   + SNOMED on Conditions (all stored, not yet exported).
+3. ~~**Enrich the FHIR bundle**~~ — ✅ **DONE 2026-07-13.** The exporter now
+   emits per-parameter lab `Observation`s (LOINC + value + reference range +
+   H/L/critical interpretation, referenced by the `DiagnosticReport`) and the
+   `DischargeSummary` (ICD-10 diagnoses, discharge `MedicationRequest`s,
+   ICD-10-PCS `Procedure`s, and a follow-up `CarePlan`). Still open: emit SNOMED
+   on doctor-note Conditions (stored in `DoctorNotes.snomedCode`).
 4. **HFR/HPR onboarding** — register the facility (HFR id → `HospitalSettings.hfrId`)
    and link doctors' HPR ids (`User.doctorDetails.hprId`).
 5. Run the ABDM Sandbox M1 (discovery) → M2 (link) → M3 (consent) → M4 (data)

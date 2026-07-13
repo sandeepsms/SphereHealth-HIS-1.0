@@ -27,18 +27,25 @@ async function assembleFile(uhid, admissionId) {
     Patient.findOne({ UHID: UH }).lean(),
     admissionId ? Admission.findById(admissionId).lean() : Admission.findOne({ UHID: UH }).sort({ admissionDate: -1 }).lean(),
   ]);
-  const admFilter = currentAdmission ? { admissionId: currentAdmission._id } : { UHID: UH };
-  const [doctorNotes, doctorOrders, investigations] = await Promise.all([
-    DoctorNotes.find(admFilter).limit(500).lean().catch(() => []),
-    DoctorOrder.find(admFilter).limit(500).lean().catch(() => []),
+  const notesFilter = currentAdmission ? { admissionId: currentAdmission._id } : { patientUHID: UH };
+  const [doctorNotes, doctorOrders, investigations, dischargeSummary] = await Promise.all([
+    DoctorNotes.find(notesFilter).limit(500).lean().catch(() => []),
+    DoctorOrder.find({ UHID: UH }).limit(500).lean().catch(() => []),
     (async () => {
       try {
         const InvestigationOrder = require("../../models/Investigation/InvestigationOrderModel");
-        return await InvestigationOrder.find(currentAdmission ? { admissionId: currentAdmission._id } : { UHID: UH }).limit(500).lean();
+        return await InvestigationOrder.find({ UHID: UH }).limit(500).lean();
+      } catch { return []; }
+    })(),
+    (async () => {
+      try {
+        const DischargeSummary = require("../../models/Clinical/DischargeSummaryModel");
+        const q = currentAdmission ? { admissionId: currentAdmission._id } : { UHID: UH };
+        return await DischargeSummary.find(q).sort({ createdAt: -1 }).limit(10).lean();
       } catch { return []; }
     })(),
   ]);
-  return { patient, currentAdmission, doctorNotes, doctorOrders, investigations, vitals: [], consents: [] };
+  return { patient, currentAdmission, doctorNotes, doctorOrders, investigations, dischargeSummary, vitals: [], consents: [] };
 }
 
 // Build the FHIR document bundle for one care context (+ hospital identity).
