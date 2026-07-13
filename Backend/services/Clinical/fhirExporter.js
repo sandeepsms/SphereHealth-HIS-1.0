@@ -107,9 +107,16 @@ function buildPractitioner(name, regNo, hprId) {
 }
 
 // ── Condition (diagnosis) ────────────────────────────────────
+// The diagnosis carries BOTH terminologies when the note has them: ICD-10
+// (billing/classification) and SNOMED CT (clinical). A FHIR CodeableConcept
+// holds multiple codings for the same concept, so both are emitted side by
+// side — SNOMED was stored on the note but never exported.
 function buildCondition(note, patientUHID, encounterId) {
   const dx = note.finalDiagnosis || note.workingDiagnosis || note.provisionalDiagnosis;
   if (!dx) return null;
+  const coding = [];
+  if (note.icd10Code) coding.push({ system: "http://hl7.org/fhir/sid/icd-10", code: String(note.icd10Code), display: note.icd10Description || dx });
+  if (note.snomedCode) coding.push({ system: "http://snomed.info/sct", code: String(note.snomedCode), display: note.snomedDisplay || dx });
   return {
     resourceType: "Condition",
     id: id("condition", `${note._id}-dx`),
@@ -117,12 +124,7 @@ function buildCondition(note, patientUHID, encounterId) {
       system: "http://terminology.hl7.org/CodeSystem/condition-clinical",
       code: "active",
     }] },
-    code: codeable(
-      dx,
-      note.icd10Code ? "http://hl7.org/fhir/sid/icd-10" : undefined,
-      note.icd10Code || undefined,
-      note.icd10Description || dx,
-    ),
+    code: { text: dx, ...(coding.length ? { coding } : {}) },
     subject: ref("Patient", patientUHID),
     encounter: encounterId ? { reference: `Encounter/${encounterId}` } : undefined,
     recordedDate: isoOrNull(note.visitDate || note.createdAt),

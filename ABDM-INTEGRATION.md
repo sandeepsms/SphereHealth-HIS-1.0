@@ -74,8 +74,9 @@ node index.js
    emits per-parameter lab `Observation`s (LOINC + value + reference range +
    H/L/critical interpretation, referenced by the `DiagnosticReport`) and the
    `DischargeSummary` (ICD-10 diagnoses, discharge `MedicationRequest`s,
-   ICD-10-PCS `Procedure`s, and a follow-up `CarePlan`). Still open: emit SNOMED
-   on doctor-note Conditions (stored in `DoctorNotes.snomedCode`).
+   ICD-10-PCS `Procedure`s, and a follow-up `CarePlan`). Doctor-note Conditions
+   now carry **both** ICD-10 and SNOMED CT codings when present. FHIR enrichment
+   complete.
 4. **HFR/HPR onboarding** — register the facility (HFR id → `HospitalSettings.hfrId`)
    and link doctors' HPR ids (`User.doctorDetails.hprId`).
 5. Run the ABDM Sandbox M1 (discovery) → M2 (link) → M3 (consent) → M4 (data)
