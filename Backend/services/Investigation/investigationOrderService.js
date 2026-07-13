@@ -298,11 +298,37 @@ class InvestigationOrderService {
     if (order.orderStatus === "CANCELLED")
       throw new Error("Cannot enter results for cancelled order");
 
+    // NABL 5.4 — resolve patient age + sex once so per-parameter reference
+    // intervals can be pulled from the InvestigationMaster when the lab tech
+    // didn't hand-type bounds. Best-effort: absence just skips master lookup.
+    let patientAgeYears = null, patientSex = null;
+    try {
+      if (order.patientId) {
+        const Patient = require("../../models/Patient/patientModel");
+        const p = await Patient.findById(order.patientId).select("gender dateOfBirth age").lean();
+        if (p) {
+          patientSex = p.gender || null;
+          if (p.dateOfBirth) {
+            const ms = Date.now() - new Date(p.dateOfBirth).getTime();
+            patientAgeYears = ms > 0 ? Math.floor(ms / (365.25 * 24 * 3600 * 1000)) : null;
+          }
+          if (patientAgeYears == null && Number.isFinite(Number(p.age))) patientAgeYears = Number(p.age);
+        }
+      }
+    } catch (e) { /* demographics optional — master fallback simply won't fire */ }
+
     const now = new Date();
     const criticalHits = []; // { item, r, severity } → auto-alert after save
     for (const { itemId, results, interpretation, analyser, analyserCalibratedOn } of itemResults) {
       const item = order.items.id(itemId);
       if (!item) continue;
+      // Load this test's parameter master once (for age/sex ref-range fallback).
+      let _master = null;
+      try {
+        if (item.investigationId) {
+          _master = await InvestigationMaster.findById(item.investigationId).select("parameters").lean();
+        }
+      } catch (e) { _master = null; }
       if (analyser) item.analyser = String(analyser).trim(); // NABL — drives the QC-release gate at verify
       if (analyserCalibratedOn) item.analyserCalibratedOn = new Date(analyserCalibratedOn); // NABL 7.3.3
       // NABL 7.2.6 — a REJECTED sample cannot carry results; recollect first.
@@ -317,6 +343,22 @@ class InvestigationOrderService {
         err.code = "RESULT_VERIFIED_LOCKED"; err.status = 409; throw err;
       }
       const rows = (results || []).map((r) => {
+        // NABL 5.4 — if the tech didn't supply bounds, resolve the age/sex-
+        // stratified interval from the master and stamp it (never overrides
+        // hand-entered values). Enables server-side flagging without manual
+        // range typing when the master carries reference data.
+        const hasBounds = typeof r.refLow === "number" || typeof r.refHigh === "number";
+        if (!hasBounds && _master && r.parameterName) {
+          const rr = InvestigationMaster.resolveReferenceRange(_master, r.parameterName, patientAgeYears, patientSex);
+          if (rr) {
+            if (typeof rr.low === "number") r.refLow = rr.low;
+            if (typeof rr.high === "number") r.refHigh = rr.high;
+            if (typeof rr.criticalLow === "number" && r.criticalLow == null) r.criticalLow = rr.criticalLow;
+            if (typeof rr.criticalHigh === "number" && r.criticalHigh == null) r.criticalHigh = rr.criticalHigh;
+            if (!r.unit && rr.unit) r.unit = rr.unit;
+            if (!r.normalRange && rr.text) r.normalRange = rr.text;
+          }
+        }
         const c = _classifyResult(r);
         r.flag = c.flag;
         r.isAbnormal = c.isAbnormal;

@@ -179,6 +179,8 @@ router.use("/nurse-notes",nurseRoutes);
 router.use("/nurse-staff", nurseStaffRoutes);
 router.use("/doctor-notes", doctorNotesRoutes);
 router.use("/doctor-orders", doctorOrderRoutes);
+// NABH MOM.4/MOM.5 — live Do-Not-Use abbreviation + LASA collision screen.
+router.use("/medication-safety", require("./Clinical/medicationSafetyRoutes"));
 
 router.use("/admissions", admissionRoutes);
 router.use("/bed-transfers", bedTransferRoutes);

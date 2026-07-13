@@ -219,6 +219,22 @@ const DoctorOrderSchema = new mongoose.Schema({
   twoNurseRequired:      { type: Boolean, default: false },       // derived from hamFlag
   highRisk:              { type: Boolean, default: false },
 
+  /* ── NABH MOM.4/MOM.5 — advisory medication-safety warnings ──
+     Auto-stamped on save for Medication orders: Do-Not-Use abbreviation
+     hits + LASA (look-alike/sound-alike) collisions. Advisory only — the
+     order is never blocked; the prescriber/pharmacist confirms. */
+  safetyWarnings: {
+    type: [{
+      _id: false,
+      type:      { type: String },   // DANGEROUS_ABBREVIATION | LASA
+      severity:  { type: String, default: "warning" },
+      message:   { type: String, default: "" },
+      token:     { type: String, default: "" },
+      tallMan:   { type: String, default: "" },
+    }],
+    default: [],
+  },
+
   orderDetails: {
     // Medication / IV Fluid / Blood fields
     // `dose` is `String` because real prescriptions write "500 mg", "1 unit",
@@ -624,6 +640,28 @@ DoctorOrderSchema.pre("save", function (next) {
       this.twoNurseRequired = this.hamFlag;
       this.highRisk = this.hamFlag;
       this.concentratedElectrolyte = CONCENTRATED_ELECTROLYTE_RE.test(name);
+    }
+  }
+
+  // 1b. NABH MOM.4/MOM.5 — advisory medication-safety scan (Do-Not-Use
+  //     abbreviations + LASA collisions). Re-runs when the drug/dose/route
+  //     text changes. Non-blocking: a scan failure must never abort the save.
+  if (this.orderType === "Medication" &&
+      (this.isNew || this.isModified("orderDetails"))) {
+    try {
+      const { screenMedication } = require("../../services/Clinical/medicationSafety");
+      const d = this.orderDetails || {};
+      const { warnings } = screenMedication({
+        medicineName: d.medicineName || d.displayName || "",
+        genericName:  d.genericName || "",
+        dose:         d.dose || "",
+        frequency:    d.frequency || "",
+        route:        d.route || "",
+        instructions: d.notes || this.notes || "",
+      });
+      this.safetyWarnings = warnings;
+    } catch (e) {
+      console.warn("[DoctorOrder] medication-safety scan failed:", e.message);
     }
   }
 
