@@ -170,19 +170,21 @@ Net across 15 stages: **11 Strong, 3 Partial, 0 weak**. The three Partials
 Ranked by severity. Each was verified by direct code reading; the ER register bug was also
 verified by a live integration probe (8/8) **and fixed in this pass**.
 
-> **Remediation status (updated 2026-07-13):** the **HIGH** ER bug (D1) and the **entire
-> MEDIUM tier — all 12 defects (D6–D16, D19)** — are now **FIXED, verified, and committed**
-> (`62a15f8c`): full E2E re-run **136/136** on the new code, four new routes live-smoked, the
-> D19 integrity plugin self-tested, and the FE vite build green. **Still open:** D2 (critical,
-> DR/backups), D3/D4/D5 (high), D17/D18 (low) — see §8.
+> **Remediation status (updated 2026-07-13):** **ALL 19 confirmed defects are now FIXED,
+> verified, and committed** across three passes — the HIGH ER bug D1 (`5c1129f5`), the entire
+> MEDIUM tier D6–D16/D19 (`62a15f8c`), and the LOW/CRITICAL/HIGH remainder D17/D18 + D2 + D3/D4/D5
+> (`37d68ba9`). Evidence: E2E **136/136** re-run on the new code at each pass, the D2 tool-free
+> backup engine ran in-process (154,807 docs, **no mongodump**), the D5 fix proven by a
+> distinct-IV round-trip probe **and the ABDM M1–M4 dry-run 10/10**, plus per-fix probes and a
+> green FE build. **Nothing open** from this audit.
 
 | # | Defect | Severity | Area | Status |
 |---|--------|----------|------|--------|
 | D1 | **ER register disposition enum mismatch** — visit `Expired`/`Left Against Medical Advice` written raw onto the register (enum only allows `Death`/`DAMA`) → save throws enum ValidationError, swallowed by the emitter catch → NABH Emergency Register never updated/locked for the two most legally-sensitive exits. | **HIGH** (compliance/data-loss) | ER / NABH AAC.4 | **✅ FIXED + verified 8/8** |
-| D2 | **In-container automated backup broken** — nightly cron shells out to `mongodump` absent from the Alpine image (nightly ENOENT); tool-free engine wired only to a Windows task. Fresh hospital has no working backup, no alert. | **CRITICAL** (DR) | Deployment/Ops | OPEN — go-live blocker |
-| D3 | **HAM two-nurse witness contract mismatch** — `/administer` does `User.findById(verifiedBy)` (ObjectId) but Treatment Chart UI sends a free-text nurse **name** → CastError/400; charting a HAM med as GIVEN from the primary UI fails. | **HIGH** (patient-safety) | Medication / IPSG.3 | OPEN |
-| D4 | **Mortality register not populated from discharge death** — finalize passes `patientId: summary.patientId` but the model field is `patient`, so `emitMortality` bails (needs `patient._id`); deaths discharged via summary never hit the COP.18 register. | **HIGH** (compliance) | Discharge / COP.18 | OPEN |
-| D5 | **ABDM GCM key+IV reuse across entries** — one HIP ephemeral key/IV reused for every entry in a multi-entry push, breaking AES-GCM confidentiality/authentication. | **HIGH** (crypto) | ABDM | OPEN *(ABDM off by default)* |
+| D2 | **In-container automated backup broken** — nightly cron shells out to `mongodump` absent from the Alpine image (nightly ENOENT); tool-free engine wired only to a Windows task. Fresh hospital has no working backup, no alert. | **CRITICAL** (DR) | Deployment/Ops | ✅ **FIXED** (37d68ba9) |
+| D3 | **HAM two-nurse witness contract mismatch** — `/administer` does `User.findById(verifiedBy)` (ObjectId) but Treatment Chart UI sends a free-text nurse **name** → CastError/400; charting a HAM med as GIVEN from the primary UI fails. | **HIGH** (patient-safety) | Medication / IPSG.3 | ✅ **FIXED** (37d68ba9) |
+| D4 | **Mortality register not populated from discharge death** — finalize passes `patientId: summary.patientId` but the model field is `patient`, so `emitMortality` bails (needs `patient._id`); deaths discharged via summary never hit the COP.18 register. | **HIGH** (compliance) | Discharge / COP.18 | ✅ **FIXED** (37d68ba9) |
+| D5 | **ABDM GCM key+IV reuse across entries** — one HIP ephemeral key/IV reused for every entry in a multi-entry push, breaking AES-GCM confidentiality/authentication. | **HIGH** (crypto) | ABDM | ✅ **FIXED** (37d68ba9) |
 | D6 | **IPD `/admissions/active` drops doctor scope** — controller sets `$or` for Doctor callers but the service never merges it, so any Doctor with `ipd.read` enumerates **all** active inpatients (PHI over-exposure). | **MEDIUM** (privacy) | IPD | ✅ **FIXED** (62a15f8c) |
 | D7 | **`mustCosign` never fires** — `createAdmission` does `User.findById(attendingDoctorId)` but that id is a `Doctor._id` → lookup misses → JR co-sign gate effectively always false. | **MEDIUM** (compliance SoD) | IPD / COP.7 | ✅ **FIXED** (62a15f8c) |
 | D8 | **OPD signed assessment not backend-immutable + field-wipe** — `saveOPDAssessment` is a plain `findOneAndUpdate` (a second POST silently overwrites a signed assessment), and its `pick(val,'')` helper defaults omitted fields to empty string (a partial save wipes stored exam/HOPI/OBG/diagnosis). Safe only because the FE currently posts full form state. | **MEDIUM** (medico-legal + data-integrity) | OPD | ✅ **FIXED** (62a15f8c) |
@@ -194,8 +196,8 @@ verified by a live integration probe (8/8) **and fixed in this pass**.
 | D14 | **Legal-hold has no setter** — the `legalHold` flag is declared and read by the retention scan but cannot be set anywhere → IMS.3 legal-hold cannot be applied to any record. | **MEDIUM** (compliance) | MRD / IMS.3 | ✅ **FIXED** (62a15f8c) |
 | D15 | **Reports device-day denominator capped at 50k** (`.limit(50000).lean()`) → truncates active devices on busy/long windows, understating device-days and **overstating** the NABH-reported HAI rate per 1000 device-days, with no warning when the cap hits. | **MEDIUM** (metric integrity) | Reports / HIC.5 | ✅ **FIXED** (62a15f8c) |
 | D16 | **Cron-failure retry never replayed** — scheduler records failures into `CronFailure` but nothing calls `dueRetries()`/`markRetrySuccess()` (only a `// TODO`); a missed daily accrual/GST tick stays missed until next fire. | **MEDIUM** (operational) | Ops | ✅ **FIXED** (62a15f8c) |
-| D17 | **ER register admission-link dropped** — `updateDisposition` passes `admissionLinkId: visit.admissionId`, but the ER visit field is `admission` (schema line 238) → `admissionId` is `undefined`, so `admissionLinkId` is never set for Admitted exits. | **LOW** (data-linkage) | ER | OPEN *(spotted directly this audit)* |
-| D18 | **Feedback CQI uses UTC, not IST** — feedback stats/list/cqi parse `new Date(from)` / `${to}T23:59:59.999Z` as UTC (unlike IST everywhere else) and skip validation → windows drift 5h30m, midnight-IST submissions misclassified. | **LOW** (timezone) | Reports | OPEN |
+| D17 | **ER register admission-link dropped** — `updateDisposition` passes `admissionLinkId: visit.admissionId`, but the ER visit field is `admission` (schema line 238) → `admissionId` is `undefined`, so `admissionLinkId` is never set for Admitted exits. | **LOW** (data-linkage) | ER | ✅ **FIXED** (37d68ba9) |
+| D18 | **Feedback CQI uses UTC, not IST** — feedback stats/list/cqi parse `new Date(from)` / `${to}T23:59:59.999Z` as UTC (unlike IST everywhere else) and skip validation → windows drift 5h30m, midnight-IST submissions misclassified. | **LOW** (timezone) | Reports | ✅ **FIXED** (37d68ba9) |
 | D19 | **NABH register documents not hash-chained** — only the PatientActivityLog is chained; sentinel/mortality/RCA/CSSD rows are editable via `.save()` with only a self-reported `auditTrail`, so a compliance.nabh.write holder can silently alter a surveyor-inspected register. | **MEDIUM** (audit tamper-evidence) | Compliance | ✅ **FIXED** (62a15f8c) |
 
 ### D1 — fix applied this audit
@@ -222,12 +224,15 @@ correctly no-ops (register stays `""`, unlocked).
 
 ## 8. Recommended remediation sequence
 
-**Sprint 0 — go-live blockers (before scaling past early adopters):**
-1. **D2** — bake `mongo-tools` into the image *or* schedule the tool-free backup engine from
-   `provision-hospital.sh`/compose; add a backup-failure alert (the single highest-value fix).
-2. **D3** — accept the free-text witness name (or resolve name→User) so HAM charting succeeds
-   from the primary nurse UI; add brand-name HAM coverage.
-3. **D4** — change the finalize emit to read `summary.patient` (not `summary.patientId`).
+**Sprint 0 — go-live blockers — ✅ DONE (`37d68ba9`):**
+1. **D2** — the tool-free EJSON backup engine now runs as the nightly in-process job (no
+   `mongodump`; verified 154,807 docs in-container), and a failed run is loud (CronFailure +
+   CRON_FAILED heartbeat). compose/provisioner/DEPLOY document the off-site knobs.
+2. **D3** — `/administer` (and the HAM infusion-rate handler) accept the free-text witness name
+   (ObjectId lookup guarded); the validator requires a witness only at `status==="given"`.
+3. **D4** — the finalize emits now read `summary.patient`, so a death discharge populates the
+   COP.18 Mortality Register and the notifiable/LAMA/ClinicalAudit emits regain the Patient FK.
+   *(Plus D5 [HIGH] ABDM GCM IV-reuse and D17/D18 [LOW] — the full remainder — also fixed in `37d68ba9`.)*
 
 **Sprint 1 — compliance & safety hardening — ✅ DONE (`62a15f8c`):**
 4. **D11** surface LASA/DNU/allergy warnings in the order/MAR UI · **D12** mount shift-handover

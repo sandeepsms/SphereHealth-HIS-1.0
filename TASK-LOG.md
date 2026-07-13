@@ -3,7 +3,7 @@
 > **Ye file kya hai:** Har session ka running task log. Naya session shuru karo toh **sirf ye file padho** — 2 minute me pata chal jayega kya chal raha tha, kaha se pick karna hai, aage kya karna hai.
 > **Rule:** Har work-session ke END pe ye file update karke commit karni hai.
 
-**Last updated:** 2026-07-13 · **Branch:** `claude/multi-hospital-deploy` · **Tree:** clean ✅ · **Build:** green ✅ (FE vite + E2E 136/136) · **Head:** `62a15f8c` · **Pending:** **CAPABILITY AUDIT DONE + D1 (HIGH) + SAARE 12 MEDIUM defect (D6–D16, D19) FIX+VERIFY+COMMIT (`62a15f8c`).** Bacha sirf owner-call: D2 (critical, container backup), D3/D4/D5 (high), D17/D18 (low). E2E **136/136** hold (new code pe re-run).
+**Last updated:** 2026-07-13 · **Branch:** `claude/multi-hospital-deploy` · **Tree:** clean ✅ · **Build:** green ✅ (E2E 136/136 + ABDM dry-run 10/10) · **Head:** `37d68ba9` · **Pending:** **CAPABILITY AUDIT + SAARE 19 CONFIRMED DEFECT FIX+VERIFY+COMMIT** — D1 (`5c1129f5`), 12 MEDIUM D6–D16/D19 (`62a15f8c`), baaki D17/D18+D2+D3/D4/D5 (`37d68ba9`). **Audit se ab kuch open nahi.** E2E **136/136** hold.
 
 ---
 
@@ -37,7 +37,16 @@
 
 ---
 
-**Abhi hua (2026-07-13, part 5):** **SAARE 12 MEDIUM AUDIT DEFECT FIX + VERIFY + COMMIT** (owner: "do all medium ones") — commit `62a15f8c`, 34 files (33 mod + 1 naya `utils/registerIntegrity.js`).
+**Abhi hua (2026-07-13, part 6):** **BAAKI SAARE 6 AUDIT DEFECT FIX + VERIFY + COMMIT** (owner: "first do low. then just after critical, then high") — commit `37d68ba9`, 12 files. Order LOW→CRITICAL→HIGH exactly jaisa owner ne kaha. Discovery ke liye 6-agent parallel Workflow (`his-remaining-defects-fixspec`), phir sequential apply + verify. **Audit se ab 0 defect open.**
+- **D17 [LOW]** ER register admission-link: `visit.admission` padho (field `admission` hai, `admissionId` nahi) → Admitted exits pe register admissionLinkId ab set hota hai.
+- **D18 [LOW]** feedback stats/list/cqi date-window: IST `parseHospitalDate` use (pehle UTC + no-validation → 5h30m drift, malformed dates chup-chaap accept).
+- **D2 [CRITICAL]** in-container backup: nightly cron `mongodump` shell-out karta tha jo Alpine image me hai hi nahi (chup-chaap nightly ENOENT). Tool-free EJSON engine (`scripts/backup/runBackup.js`) ko self-exec IIFE se `run()` export me refactor + nightly in-process job pe wire (koi external binary nahi); error ab swallow nahi hota → fail hone pe `CRON_FAILED` + `CronFailure` retry row. compose/provisioner/DEPLOY/.env me OFFLINE_DIR + off-site knobs. **Live-verify: in-process backup RAN — 154,807 docs, 185 colls, verified .shbak.gz, no mongodump.**
+- **D3 [HIGH]** HAM two-nurse witness: `/administer` (+ HAM infusion-rate handler) free-text nurse NAME pe `User.findById` karta tha → CastError/400 → primary nurse UI se HAM dose GIVEN chart nahi hota tha. Ab sirf valid ObjectId pe lookup; naam verbatim witness. Validator ab witness sirf `status==="given"` pe maangta hai (HOLD/REFUSED/MISSED pe nahi).
+- **D4 [HIGH]** mortality register: finalize emits `summary.patientId` padhte the par field `patient` hai → `emitMortality` undefined `_id` pe bail → COP.18 register death-discharge pe populate nahi hota tha. Sab finalize reads → `summary.patient` (mortality ab bharta hai; notifiable/LAMA/ClinicalAudit emits ko real Patient FK wapas mila).
+- **D5 [HIGH]** ABDM AES-GCM key+IV reuse: `encrypt` ab har message pe fresh random 96-bit IV use karta hai, blob prefix me (iv||ct||tag); `decrypt` usse padhta hai. Multi-entry push me har entry ka (key,IV) unique. **Self-consistent pair → ABDM dry-run 10/10 hold (koi dry-run edit nahi), ABDM waise bhi disabled-by-default.**
+- **Verify (sab pass):** fresh backend clean boot; **E2E 136/136 new-code pe re-run**; D2 in-process backup 154,807 docs; D5 crypto probe (distinct-IV + round-trip) + **ABDM M1–M4 dry-run 10/10 (M4 HIU decrypt+checksum ✓)**. Report `SYSTEM-CAPABILITY-AUDIT.md` §2/§7/§8 + visual audit-board artifact updated (19/19 fixed, 0 blocker open).
+
+**Pichla arc (2026-07-13, part 5):** **SAARE 12 MEDIUM AUDIT DEFECT FIX + VERIFY + COMMIT** (owner: "do all medium ones") — commit `62a15f8c`, 34 files (33 mod + 1 naya `utils/registerIntegrity.js`).
 - **Method (ultracode):** discovery ke liye 9-agent parallel Workflow (`his-medium-defects-fixspec`) ne har defect ki apply-ready fix-spec (exact verbatim edits + verification + regression notes) banayi → maine sequential apply kiya (shared repo/DB), har file `node --check`, phir end-to-end verify.
 - **12 MEDIUM (D6–D16, D19) — sab fix:**
   - **D6** IPD `/admissions/active` doctor-scope `$or` service-layer pe merge (pehle drop → har Doctor sab inpatient dekhta = PHI leak).
