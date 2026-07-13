@@ -553,6 +553,9 @@ const ACTIONS = {
   "feedback.read":                 ["Admin", "MRD", "Receptionist"],
   "hr.credential.write":           ["Admin"],
   "hr.credential.read":            ["Admin", "Doctor"],
+  // NABH HRM.4/5 — staff competency + in-service training records.
+  "hr.training.write":             ["Admin", "HR"],
+  "hr.training.read":              ["Admin", "HR", "Doctor", "Nurse"],
   "compliance.firedrill.write":    ["Admin", "Security"],
   "compliance.firedrill.read":     ["Admin", "Security"],
   // R7bo — NABH Inspection Dashboard + auto-populated registers

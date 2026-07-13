@@ -392,6 +392,7 @@ router.use("/grievances",            require("./Quality/grievanceRoutes"));
 // dashboard). Public patient-submit surface is /public-feedback (above).
 router.use("/feedback",              require("./Quality/feedbackRoutes"));
 router.use("/credentials",           require("./HR/credentialRoutes"));
+router.use("/staff-training",        require("./HR/staffTrainingRoutes"));   // HRM.4/5 competency + in-service
 router.use("/fire-drills",           require("./Compliance/fireDrillRoutes"));
 // R7bo — NABH compliance registers (RBS / Emergency / Blood Transfusion).
 // Surveyors ask for these as chronological audit-grade logs; the registers

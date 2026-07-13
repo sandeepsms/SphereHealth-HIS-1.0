@@ -634,6 +634,98 @@ exports.getHaiRate = async (req, res, next) => {
 };
 
 // ════════════════════════════════════════════════════════════════════
+// #148 — QPS quality-indicator engine (NABH PSQ). Rate-based clinical
+// indicators with numerator/denominator + a period-over-period trend:
+//   • mortality rate       — deaths / discharges × 100
+//   • readmission rate      — 30-day readmissions / discharges × 100
+//   • HAI rate              — HAI events / device-days × 1000
+//   • medication-error rate — med errors / admissions × 100
+//   • high fall-risk rate   — high-fall-risk assessments / admissions × 100
+// Trend compares the window to the immediately preceding equal window.
+// GET /api/reports/qps-indicators?from=&to=
+// ════════════════════════════════════════════════════════════════════
+exports.getQpsIndicators = async (req, res, next) => {
+  try {
+    let from, to;
+    try {
+      ({ from, to } = parseHospitalDateRange(req.query.from, req.query.to, { defaultDays: 90, maxDays: 366 }));
+    } catch (e) {
+      return sendErr(res, e, "VALIDATION", e.status || 400);
+    }
+    const winMs = to - from;
+    const prevFrom = new Date(from.getTime() - winMs);
+
+    const Admission     = require("../../models/Patient/admissionModel");
+    const Mortality     = require("../../models/Compliance/MortalityRegisterModel");
+    const Readmission   = require("../../models/Compliance/ReadmissionRegisterModel");
+    const HAI           = require("../../models/Compliance/HAISurveillanceRegisterModel");
+    const MedError      = require("../../models/Compliance/MedicationErrorRegisterModel");
+    const FallRisk      = require("../../models/Compliance/FallRiskRegisterModel");
+    const PatientDevice = require("../../models/Clinical/PatientDeviceModel");
+
+    const DEV_BUNDLE = { ET_TUBE: 1, TRACHEOSTOMY: 1, CENTRAL_LINE: 1, PICC_LINE: 1, URINARY_CATHETER: 1 };
+    const DAY = 24 * 3600 * 1000;
+    async function deviceDaysIn(f, t) {
+      const devices = await PatientDevice.find({
+        deviceType: { $in: Object.keys(DEV_BUNDLE) },
+        placedAt: { $lt: t },
+        $or: [{ removedAt: null }, { removedAt: { $gte: f } }],
+      }).select("placedAt removedAt").limit(50000).lean();
+      let total = 0;
+      for (const d of devices) {
+        const start = Math.max(new Date(d.placedAt).getTime(), f.getTime());
+        const end = Math.min(d.removedAt ? new Date(d.removedAt).getTime() : t.getTime(), t.getTime());
+        total += Math.max(0, (end - start) / DAY);
+      }
+      return total;
+    }
+
+    const round2 = (v) => Math.round(v * 100) / 100;
+    const per100  = (n, d) => (d > 0 ? round2((n / d) * 100) : null);
+    const per1000 = (n, d) => (d > 0 ? round2((n / d) * 1000) : null);
+
+    async function period(f, t) {
+      const [admissions, discharges, deaths, readmits, hai, medErr, medErrHarm, highFall, dev] = await Promise.all([
+        Admission.countDocuments({ admissionDate: { $gte: f, $lt: t }, status: { $ne: "Deleted" }, admissionType: { $nin: ["OPD", "Services"] } }),
+        Admission.countDocuments({ actualDischargeDate: { $gte: f, $lt: t }, status: "Discharged" }),
+        Mortality.countDocuments({ dateOfDeath: { $gte: f, $lt: t } }),
+        Readmission.countDocuments({ occurredAt: { $gte: f, $lt: t } }),
+        HAI.countDocuments({ onsetDate: { $gte: f, $lt: t } }),
+        MedError.countDocuments({ reportedAt: { $gte: f, $lt: t } }),
+        MedError.countDocuments({ reportedAt: { $gte: f, $lt: t }, patientHarm: { $in: ["Minor", "Major", "Death"] } }),
+        FallRisk.countDocuments({ assessedAt: { $gte: f, $lt: t }, highRiskFlag: true }),
+        deviceDaysIn(f, t),
+      ]);
+      return {
+        denominators: { admissions, discharges, deviceDays: Math.round(dev) },
+        counts: { deaths, readmissions: readmits, haiEvents: hai, medErrors: medErr, medErrorsWithHarm: medErrHarm, highFallRisk: highFall },
+        rates: {
+          mortalityPer100Discharges:   per100(deaths, discharges),
+          readmissionPer100Discharges: per100(readmits, discharges),
+          haiPer1000DeviceDays:        per1000(hai, dev),
+          medErrorPer100Admissions:    per100(medErr, admissions),
+          highFallRiskPer100Admissions:per100(highFall, admissions),
+        },
+      };
+    }
+
+    const [current, previous] = await Promise.all([period(from, to), period(prevFrom, from)]);
+    // For rates, a rise in an adverse indicator is "worse" — expose the raw
+    // direction; the caller colours it.
+    const dir = (c, p) => (c == null || p == null ? "flat" : c > p ? "up" : c < p ? "down" : "flat");
+    const trend = {};
+    for (const k of Object.keys(current.rates)) trend[k] = dir(current.rates[k], previous.rates[k]);
+
+    const fromStr = from.toISOString().slice(0, 10);
+    const toStr   = to.toISOString().slice(0, 10);
+    return sendOk(res, {
+      from: fromStr, to: toStr,
+      current, previous, trend,
+    }, { from: fromStr, to: toStr });
+  } catch (e) { next(e); }
+};
+
+// ════════════════════════════════════════════════════════════════════
 // R7hr(TPA-P1): TPA MIS — claim-desk performance from PatientBill TPA
 // fields: status counts, submit→approve TAT, approval %, approved-vs-
 // settled realization, per-TPA breakdown, and stale SUBMITTED claims
