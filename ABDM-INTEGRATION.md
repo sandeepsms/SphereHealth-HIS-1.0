@@ -62,6 +62,22 @@ node index.js
   `fhir-preview` returns a document Bundle with `Composition` first + the
   `https://abdm.gov.in/abha` identifier; callbacks 503 while disabled.
 - **E2E 136/136** with the framework flagged off — zero impact on the HIS.
+- **M1–M4 milestone conformance DRY-RUN: 10/10** via `scripts/_abdm_milestone_dryrun.js`
+  — a local mock ABDM gateway drives the exact gateway→HIP callback shapes and
+  asserts the HIP replies correctly: M1 discovery→on-discover with care contexts
+  (+ bad-HMAC→401), M2 link/init→on-init, M3 consent notify→artefact stored+on-notify,
+  M4 HI request→encrypted FHIR pushed to HIU→**HIU decrypts to the document bundle,
+  checksum verified**→transfer notified. This is a *conformance* dry-run, **NOT** the
+  NHA sandbox certification (which needs registered ABDM creds + a public HTTPS
+  callback URL + the NHA portal). To run:
+  ```bash
+  # 1) start the HIS pointed at the mock gateway:
+  ABDM_ENABLED=1 ABDM_CLIENT_ID=test ABDM_CLIENT_SECRET=test ABDM_HIP_ID=IN-TEST \
+  ABDM_CALLBACK_HMAC_SECRET=testsecret \
+  ABDM_GATEWAY_BASE_URL=http://localhost:5599/gateway \
+  ABDM_SESSION_URL=http://localhost:5599/gateway/v0.5/sessions node index.js
+  # 2) seed a patient (E2E OPD flow) then: node scripts/_abdm_milestone_dryrun.js
+  ```
 
 ## Before production milestone testing (TODO)
 
