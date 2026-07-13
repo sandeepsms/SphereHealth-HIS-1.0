@@ -445,6 +445,24 @@ class DischargeSummaryController {
       });
     } catch (_) { /* silent */ }
 
+    // #136/#137 — IDSP notifiable-disease auto-raise. Scan the finalized
+    // summary's coded diagnoses (+ single icdCode) against the notifiable
+    // ICD-10 list; raise a NotifiableDiseaseRegister case (idempotent per
+    // admission+disease) so the IC officer can report it within the statutory
+    // window. Non-blocking — never rolls back the discharge.
+    try {
+      const { raiseNotifiableCases } = require("../../services/Compliance/notifiableDiseases");
+      const diags = Array.isArray(summary.codedDiagnoses) ? summary.codedDiagnoses.map((d) => ({ code: d.code, description: d.description })) : [];
+      if (summary.icdCode) diags.push({ code: summary.icdCode, description: summary.finalDiagnosis || "" });
+      const raised = await raiseNotifiableCases({
+        diagnoses: diags,
+        patient: { _id: summary.patientId, UHID: summary.UHID, name: summary.patientName },
+        admission: { _id: summary.admissionId },
+        actor: req.user || {},
+      });
+      if (raised.length) console.log(`[dischargeFinalize] notifiable-disease raised: ${raised.map((r) => `${r.caseNumber}(${r.disease})`).join(", ")}`);
+    } catch (_) { /* silent — surveillance raise is best-effort */ }
+
     // R7bx-3 — Auto-populate NABH COP.18 Mortality register on a finalized
     // death discharge. Trigger discriminator (matching the model enum):
     //   conditionOnDischarge === "Expired"  OR  dischargeType === "Death"

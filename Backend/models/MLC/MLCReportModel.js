@@ -203,6 +203,11 @@ const MLCReportSchema = new mongoose.Schema(
     coSignedBy:   { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     coSignedByName: { type: String, trim: true, default: "" },
     coSignedAt:   { type: Date, default: null },
+
+    // NABH IMS.3 (#138) — MLC/medico-legal records carry a 12y retention
+    // floor; legalHold (open case) excludes from the purge-candidate queue.
+    legalHold: { type: Boolean, default: false },
+    legalHoldReason: { type: String, default: "" },
   },
   { timestamps: true }
 );

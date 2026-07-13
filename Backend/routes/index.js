@@ -186,6 +186,8 @@ router.use("/cost-estimates", require("./Billing/costEstimateRoutes"));         
 router.use("/duty-roster", require("./Compliance/nabhRegisters/dutyRosterRoutes"));  // HRM.1 dated duty roster
 router.use("/occurrence-reports", require("./Compliance/nabhRegisters/occurrenceReportRoutes")); // PSQ unified occurrence form
 router.use("/nabh-registers/birth", require("./Compliance/nabhRegisters/birthRegisterRoutes"));  // IMS birth register
+router.use("/nabh-registers/cssd-load", require("./Compliance/nabhRegisters/cssdLoadRegisterRoutes"));            // HIC.7 CSSD load-release
+router.use("/nabh-registers/notifiable-disease", require("./Compliance/nabhRegisters/notifiableDiseaseRegisterRoutes")); // IDSP notifiable-disease
 router.use("/patient-acknowledgements", require("./Clinical/patientAcknowledgementRoutes"));     // PRE.1/DPDP consents + rights
 router.use("/second-opinions", require("./Clinical/secondOpinionRoutes"));           // PRE.1 second-opinion tracking
 

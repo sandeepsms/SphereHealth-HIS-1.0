@@ -180,6 +180,10 @@ const DischargeSummarySchema = new mongoose.Schema(
     contentGateOverrideAt:     { type: Date, default: null },
     contentGateOverrideBy:     { type: String, default: "" },
 
+    // NABH IMS.3 (#138) — retention legal hold (excludes from purge queue).
+    legalHold: { type: Boolean, default: false },
+    legalHoldReason: { type: String, default: "" },
+
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" },
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" },
 

@@ -560,6 +560,80 @@ exports.getErTat = async (req, res, next) => {
 };
 
 // ════════════════════════════════════════════════════════════════════
+// #134 — HAI rate per 1000 device-days (NABH HIC.5). Numerator = HAI events
+// by type in the window; denominator = device-days from the PatientDevice
+// registry (the true denominator, not summed infected-patient device-days).
+// SSI is expressed per-100-surgeries (OT count denominator) since it has no
+// device-day base. GET /api/reports/hai-rate?from=&to=
+// ════════════════════════════════════════════════════════════════════
+exports.getHaiRate = async (req, res, next) => {
+  try {
+    let from, to;
+    try {
+      ({ from, to } = parseHospitalDateRange(req.query.from, req.query.to, { defaultDays: 30, maxDays: 366 }));
+    } catch (e) {
+      return sendErr(res, e, "VALIDATION", e.status || 400);
+    }
+    const HAISurveillance = require("../../models/Compliance/HAISurveillanceRegisterModel");
+    const PatientDevice   = require("../../models/Clinical/PatientDeviceModel");
+    const OTRegister      = require("../../models/Compliance/OTRegisterModel");
+
+    // Numerators — HAI events by type.
+    const byType = await HAISurveillance.aggregate([
+      { $match: { onsetDate: { $gte: from, $lt: to } } },
+      { $group: { _id: "$HAIType", count: { $sum: 1 } } },
+    ]).option({ allowDiskUse: true, maxTimeMS: 15_000 });
+    const numer = { CAUTI: 0, CLABSI: 0, VAP: 0, SSI: 0, CDI: 0, "MRSA-Bacteremia": 0 };
+    for (const r of byType) if (r._id in numer) numer[r._id] = r.count;
+
+    // Denominator — device-days by bundle category, from the device registry.
+    // bundle: vap ← ET_TUBE/TRACHEOSTOMY, clabsi ← CENTRAL_LINE/PICC_LINE,
+    // cauti ← URINARY_CATHETER. Sum the in-window dwell of each device.
+    const DEV_BUNDLE = {
+      ET_TUBE: "vap", TRACHEOSTOMY: "vap",
+      CENTRAL_LINE: "clabsi", PICC_LINE: "clabsi",
+      URINARY_CATHETER: "cauti",
+    };
+    const devices = await PatientDevice.find({
+      deviceType: { $in: Object.keys(DEV_BUNDLE) },
+      placedAt: { $lt: to },
+      $or: [{ removedAt: null }, { removedAt: { $gte: from } }],
+    }).select("deviceType placedAt removedAt").limit(50000).lean();
+    const deviceDays = { vap: 0, clabsi: 0, cauti: 0 };
+    const DAY = 24 * 3600 * 1000;
+    for (const d of devices) {
+      const start = new Date(Math.max(new Date(d.placedAt).getTime(), from.getTime()));
+      const end = new Date(Math.min(d.removedAt ? new Date(d.removedAt).getTime() : to.getTime(), to.getTime()));
+      const days = Math.max(0, (end - start) / DAY);
+      const bundle = DEV_BUNDLE[d.deviceType];
+      if (bundle) deviceDays[bundle] += days;
+    }
+
+    const surgeries = await OTRegister.countDocuments({ occurredAt: { $gte: from, $lt: to }, status: { $ne: "Cancelled" } });
+    const rate1000 = (num, den) => (den > 0 ? Math.round((num / den) * 1000 * 100) / 100 : null);
+
+    const fromStr = from.toISOString().slice(0, 10);
+    const toStr   = to.toISOString().slice(0, 10);
+    return sendOk(res, {
+      from: fromStr, to: toStr,
+      deviceDays: {
+        ventilator: Math.round(deviceDays.vap),
+        centralLine: Math.round(deviceDays.clabsi),
+        urinaryCatheter: Math.round(deviceDays.cauti),
+      },
+      surgeries,
+      indicators: {
+        CAUTI:  { events: numer.CAUTI,  deviceDays: Math.round(deviceDays.cauti),  ratePer1000DeviceDays: rate1000(numer.CAUTI, deviceDays.cauti) },
+        CLABSI: { events: numer.CLABSI, deviceDays: Math.round(deviceDays.clabsi), ratePer1000DeviceDays: rate1000(numer.CLABSI, deviceDays.clabsi) },
+        VAP:    { events: numer.VAP,    deviceDays: Math.round(deviceDays.vap),    ratePer1000DeviceDays: rate1000(numer.VAP, deviceDays.vap) },
+        SSI:    { events: numer.SSI,    surgeries, ratePer100Surgeries: surgeries > 0 ? Math.round((numer.SSI / surgeries) * 100 * 100) / 100 : null },
+      },
+      other: { CDI: numer.CDI, "MRSA-Bacteremia": numer["MRSA-Bacteremia"] },
+    }, { from: fromStr, to: toStr });
+  } catch (e) { next(e); }
+};
+
+// ════════════════════════════════════════════════════════════════════
 // R7hr(TPA-P1): TPA MIS — claim-desk performance from PatientBill TPA
 // fields: status counts, submit→approve TAT, approval %, approved-vs-
 // settled realization, per-TPA breakdown, and stale SUBMITTED claims

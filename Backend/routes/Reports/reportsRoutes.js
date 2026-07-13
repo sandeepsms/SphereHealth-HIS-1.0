@@ -61,6 +61,8 @@ router.get("/lab-tat",                 requireAction("lab.read"),          dash.
 router.get("/discharge-tat",           requireAction("reports.clinical"),  dash.getDischargeTat);
 // R7hr(ER-P2) — ER door-to-triage/doctor/disposition TAT (NABH AAC.1 CQI).
 router.get("/er-tat",                  requireAction("reports.clinical"),  dash.getErTat);
+// NABH HIC.5 — HAI rate per 1000 device-days (CAUTI/CLABSI/VAP) + SSI per-100-surgeries.
+router.get("/hai-rate",                requireAction("reports.clinical"),  dash.getHaiRate);
 // R7hr(ER-P3/DC-P3) — statutory attendance registers (printable sources).
 router.get("/er-register",             requireAction("reports.clinical"),  dash.getErRegister);
 router.get("/dc-register",             requireAction("reports.clinical"),  dash.getDcRegister);

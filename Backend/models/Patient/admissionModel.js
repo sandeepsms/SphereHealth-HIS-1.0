@@ -166,6 +166,12 @@ const AdmissionSchema = new mongoose.Schema(
       },
     },
 
+    // NABH IMS.3 (#138) — retention legal hold. When true the record is
+    // excluded from the retention purge-candidate queue (open litigation /
+    // MLC / insurance dispute).
+    legalHold: { type: Boolean, default: false },
+    legalHoldReason: { type: String, default: "" },
+
     admissionType: {
       type: String,
       // ✅ Added OPD, Daycare, Services

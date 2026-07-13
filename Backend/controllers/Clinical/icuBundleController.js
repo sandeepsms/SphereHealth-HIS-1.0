@@ -503,6 +503,40 @@ exports.finalize = async (req, res) => {
       );
     }
 
+    // #134 — VAP + CLABSI auto-trigger, mirroring the CAUTI hook above. Each
+    // fires when its bundle is applicable + non-compliant AND the request
+    // reports device-days over the accepted dwell threshold AND a positive
+    // site-appropriate culture. Fire-and-forget; never blocks finalize.
+    try {
+      const VAP_CLABSI = [
+        { key: "vap",    HAIType: "VAP",    daysField: "ventDays", threshold: 2, cultureLabel: "respiratory" },
+        { key: "clabsi", HAIType: "CLABSI", daysField: "lineDays", threshold: 2, cultureLabel: "blood" },
+      ];
+      for (const cfg of VAP_CLABSI) {
+        const bundle = sheet[cfg.key];
+        const signal = !!(bundle?.applicable && (bundle.compliancePct ?? 0) < 100);
+        const deviceDays = Number(req.body?.[cfg.daysField]);
+        const daysExceeded = Number.isFinite(deviceDays) && deviceDays > cfg.threshold;
+        const cultureSent = !!req.body?.cultureSent;
+        const organismIsolated = String(req.body?.organismIsolated || "").trim();
+        const positiveCulture = cultureSent && organismIsolated.length > 0;
+        if (signal && daysExceeded && positiveCulture && typeof _emitHAISurveillance === "function") {
+          const sourceRef = `${cfg.HAIType}:ICUBundle:${sheet._id}:${sheet.date}:${sheet.shift}`;
+          await _emitHAISurveillance({
+            UHID: sheet.UHID, patientId: sheet.patientId, patientName: sheet.patientName,
+            admissionId: sheet.admissionId, HAIType: cfg.HAIType, onsetDate: new Date(),
+            identifiedByEmpId: sheet.finalizedBy || "", deviceDays, cultureSent: true,
+            organismIsolated, antibioticPrescribed: req.body?.antibioticPrescribed || "",
+            outcome: "", linkedICUBundleId: sheet._id, status: "Open", sourceRef,
+            autoTriggeredFrom: `ICUBundle.finalize.${cfg.key}`, actor: req.user || {},
+          });
+        }
+      }
+    } catch (haiErr2) {
+      // eslint-disable-next-line no-console
+      console.error("[icuBundleController] VAP/CLABSI auto-trigger failed:", haiErr2?.message || haiErr2);
+    }
+
     res.json({ success: true, data: sheet });
   } catch (e) {
     res.status(e.status || 500).json({ success: false, message: e.message });

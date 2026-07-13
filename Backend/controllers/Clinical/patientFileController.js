@@ -754,23 +754,67 @@ exports.verifyAuditChain = async (req, res) => {
     const UHID = String(req.params.uhid || "").toUpperCase();
     const rows = await PatientActivityLog.find({ UHID }).sort({ createdAt: 1 }).lean();
     const crypto = require("crypto");
-    const bad = [];
-    let prev = "";
+    // #138 — distinguish two failure modes so retention deletions don't read
+    // as tampering:
+    //   • TAMPERED — a row's stored rowHash ≠ sha256 of its own content +
+    //     its OWN stored prevHash. The content was altered after insert. This
+    //     is a real integrity violation.
+    //   • GAP — a row is self-consistent but its stored prevHash ≠ the prior
+    //     surviving row's rowHash. The link is broken because an earlier row
+    //     was removed (TTL / retention purge). NABH allows this as long as it
+    //     is visible; it is NOT tampering.
+    const tampered = [];
+    const gaps = [];
+    let prevRowHash = null; // null = first surviving row
     for (const r of rows) {
-      const { rowHash, _id, __v, ...payload } = r;
-      // Drop the chain fields from the payload before re-hashing; recreate
-      // the doc shape used in activityLogger.log() exactly.
-      const doc = { ...payload };
-      delete doc.prevHash;
-      doc.prevHash = prev;
+      const storedPrev = r.prevHash || "";
+      // Reproduce activityLogger.log()'s canonical EXACTLY — it hashes a fixed
+      // field set only. Spreading all stored fields (createdAt/updatedAt/
+      // retainUntil/…) into the canonical would poison every hash and read as
+      // universal "tampering"; the field set below mirrors the writer 1:1.
+      const doc = {
+        UHID:        r.UHID,
+        patientId:   r.patientId   || null,
+        admissionId: r.admissionId || null,
+        ipdNo:       r.ipdNo || "",
+        action:      r.action,
+        module:      r.module,
+        area:        r.area || "",
+        summary:     r.summary || "",
+        sourceModel: r.sourceModel || "",
+        sourceId:    r.sourceId    || null,
+        before:      r.before,
+        after:       r.after,
+        userId:      r.userId   || null,
+        userName:    r.userName || "",
+        userRole:    r.userRole || "",
+        httpMethod:  r.httpMethod || "",
+        httpPath:    r.httpPath   || "",
+        ip:          r.ip || "",
+        userAgent:   r.userAgent || "",
+        tags:        Array.isArray(r.tags) ? r.tags : [],
+        isFlagged:   !!r.isFlagged,
+        prevHash:    storedPrev,
+      };
       const canonical = JSON.stringify(doc, Object.keys(doc).sort());
-      const expected = crypto.createHash("sha256").update(canonical + "|" + prev).digest("hex");
+      const expected = crypto.createHash("sha256").update(canonical + "|" + storedPrev).digest("hex");
+      const rowHash = r.rowHash;
       if (expected !== rowHash) {
-        bad.push({ id: _id, when: r.createdAt, action: r.action, expected, stored: rowHash });
+        tampered.push({ id: r._id, when: r.createdAt, action: r.action, expected, stored: rowHash });
+      } else if (prevRowHash !== null && storedPrev !== prevRowHash) {
+        gaps.push({ id: r._id, when: r.createdAt, action: r.action, expectedPrev: prevRowHash, storedPrev });
       }
-      prev = rowHash;
+      prevRowHash = rowHash;
     }
-    return res.json({ success: true, checked: rows.length, tampered: bad.length, rows: bad });
+    return res.json({
+      success: true,
+      checked: rows.length,
+      tampered: tampered.length,
+      gaps: gaps.length,
+      intact: tampered.length === 0,
+      rows: tampered,
+      chainGaps: gaps,
+    });
   } catch (e) {
     return sendErr(res, e);
   }
