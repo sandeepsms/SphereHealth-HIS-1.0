@@ -29,6 +29,13 @@ router.get("/emergency", requireAction("compliance.read"), ctrl.listEmergency);
 // Blood Transfusion register
 router.get("/blood-transfusion", requireAction("compliance.read"), ctrl.listBloodTransfusion);
 router.post("/blood-transfusion", requireAction("doctor-orders.write"), ctrl.createBloodTransfusion);
+// NABH COP.13 — progressive monitoring workflow (cross-match → start →
+// intra-vitals → complete → reaction). Nursing/doctor write.
+router.patch("/blood-transfusion/:id/cross-match", requireAction("doctor-orders.write"), ctrl.crossMatchBloodTransfusion);
+router.patch("/blood-transfusion/:id/start",       requireAction("doctor-orders.write"), ctrl.startBloodTransfusion);
+router.patch("/blood-transfusion/:id/intra-vitals",requireAction("doctor-orders.write"), ctrl.addIntraVitalsBloodTransfusion);
+router.patch("/blood-transfusion/:id/complete",    requireAction("doctor-orders.write"), ctrl.completeBloodTransfusion);
+router.patch("/blood-transfusion/:id/reaction",    requireAction("doctor-orders.write"), ctrl.reactionBloodTransfusion);
 
 // R7bp — auto-populated from NursingAssessment saves
 router.get("/pain",            requireAction("compliance.read"), ctrl.listPain);

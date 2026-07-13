@@ -386,6 +386,13 @@ export const ACTIONS = {
   "compliance.nabh.write":         ["Admin", "Doctor", "Nurse", "MRD"],
   "print.audit.write":             ["Admin", "Doctor", "Nurse", "Pharmacist", "Lab Technician", "Receptionist", "MRD"],
 
+  // Mirror of Backend/config/permissions.js — NABH HRM.1 duty roster +
+  // PRE.1/PRE.4/DPDP patient acknowledgements + second-opinion.
+  "hr.roster.read":                ["Admin", "HR", "Doctor", "Nurse"],
+  "hr.roster.write":               ["Admin", "HR"],
+  "patient.consent.read":          ["Admin", "Receptionist", "Doctor", "Nurse", "MRD"],
+  "patient.consent.write":         ["Admin", "Receptionist", "Doctor", "Nurse"],
+
   // ── R7bh-F6 — Accountant regulatory + cold-chain (mirror of backend) ─
   "tax.returns.write":             ["Admin", "Accountant"],
   "tax.returns.read":              ["Admin", "Accountant"],

@@ -569,6 +569,15 @@ const ACTIONS = {
   "compliance.nabh.write":         ["Admin", "Doctor", "Nurse", "MRD"],
   "print.audit.write":             ["Admin", "Doctor", "Nurse", "Pharmacist", "Lab Technician", "Receptionist", "MRD"],
 
+  // NABH HRM.1 — dated staff duty roster. Read open to clinical leads; write
+  // to HR/Admin (roster is an HR-owned document). (Frontend mirror below.)
+  "hr.roster.read":                ["Admin", "HR", "Doctor", "Nurse"],
+  "hr.roster.write":               ["Admin", "HR"],
+  // NABH PRE.1/PRE.4 + DPDP — patient acknowledgements (rights handout,
+  // DPDP/biometric consent) + second-opinion tracking. Front-office + bedside.
+  "patient.consent.read":          ["Admin", "Receptionist", "Doctor", "Nurse", "MRD"],
+  "patient.consent.write":         ["Admin", "Receptionist", "Doctor", "Nurse"],
+
   // ── R7bh-F6 — Accountant regulatory + cold-chain (NABH + GST + IT Act) ─
   // Tax returns (GSTR-1, GSTR-3B export workflow) and TDS Form 16A.
   // Both restricted to Admin + Accountant — they're financial records

@@ -181,6 +181,13 @@ router.use("/doctor-notes", doctorNotesRoutes);
 router.use("/doctor-orders", doctorOrderRoutes);
 // NABH MOM.4/MOM.5 — live Do-Not-Use abbreviation + LASA collision screen.
 router.use("/medication-safety", require("./Clinical/medicationSafetyRoutes"));
+// NABH Minor batch-5 registers/records:
+router.use("/cost-estimates", require("./Billing/costEstimateRoutes"));              // PRE.4 numbered itemized estimate
+router.use("/duty-roster", require("./Compliance/nabhRegisters/dutyRosterRoutes"));  // HRM.1 dated duty roster
+router.use("/occurrence-reports", require("./Compliance/nabhRegisters/occurrenceReportRoutes")); // PSQ unified occurrence form
+router.use("/nabh-registers/birth", require("./Compliance/nabhRegisters/birthRegisterRoutes"));  // IMS birth register
+router.use("/patient-acknowledgements", require("./Clinical/patientAcknowledgementRoutes"));     // PRE.1/DPDP consents + rights
+router.use("/second-opinions", require("./Clinical/secondOpinionRoutes"));           // PRE.1 second-opinion tracking
 
 router.use("/admissions", admissionRoutes);
 router.use("/bed-transfers", bedTransferRoutes);

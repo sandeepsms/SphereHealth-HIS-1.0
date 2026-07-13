@@ -182,6 +182,125 @@ exports.listBloodTransfusion = async (req, res) => {
   }
 };
 
+// ── NABH COP.13 — Blood-transfusion monitoring workflow (progressive) ──────
+// The register row is created (Draft) at order time; these PATCH stages walk
+// it cross-match → start → intra-vitals → complete → reaction, each pushing an
+// audit entry. A locked (post-completion) row is immutable.
+function _btActor(req) {
+  const u = req.user || {};
+  return { byName: u.fullName || u.name || "", byRole: u.role || "", byUserId: u._id || null };
+}
+async function _loadBt(req, res) {
+  const row = await BloodTransfusionRegister.findById(req.params.id);
+  if (!row) { res.status(404).json({ success: false, message: "Transfusion record not found" }); return null; }
+  if (row.locked) { res.status(409).json({ success: false, code: "BT_LOCKED", message: "Record is locked (completed + reaction window closed)" }); return null; }
+  return row;
+}
+
+exports.crossMatchBloodTransfusion = async (req, res) => {
+  try {
+    const row = await _loadBt(req, res); if (!row) return;
+    const b = req.body || {};
+    if (!["Compatible", "Incompatible", "Urgent_Uncrossmatched"].includes(b.result)) {
+      return res.status(400).json({ success: false, message: "result must be Compatible | Incompatible | Urgent_Uncrossmatched" });
+    }
+    row.crossMatch = {
+      result: b.result,
+      doneByName: b.doneByName || _btActor(req).byName,
+      doneAt: b.doneAt ? new Date(b.doneAt) : new Date(),
+      validUntil: b.validUntil ? new Date(b.validUntil) : null,
+      notes: b.notes || "",
+    };
+    // Incompatible cross-match must not advance to a releasable state.
+    row.status = b.result === "Incompatible" ? "Draft" : "Cross-matched";
+    row.auditTrail.push({ action: "CROSS_MATCHED", ..._btActor(req), notes: `result=${b.result}` });
+    await row.save();
+    res.json({ success: true, data: row });
+  } catch (e) { sendErr(res, e); }
+};
+
+exports.startBloodTransfusion = async (req, res) => {
+  try {
+    const row = await _loadBt(req, res); if (!row) return;
+    const b = req.body || {};
+    // NABH — cannot start without a compatible cross-match + documented consent.
+    if (row.crossMatch?.result !== "Compatible" && row.crossMatch?.result !== "Urgent_Uncrossmatched") {
+      return res.status(409).json({ success: false, code: "BT_NO_CROSSMATCH", message: "Compatible cross-match required before starting" });
+    }
+    if (b.preVitals) row.preTransfusion.vitals = b.preVitals;
+    if (b.hbGdL != null) row.preTransfusion.hbGdL = b.hbGdL;
+    if (b.premedsGiven) row.preTransfusion.premedsGiven = b.premedsGiven;
+    if (b.consentSigned != null) row.preTransfusion.consentSigned = !!b.consentSigned;
+    if (row.preTransfusion.consentSigned !== true) {
+      return res.status(409).json({ success: false, code: "BT_NO_CONSENT", message: "Documented transfusion consent required before starting" });
+    }
+    row.startedAt = b.startedAt ? new Date(b.startedAt) : new Date();
+    row.rateMlPerHr = b.rateMlPerHr ?? row.rateMlPerHr;
+    row.transfusedByName = b.transfusedByName || _btActor(req).byName;
+    row.status = "In-progress";
+    row.auditTrail.push({ action: "TRANSFUSION_STARTED", ..._btActor(req) });
+    await row.save();
+    res.json({ success: true, data: row });
+  } catch (e) { sendErr(res, e); }
+};
+
+exports.addIntraVitalsBloodTransfusion = async (req, res) => {
+  try {
+    const row = await _loadBt(req, res); if (!row) return;
+    const v = req.body?.vitals || req.body || {};
+    const actor = _btActor(req);
+    row.intraVitals.push({
+      at: v.at ? new Date(v.at) : new Date(),
+      bp: v.bp || "", pulse: v.pulse ?? null, temp: v.temp ?? null, spo2: v.spo2 ?? null,
+      recordedByName: v.recordedByName || actor.byName, recordedByUserId: actor.byUserId,
+    });
+    if (row.status === "Released" || row.status === "Cross-matched") row.status = "In-progress";
+    row.auditTrail.push({ action: "INTRA_VITALS", ...actor });
+    await row.save();
+    res.json({ success: true, data: row });
+  } catch (e) { sendErr(res, e); }
+};
+
+exports.completeBloodTransfusion = async (req, res) => {
+  try {
+    const row = await _loadBt(req, res); if (!row) return;
+    const b = req.body || {};
+    row.endedAt = b.endedAt ? new Date(b.endedAt) : new Date();
+    if (row.startedAt) row.durationMinutes = Math.max(0, Math.round((row.endedAt - row.startedAt) / 60000));
+    if (b.postVitals) row.postTransfusion.vitals = b.postVitals;
+    if (b.hbGdL != null) row.postTransfusion.hbGdL = b.hbGdL;
+    // Reaction window stays open 48h post-end.
+    row.reaction.reportingWindowEndsAt = new Date(row.endedAt.getTime() + 48 * 3600 * 1000);
+    row.status = row.reaction?.occurred ? "Reaction-pending" : "Completed";
+    row.auditTrail.push({ action: "TRANSFUSION_ENDED", ..._btActor(req) });
+    await row.save();
+    res.json({ success: true, data: row });
+  } catch (e) { sendErr(res, e); }
+};
+
+exports.reactionBloodTransfusion = async (req, res) => {
+  try {
+    const row = await _loadBt(req, res); if (!row) return;
+    const b = req.body || {};
+    row.reaction.occurred = true;
+    if (b.type) row.reaction.type = b.type;
+    if (b.severity) row.reaction.severity = b.severity;
+    row.reaction.onsetAt = b.onsetAt ? new Date(b.onsetAt) : new Date();
+    if (b.minutesIntoTransfusion != null) row.reaction.minutesIntoTransfusion = b.minutesIntoTransfusion;
+    if (b.description) row.reaction.description = b.description;
+    if (b.managementTaken) row.reaction.managementTaken = b.managementTaken;
+    if (b.outcome) row.reaction.outcome = b.outcome;
+    if (b.reportedToBloodBankBy) {
+      row.reaction.reportedToBloodBankBy = b.reportedToBloodBankBy;
+      row.reaction.reportedToBloodBankAt = new Date();
+    }
+    if (row.status !== "Completed") row.status = "Reaction-pending";
+    row.auditTrail.push({ action: "REACTION_LOGGED", ..._btActor(req), notes: `${b.type || "?"}/${b.severity || "?"}` });
+    await row.save();
+    res.json({ success: true, data: row });
+  } catch (e) { sendErr(res, e); }
+};
+
 // ─────────────────────────────────────────────────────────────────────────
 // Pain / Fall-Risk / Pressure-Ulcer Registers (R7bp — auto-popped)
 // ─────────────────────────────────────────────────────────────────────────
