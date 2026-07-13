@@ -47,6 +47,17 @@ const PatientSchema = new mongoose.Schema(
       district: String,
     },
 
+    // ── ABDM / ABHA (Ayushman Bharat Health Account) ──────────────
+    // Populated when the patient links their ABHA (health ID). `abhaId`
+    // is the exact field the FHIR exporter already reads to stamp the
+    // https://abdm.gov.in/abha identifier on the Patient resource.
+    abhaNumber:   { type: String, default: "", trim: true, index: true },  // 14-digit ABHA no. (xx-xxxx-xxxx-xxxx)
+    abhaAddress:  { type: String, default: "", trim: true, index: true },  // ABHA address (username@cm, e.g. ram@sbx)
+    abhaId:       { type: String, default: "", trim: true },               // canonical id emitted in FHIR (= abhaNumber)
+    abhaLinked:   { type: Boolean, default: false },
+    abhaKycVerified: { type: Boolean, default: false },                    // KYC/eKYC done via ABDM
+    abhaLinkedAt: { type: Date, default: null },
+
     bloodGroup: {
       type: String,
       enum: ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "Not Known", "Unknown", ""],

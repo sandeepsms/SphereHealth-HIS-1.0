@@ -115,6 +115,13 @@ router.use("/pincode", require("./Common/pincodeRoutes"));
 // authenticate + requireAction("settings.write").
 router.use("/hospital-settings", hospitalSettingsRoutes);
 
+// ABDM gateway callbacks — the ABDM Consent Manager calls these directly
+// (authenticated by the router's own HMAC signature check, not our JWT), so
+// they MUST be mounted before the JWT wall. Scoped to /abdm/v0.5 so the
+// router-level requireAbdmEnabled/signature guards never touch the authed
+// /abdm admin routes mounted below the wall.
+router.use("/abdm/v0.5", require("./ABDM/abdmCallbackRoutes"));
+
 // ── Everything below requires a valid JWT ────────────────────
 router.use(authenticate);
 
@@ -393,6 +400,7 @@ router.use("/grievances",            require("./Quality/grievanceRoutes"));
 router.use("/feedback",              require("./Quality/feedbackRoutes"));
 router.use("/credentials",           require("./HR/credentialRoutes"));
 router.use("/staff-training",        require("./HR/staffTrainingRoutes"));   // HRM.4/5 competency + in-service
+router.use("/abdm",                  require("./ABDM/abdmAdminRoutes"));      // ABDM admin/ops (status, ABHA link, FHIR preview)
 router.use("/fire-drills",           require("./Compliance/fireDrillRoutes"));
 // R7bo — NABH compliance registers (RBS / Emergency / Blood Transfusion).
 // Surveyors ask for these as chronological audit-grade logs; the registers

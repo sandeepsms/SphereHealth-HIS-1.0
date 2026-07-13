@@ -379,6 +379,9 @@ export const ACTIONS = {
   // Mirror — NABH HRM.4/5 staff competency + in-service training.
   "hr.training.write":             ["Admin", "HR"],
   "hr.training.read":              ["Admin", "HR", "Doctor", "Nurse"],
+  // Mirror — ABDM admin/ops (status, ABHA link, care contexts, FHIR preview).
+  "abdm.read":                     ["Admin"],
+  "abdm.write":                    ["Admin"],
   "compliance.firedrill.write":    ["Admin", "Security"],
   "compliance.firedrill.read":     ["Admin", "Security"],
   // R7bo — NABH Inspection Dashboard (RBS / Emergency / Blood Transfusion).

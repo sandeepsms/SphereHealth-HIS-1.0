@@ -90,7 +90,18 @@ app.use(
 
 // ── Body parsers ───────────────────────────────────────────────────────────
 app.use(cors(corsOptions));
-app.use(express.json({ limit: "5mb" }));
+// Capture the raw request bytes for ABDM gateway callbacks so the HMAC/
+// signature middleware can verify against the exact payload (JSON re-
+// serialisation would not be byte-exact). Scoped to /api/abdm to avoid
+// holding a buffer for every request.
+app.use(express.json({
+  limit: "5mb",
+  verify: (req, _res, buf) => {
+    if (buf && buf.length && req.originalUrl && req.originalUrl.startsWith("/api/abdm")) {
+      req.rawBody = buf;
+    }
+  },
+}));
 app.use(express.urlencoded({ extended: true, limit: "5mb" }));
 
 // ── Rate limiters ──────────────────────────────────────────────────────────

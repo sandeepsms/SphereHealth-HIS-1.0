@@ -556,6 +556,10 @@ const ACTIONS = {
   // NABH HRM.4/5 — staff competency + in-service training records.
   "hr.training.write":             ["Admin", "HR"],
   "hr.training.read":              ["Admin", "HR", "Doctor", "Nurse"],
+  // ABDM (Ayushman Bharat Digital Mission) admin/ops — status, ABHA link,
+  // care-context management, FHIR preview. Admin-only (integration ops).
+  "abdm.read":                     ["Admin"],
+  "abdm.write":                    ["Admin"],
   "compliance.firedrill.write":    ["Admin", "Security"],
   "compliance.firedrill.read":     ["Admin", "Security"],
   // R7bo — NABH Inspection Dashboard + auto-populated registers
