@@ -46,7 +46,11 @@ const CronFailureSchema = new Schema(
 
     resolution: {
       type: String,
-      enum: ["retried-success", "permanent-failure", "manual-override"],
+      // "superseded" (D16): a queued failure whose retry was itself attempted
+      // by the sweeper and failed — the row is retired and a fresh ladder-step
+      // row (recordCronFailure) supersedes it, so it stops re-appearing in
+      // dueRetries(). The other values are terminal outcomes.
+      enum: ["retried-success", "permanent-failure", "manual-override", "superseded"],
       default: null,
     },
   },

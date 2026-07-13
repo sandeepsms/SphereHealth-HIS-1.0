@@ -183,6 +183,9 @@ const DischargeSummarySchema = new mongoose.Schema(
     // NABH IMS.3 (#138) — retention legal hold (excludes from purge queue).
     legalHold: { type: Boolean, default: false },
     legalHoldReason: { type: String, default: "" },
+    legalHoldBy:     { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    legalHoldByName: { type: String, default: "" },
+    legalHoldAt:     { type: Date, default: null },
 
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" },
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" },
@@ -212,7 +215,23 @@ DischargeSummarySchema.index({ status: 1, createdAt: -1 });
 // finalized → finalized with the same value) or adding metadata fields
 // the law allows post-finalize (mlrNumberSnapshot for stamp updates),
 // we allow that — anything else is refused.
-const FINALIZED_WHITELIST = new Set(["mlrNumberSnapshot"]);
+// Fields the law allows writing AFTER finalize (every other field on a
+// finalized summary is refused by _refuseIfFinalized below):
+//   mlrNumberSnapshot — MLR stamp refresh on historical prints.
+//   cosigned*         — senior co-sign of a JR self-finalized summary
+//                       (D3-CRIT-4): a signature added post-finalize, not
+//                       a content edit (POST /discharge-summary/:id/cosign).
+//   selfFinalizeAck   — stamped by finalize() AFTER the status flip on a
+//                       JR mustCosign self-finalize, so it must survive the
+//                       guard (was silently throwing pre-fix).
+//   legalHold*        — NABH IMS.3 retention hold (open litigation / MLC):
+//                       a legal-custody flag set via POST /api/mrd/legal-hold.
+const FINALIZED_WHITELIST = new Set([
+  "mlrNumberSnapshot",
+  "cosignedBy", "cosignedByName", "cosignedAt",
+  "selfFinalizeAck",
+  "legalHold", "legalHoldReason", "legalHoldBy", "legalHoldByName", "legalHoldAt",
+]);
 async function _refuseIfFinalized(next) {
   try {
     const query = this.getQuery();

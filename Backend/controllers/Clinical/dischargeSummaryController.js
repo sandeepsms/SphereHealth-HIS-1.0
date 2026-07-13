@@ -666,6 +666,123 @@ class DischargeSummaryController {
     });
   });
 
+  // POST /api/discharge-summary/:id/cosign
+  //
+  // R7bb-FIX-E-4 / D3-CRIT-4 reconciliation — senior co-sign of a
+  // Junior-Resident self-finalized discharge summary (NABH COP.7). The
+  // finalize path lets a JR self-finalize (WARN audit row + mustCosign
+  // acknowledgement) but the senior signature that CLOSES that SoD loop
+  // had no endpoint, so cosignedBy/cosignedByName/cosignedAt never got
+  // stamped. This stamps them from the AUTHENTICATED senior actor — NEVER
+  // from req.body (mirroring mlcController.finalize's co-sign) — and emits
+  // a ClinicalAudit row consistent with the finalize emit.
+  cosign = handle(async (req, res) => {
+    const existing = await DischargeSummary.findById(req.params.id)
+      .select("status finalizedByName cosignedAt cosignedByName UHID admissionId patient patientName")
+      .lean();
+    if (!existing) {
+      return res.status(404).json({ success: false, message: "Discharge summary not found" });
+    }
+    // Co-sign reconciles a COMPLETED self-finalize — a draft has nothing to
+    // co-sign yet.
+    if (existing.status !== "finalized") {
+      return res.status(409).json({
+        success: false,
+        code: "NOT_FINALIZED",
+        message: "Only a finalized discharge summary can be co-signed — finalize it first.",
+      });
+    }
+    if (existing.cosignedAt) {
+      return res.status(409).json({
+        success: false,
+        code: "ALREADY_COSIGNED",
+        message: `Discharge summary already co-signed by ${existing.cosignedByName || "a senior"} at ${existing.cosignedAt}.`,
+      });
+    }
+
+    // Senior-tier gate (NABH COP.7). Mirrors mlcController.finalize: only a
+    // Doctor with a senior designation (or Admin) may attest — a Junior
+    // Resident cannot co-sign, which is the whole point of the SoD.
+    if (req.user?.role !== "Doctor" && req.user?.role !== "Admin") {
+      return res.status(403).json({ success: false, message: "Only a senior Doctor / Admin can co-sign a discharge summary." });
+    }
+    if (req.user?.role === "Doctor") {
+      const u = await User.findById(req.user._id || req.user.id)
+        .select("doctorDetails.designation").lean();
+      const desig = u?.doctorDetails?.designation || "";
+      const SENIOR = new Set(["Consultant", "HOD", "Senior Resident", "Associate Professor", "Professor"]);
+      if (!SENIOR.has(desig)) {
+        return res.status(403).json({
+          success: false,
+          code: "DESIGNATION_REQUIRED",
+          message: `Co-sign requires a senior designation (Consultant / HOD / Senior Resident / Associate Professor / Professor); your designation is '${desig || "—"}'.`,
+        });
+      }
+    }
+
+    // Best-effort separation-of-duties — the co-signer should not be the
+    // same person who finalized. The finalize path persists only
+    // finalizedByName (no finalizer userId), so this is a name-level guard.
+    const actorName = req.user?.fullName || req.user?.employeeId || "";
+    if (actorName && existing.finalizedByName && actorName === existing.finalizedByName) {
+      return res.status(409).json({
+        success: false,
+        code: "SAME_ACTOR",
+        message: "SAME_ACTOR — a discharge summary must be co-signed by a different (senior) doctor than the one who finalized it.",
+      });
+    }
+
+    // Atomic CAS — stamp the co-sign only while still finalized + not yet
+    // co-signed. cosigned* are whitelisted past the model's finalized-
+    // immutability guard (post-finalize legal metadata, like mlrNumberSnapshot).
+    const summary = await DischargeSummary.findOneAndUpdate(
+      { _id: req.params.id, status: "finalized", cosignedAt: null },
+      {
+        $set: {
+          cosignedBy:     req.user?._id || req.user?.id || null,
+          cosignedByName: actorName || "Senior Doctor",
+          cosignedAt:     new Date(),
+        },
+      },
+      { new: true, runValidators: true },
+    );
+    if (!summary) {
+      // Race: co-signed by another user between the pre-check and the write.
+      return res.status(409).json({
+        success: false,
+        code: "ALREADY_COSIGNED",
+        message: "Discharge summary was co-signed by another user — refresh and try again.",
+      });
+    }
+
+    // R7bn-1 / D9-fix parity — ClinicalAudit emit on co-sign (signature
+    // event, 7y retention floor). Non-blocking, mirrors the finalize emit.
+    try {
+      const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+      emitClinicalAudit({
+        req,
+        event: "DISCHARGE_SUMMARY_COSIGNED",
+        UHID: summary.UHID,
+        admissionId: summary.admissionId,
+        patientId: summary.patient,
+        patientName: summary.patientName,
+        targetType: "DischargeSummary",
+        targetId: summary._id,
+        after: {
+          cosignedByName: summary.cosignedByName,
+          cosignedAt: summary.cosignedAt,
+          finalizedByName: summary.finalizedByName || "",
+        },
+      });
+    } catch (_) { /* silent */ }
+
+    return res.json({
+      success: true,
+      data: summary,
+      message: "Discharge summary co-signed",
+    });
+  });
+
   // DELETE /api/discharge-summary/:id
   delete = handle(async (req, res) => {
     const summary = await DischargeSummary.findById(req.params.id);

@@ -274,7 +274,17 @@ class OPDController {
       const visit = await opdService.addPrescription(req.params.visitNumber, req.body);
       res.status(200).json({ success: true, message: "Prescription added", data: visit });
     } catch (error) {
-      res.status(400).json({ success: false, message: error.message });
+      // D9 — surface the typed drug-allergy 409 (ALLERGY_COLLISION) with the
+      // allergen + drug so the prescriber UI can prompt for a documented
+      // override reason, instead of flattening it to a generic 400.
+      const status = error.status || error.statusCode || 400;
+      res.status(status).json({
+        success: false,
+        message: error.message,
+        ...(error.code ? { code: error.code } : {}),
+        ...(error.allergen ? { allergen: error.allergen } : {}),
+        ...(error.drugName ? { drugName: error.drugName } : {}),
+      });
     }
   }
 
@@ -383,11 +393,15 @@ class OPDController {
     } catch (error) {
       // R7bx item 8 — forward typed error code (e.g. MCI_REG_NO_MISSING)
       // and explicit statusCode so the frontend can branch on stable identifiers.
-      const status = error.statusCode || 400;
+      // D8/D9 — also honour err.status (the shared allergy gate + signed-lock
+      // set 409) and pass allergen/drug through for the allergy-override prompt.
+      const status = error.statusCode || error.status || 400;
       res.status(status).json({
         success: false,
         message: error.message,
         ...(error.code ? { code: error.code } : {}),
+        ...(error.allergen ? { allergen: error.allergen } : {}),
+        ...(error.drugName ? { drugName: error.drugName } : {}),
       });
     }
   }

@@ -594,14 +594,19 @@ exports.getHaiRate = async (req, res, next) => {
       CENTRAL_LINE: "clabsi", PICC_LINE: "clabsi",
       URINARY_CATHETER: "cauti",
     };
-    const devices = await PatientDevice.find({
+    // D15 — stream the device registry via a cursor instead of a capped
+    // .limit(50000).lean() find(): the old cap silently truncated active
+    // devices on busy/long windows, understating device-days and OVERSTATING
+    // the NABH-reported infection rate per 1000 device-days. A cursor sums
+    // every in-window device with bounded memory (no cap, no truncation).
+    const deviceDays = { vap: 0, clabsi: 0, cauti: 0 };
+    const DAY = 24 * 3600 * 1000;
+    const deviceCursor = PatientDevice.find({
       deviceType: { $in: Object.keys(DEV_BUNDLE) },
       placedAt: { $lt: to },
       $or: [{ removedAt: null }, { removedAt: { $gte: from } }],
-    }).select("deviceType placedAt removedAt").limit(50000).lean();
-    const deviceDays = { vap: 0, clabsi: 0, cauti: 0 };
-    const DAY = 24 * 3600 * 1000;
-    for (const d of devices) {
+    }).select("deviceType placedAt removedAt").lean().cursor();
+    for await (const d of deviceCursor) {
       const start = new Date(Math.max(new Date(d.placedAt).getTime(), from.getTime()));
       const end = new Date(Math.min(d.removedAt ? new Date(d.removedAt).getTime() : to.getTime(), to.getTime()));
       const days = Math.max(0, (end - start) / DAY);
@@ -666,13 +671,15 @@ exports.getQpsIndicators = async (req, res, next) => {
     const DEV_BUNDLE = { ET_TUBE: 1, TRACHEOSTOMY: 1, CENTRAL_LINE: 1, PICC_LINE: 1, URINARY_CATHETER: 1 };
     const DAY = 24 * 3600 * 1000;
     async function deviceDaysIn(f, t) {
-      const devices = await PatientDevice.find({
+      // D15 — cursor stream (no .limit cap) so long/busy windows aren't silently
+      // truncated, which would understate device-days and overstate the HAI rate.
+      let total = 0;
+      const cursor = PatientDevice.find({
         deviceType: { $in: Object.keys(DEV_BUNDLE) },
         placedAt: { $lt: t },
         $or: [{ removedAt: null }, { removedAt: { $gte: f } }],
-      }).select("placedAt removedAt").limit(50000).lean();
-      let total = 0;
-      for (const d of devices) {
+      }).select("placedAt removedAt").lean().cursor();
+      for await (const d of cursor) {
         const start = Math.max(new Date(d.placedAt).getTime(), f.getTime());
         const end = Math.min(d.removedAt ? new Date(d.removedAt).getTime() : t.getTime(), t.getTime());
         total += Math.max(0, (end - start) / DAY);

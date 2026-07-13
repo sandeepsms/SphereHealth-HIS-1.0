@@ -103,6 +103,14 @@ MedicationErrorRegisterSchema.index({ severityNCC: 1, createdAt: -1 });
 MedicationErrorRegisterSchema.index({ sentinelFlag: 1, createdAt: -1 });
 MedicationErrorRegisterSchema.index({ sourceRef: 1 }, { sparse: true });
 
+// ── D19 — NABH register tamper-evidence ─────────────────────
+// Stamp a keyed HMAC-SHA256 integrity digest on every save so an out-of-band
+// edit of this surveyor-inspected register row is detectable. Non-blocking +
+// backward-compatible: legacy rows (no stored digest) verify as "unverified",
+// never "tampered". Keyed by env REGISTER_HMAC_SECRET.
+const { registerIntegrityPlugin } = require("../../utils/registerIntegrity");
+MedicationErrorRegisterSchema.plugin(registerIntegrityPlugin);
+
 module.exports =
   mongoose.models.MedicationErrorRegister ||
   mongoose.model("MedicationErrorRegister", MedicationErrorRegisterSchema);

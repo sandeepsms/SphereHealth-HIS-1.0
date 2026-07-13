@@ -57,4 +57,9 @@ router.patch("/mortality-register/:id", validateObjectIdParam("id"), requireActi
 router.get("/restraint-register",     requireAction("compliance.read"), ctrl.listRestraint);
 router.get("/antimicrobial-register", requireAction("compliance.read"), ctrl.listAntimicrobial);
 
+// D19 — NABH register tamper-evidence: recompute + verify per-row HMAC integrity
+// digests for a surveyor-critical register (Admin / MRD). :register ∈
+// mortality | sentinel | rca | near-miss | medication-error | cssd-load | emergency
+router.get("/integrity-verify/:register", requireAction("compliance.nabh.verify"), ctrl.verifyRegisterIntegrity);
+
 module.exports = router;

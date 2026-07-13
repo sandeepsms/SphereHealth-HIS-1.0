@@ -168,9 +168,12 @@ const AdmissionSchema = new mongoose.Schema(
 
     // NABH IMS.3 (#138) — retention legal hold. When true the record is
     // excluded from the retention purge-candidate queue (open litigation /
-    // MLC / insurance dispute).
+    // MLC / insurance dispute). Set / cleared via POST /api/mrd/legal-hold.
     legalHold: { type: Boolean, default: false },
     legalHoldReason: { type: String, default: "" },
+    legalHoldBy:     { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    legalHoldByName: { type: String, default: "" },
+    legalHoldAt:     { type: Date, default: null },
 
     admissionType: {
       type: String,

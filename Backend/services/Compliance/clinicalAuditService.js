@@ -79,6 +79,8 @@ const LONG_RETENTION_EVENTS = new Set([
   "TRANSFUSION_COMPLETED",
   "TRANSFUSION_REACTION_LOGGED",
   "DISCHARGE_SUMMARY_FINALIZED",
+  // D3-CRIT-4 — senior co-sign is a signature event; 7y floor like finalize.
+  "DISCHARGE_SUMMARY_COSIGNED",
   "ADMISSION_REACTIVATED",
   "MAR_DOSE_ADMINISTERED",     // HAM drugs need 7y per NABH IPSG.3
   // R7eg — ICU Bundles of Care: finalize/save + non-compliance signals
@@ -97,6 +99,9 @@ const LONG_RETENTION_EVENTS = new Set([
   "ICU_BUNDLE_SUP_NON_COMPLIANT",
   // B1-T03 — Medical Certificate override audit (legal instrument, 7y floor).
   "MEDICAL_CERTIFICATE_OVERRIDE_ISSUED",
+  // NABH IMS.3 (#138) — retention legal-hold set/clear is a legal-custody
+  // event; 7y floor so the hold history survives with the record.
+  "LEGAL_HOLD_UPDATED",
 ]);
 
 function computeRetainUntil(event) {

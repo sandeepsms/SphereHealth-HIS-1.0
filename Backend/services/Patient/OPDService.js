@@ -597,6 +597,44 @@ class OPDService {
     return updatedVisit;
   }
 
+  /* ── D9: fail-closed drug-allergy gate for OPD embedded prescriptions ──
+     Both the /assessment save (prescribedMedications array) and the
+     /prescription $push write into OPD.prescribedMedications, which the
+     pharmacy today-rx panel dispenses from — but neither ran the allergy
+     gate the standalone Prescription model (models/Doctor/prescription.js)
+     enforces. Reuse the shared utils/allergyCheck helper so the embedded Rx
+     sees identical substring logic + NKA sentinels. Build the allergen pool
+     once from BOTH the typed allergyList[] and the legacy knownAllergies
+     string (normalised explicitly — no lean-virtuals plugin is registered so
+     the `allergies` virtual isn't available under .lean()), then assert each
+     row. A hit throws a typed 409 (err.code ALLERGY_COLLISION) unless that row
+     carries a documented _allergyOverrideReason — the same senior-clinician
+     bypass the Rx model honours. */
+  async _assertRxSafe(uhid, meds, label = "OPD Rx") {
+    if (!uhid || !Array.isArray(meds) || meds.length === 0) return;
+    const { assertDrugSafeOrOverride, normaliseAllergies } = require("../../utils/allergyCheck");
+    const pat = await Patient.findOne({ UHID: uhid })
+      .select("knownAllergies allergyList")
+      .lean();
+    if (!pat) return; // walk-in / orphan UHID — nothing to gate against
+    const allergyPool = [
+      ...normaliseAllergies(pat.allergyList),
+      ...normaliseAllergies(pat.knownAllergies),
+    ];
+    if (allergyPool.length === 0) return;
+    for (const m of meds) {
+      assertDrugSafeOrOverride(
+        {
+          medicineName: m.medicineName || m.name || "",
+          genericName:  m.genericName,
+          brandName:    m.brandName,
+        },
+        allergyPool,
+        { overrideReason: m._allergyOverrideReason, label },
+      );
+    }
+  }
+
   /* ── Doctor saves OPD assessment (SOAP note + diagnosis + plan) ── */
   async saveOPDAssessment(visitNumber, assessmentData, doctorName, doctorUserId = null) {
     // R7bx item 8 — MCI Regulation 1.4.2 compliance. The OPD assessment
@@ -630,6 +668,35 @@ class OPDService {
       }
     }
 
+    // D8(a) — Signed-assessment immutability. Once the doctor has signed this
+    // visit (doctorSignatureImage stamped, doctorSignedAt set), a second
+    // /assessment POST must NOT silently overwrite the medico-legal record —
+    // pre-fix this was a plain findOneAndUpdate with no lock, unlike the
+    // DoctorNotesModel amendment chain. Block with a typed 409
+    // (OPD_ASSESSMENT_SIGNED) UNLESS the caller passes an explicit amendReason,
+    // an intentional post-signature correction that we allow and capture
+    // append-only on assessmentAmendments[] just before the update below. The
+    // existing signature block re-stamps doctorSignedAt only when a new
+    // signature lands, so first-sign behaviour is unchanged.
+    const amendReason = String(assessmentData?.amendReason || "").trim();
+    const existingVisit = await OPD.findOne({ visitNumber })
+      .select("doctorSignatureImage doctorSignedAt UHID")
+      .lean();
+    const alreadySigned = !!(
+      existingVisit &&
+      ((typeof existingVisit.doctorSignatureImage === "string" &&
+        existingVisit.doctorSignatureImage.trim()) ||
+        existingVisit.doctorSignedAt)
+    );
+    if (alreadySigned && !amendReason) {
+      const err = new Error(
+        "This OPD assessment is already signed and locked. Provide an amendment reason to record a correction.",
+      );
+      err.statusCode = 409;
+      err.code = "OPD_ASSESSMENT_SIGNED";
+      throw err;
+    }
+
     // R7bt-PrintAudit-Phase2: The whitelist below USED to silently drop
     // workingDiagnosis, icd10Code, icd10Description, patientStatus, the
     // structured genExam / sysExam sub-docs, and every obg* field — so the
@@ -639,7 +706,12 @@ class OPDService {
     // exactly. Helper below avoids `undefined` overwriting an existing value
     // (so a partial save from the autosave path doesn't blow away a field
     // the doctor entered in a previous save).
-    const pick = (val, fallback = "") => (val !== undefined ? val : fallback);
+    // D8(b) — default fallback is `undefined` (not "") so a field the caller
+    // OMITTED is skipped and pruned before the update, instead of being reset
+    // to "" (which silently wiped a value the doctor saved earlier when a
+    // partial/autosave POST didn't echo every field). An explicit "" the
+    // caller DID send still passes through, so intentional clears still work.
+    const pick = (val, fallback = undefined) => (val !== undefined ? val : fallback);
 
     const update = {
       // ── Free-text examination (string narrative) ──
@@ -647,10 +719,11 @@ class OPDService {
       systemicExamination:   pick(assessmentData.systemicExamination),
       // ── Structured Gen-Ex / Sys-Ex ──
       // Mongoose accepts the whole nested object on findOneAndUpdate when
-      // the schema declares sub-docs; we pass it through verbatim. Empty
-      // object fallback keeps the schema's nested defaults intact.
-      genExam:               assessmentData.genExam || {},
-      sysExam:               assessmentData.sysExam || {},
+      // the schema declares sub-docs; we pass it through verbatim. D8(b) —
+      // when the caller omits it we leave it `undefined` (pruned below) so a
+      // partial save doesn't blow the stored sub-doc back to schema defaults.
+      genExam:               assessmentData.genExam,
+      sysExam:               assessmentData.sysExam,
       // ── Diagnosis (three-tier + ICD-10 + clinical status) ──
       provisionalDiagnosis:  pick(assessmentData.provisionalDiagnosis),
       workingDiagnosis:      pick(assessmentData.workingDiagnosis),
@@ -659,7 +732,11 @@ class OPDService {
       icd10Description:      pick(assessmentData.icd10Description),
       patientStatus:         pick(assessmentData.patientStatus),
       advice:                pick(assessmentData.advice),
-      followUpDate:          assessmentData.followUpDate || null,
+      // D8(b) — only touch followUpDate when the caller sent it; "" still
+      // normalises to null (clear), but an omitted field is left untouched.
+      followUpDate:          assessmentData.followUpDate !== undefined
+                               ? (assessmentData.followUpDate || null)
+                               : undefined,
       doctorNotes:           pick(assessmentData.doctorNotes),
       // SOAP fields
       subjectiveNote:        pick(assessmentData.subjectiveNote),
@@ -675,7 +752,9 @@ class OPDService {
       hopiDurationUnit:       pick(assessmentData.hopiDurationUnit),
       hopiProgression:        pick(assessmentData.hopiProgression),
       hopiCharacter:          pick(assessmentData.hopiCharacter),
-      hopiAssociatedSymptoms: assessmentData.hopiAssociatedSymptoms || [],
+      hopiAssociatedSymptoms: Array.isArray(assessmentData.hopiAssociatedSymptoms)
+                               ? assessmentData.hopiAssociatedSymptoms
+                               : undefined,
       hopiAggravating:        pick(assessmentData.hopiAggravating),
       hopiRelieving:          pick(assessmentData.hopiRelieving),
       // R7hi — pain-toggle + general-HOPI fields
@@ -686,7 +765,9 @@ class OPDService {
       hopiTreatmentTried:     pick(assessmentData.hopiTreatmentTried),
       hopiResponseSoFar:      pick(assessmentData.hopiResponseSoFar),
       // Chronic illnesses
-      chronicConditions:      assessmentData.chronicConditions      || [],
+      chronicConditions:      Array.isArray(assessmentData.chronicConditions)
+                               ? assessmentData.chronicConditions
+                               : undefined,
       chronicOthers:          pick(assessmentData.chronicOthers),
       // ── OBG history (flat obg*-prefixed, female / Gynae OPD) ──
       obgLmp:                 pick(assessmentData.obgLmp),
@@ -737,6 +818,12 @@ class OPDService {
     // array is the no-op fallback (assessment saves usually rely on the
     // separate /prescription POSTs + the bulk DoctorOrders mirror).
     if (Array.isArray(assessmentData.prescribedMedications)) {
+      // D9 — fail-closed drug-allergy gate on the embedded Rx array (the same
+      // gate the standalone Prescription model enforces; pharmacy today-rx
+      // dispenses from this array). Throws a typed 409 ALLERGY_COLLISION on a
+      // hit unless the matching row carries _allergyOverrideReason. Runs
+      // BEFORE we stage the rows onto the update.
+      await this._assertRxSafe(existingVisit?.UHID, assessmentData.prescribedMedications, "OPD assessment Rx");
       update.prescribedMedications = assessmentData.prescribedMedications.map(m => ({
         medicineName: m.medicineName || m.name      || "",
         dosage:       m.dosage       || m.dose      || "",
@@ -745,6 +832,29 @@ class OPDService {
         instructions: m.instructions || "",
         mealStatus:   m.mealStatus   || "",
       }));
+    }
+
+    // D8(b) — prune keys the caller didn't send so a partial/autosave POST
+    // can never blank a field the doctor saved earlier. (Mongoose already
+    // drops top-level `undefined` from an update — the hopiPainPresent path
+    // relies on this — we prune explicitly so the intent is obvious and the
+    // $push mix below stays clean.)
+    Object.keys(update).forEach((k) => update[k] === undefined && delete update[k]);
+
+    // D8(a) — capture the post-signature amendment append-only (mirrors
+    // DoctorNotesModel.amendments / NABH IMS.2). Only reached when the visit
+    // was already signed AND an amendReason was supplied; the original
+    // doctorSignedAt attestation is preserved. Mongoose wraps the remaining
+    // top-level fields in $set when $push is present.
+    if (alreadySigned && amendReason) {
+      update.$push = {
+        assessmentAmendments: {
+          amendedAt:   new Date(),
+          reason:      amendReason.slice(0, 1000),
+          amendedBy:   doctorName || "Doctor",
+          amendedById: doctorUserId || null,
+        },
+      };
     }
 
     const updatedVisit = await OPD.findOneAndUpdate({ visitNumber }, update, { new: true });
@@ -859,6 +969,13 @@ class OPDService {
       instructions: m.instructions || "",
       mealStatus:   m.mealStatus   || "",
     };
+    // D9 — run the fail-closed drug-allergy gate before the $push so the OPD
+    // embedded Rx can't bypass what the standalone Prescription model enforces
+    // (pharmacy today-rx dispenses from this array). Throws a typed 409
+    // ALLERGY_COLLISION on a hit unless medication._allergyOverrideReason
+    // documents a senior-clinician bypass. Keyed by the visit's UHID.
+    const visit0 = await OPD.findOne({ visitNumber }).select("UHID").lean();
+    await this._assertRxSafe(visit0?.UHID, [m], "OPD Rx");
     return OPD.findOneAndUpdate(
       { visitNumber },
       { $push: { prescribedMedications: row } },

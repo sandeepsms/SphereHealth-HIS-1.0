@@ -275,6 +275,12 @@ router.use("/admission-investigations", require("./Clinical/admissionInvestigati
 //    minimums the nurse must do) + today's done-counts.
 router.use("/nursing-assessment-plan", require("./Nurse/nursingAssessmentPlanRoutes"));
 
+// ── NABH MOM.2 (transfer of care) — structured nurse shift-handover. Writes
+//    gated on mar.write (Admin/Nurse), reads on nurse-notes.read inside the
+//    router itself. Was built (model+service+controller+routes) but never
+//    mounted, so the handover form 404'd (D12).
+router.use("/shift-handover", require("./Nurse/shiftHandoverRoutes"));
+
 // ── Roadmap A1–A5 + D14: patient-safety gates ────────────────
 router.use("/safety",           require("./Clinical/safetyRoutes"));
 

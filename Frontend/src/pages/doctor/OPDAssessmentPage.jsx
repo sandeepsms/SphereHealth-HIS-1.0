@@ -584,7 +584,7 @@ export default function OPDAssessmentPage() {
     setSaving(true);
     try {
       const user = userPre;
-      await axios.post(`${API_ENDPOINTS.OPD}/${visitNumber}/assessment`, {
+      const _assessmentBody = {
         // ...soap already includes the 6 new diagnosis fields
         // (provisionalDiagnosis + ICD, workingDiagnosis + ICD, finalDiagnosis + ICD)
         // because they all live inside the soap object — no separate
@@ -658,6 +658,9 @@ export default function OPDAssessmentPage() {
           duration:     m.duration    || "",
           instructions: m.instructions || "",
           mealStatus:   m.mealStatus  || "",
+          // D9 — carry a per-row allergy override forward so a drug the doctor
+          // already justified in the Add-med step isn't re-prompted at save.
+          ...(m._allergyOverrideReason ? { _allergyOverrideReason: m._allergyOverrideReason } : {}),
         })),
         ...(signature
           ? {
@@ -665,7 +668,57 @@ export default function OPDAssessmentPage() {
               doctorSignedAt:       new Date().toISOString(),
             }
           : {}),
-      });
+      };
+      // D8/D9 — post the assessment, resolving the two typed 409s the backend
+      // can now return: OPD_ASSESSMENT_SIGNED (the record is signed → needs an
+      // amendment reason, recorded append-only) and ALLERGY_COLLISION (a
+      // prescribed drug matches a recorded allergy → needs a documented
+      // per-drug override reason). We retry with the doctor-supplied reason(s)
+      // instead of failing the save.
+      const _rxOverrides = {};      // drugName(lower) -> override reason
+      // eslint-disable-next-line no-constant-condition
+      for (;;) {
+        const _body = {
+          ..._assessmentBody,
+          prescribedMedications: (_assessmentBody.prescribedMedications || []).map((r) => {
+            const _ov = _rxOverrides[(r.medicineName || "").toLowerCase()];
+            return _ov ? { ...r, _allergyOverrideReason: _ov } : r;
+          }),
+        };
+        try {
+          await axios.post(`${API_ENDPOINTS.OPD}/${visitNumber}/assessment`, _body);
+          break;
+        } catch (_e) {
+          const _code = _e.response?.data?.code;
+          if (_code === "OPD_ASSESSMENT_SIGNED" && !_assessmentBody.amendReason) {
+            const _reason = window.prompt(
+              "This assessment is already signed and locked. Enter a reason to record this amendment (or Cancel to leave it unchanged):",
+            );
+            if (!_reason || !_reason.trim()) {
+              toast.info("Amendment cancelled — the signed assessment was left unchanged.");
+              return;
+            }
+            _assessmentBody.amendReason = _reason.trim();
+            continue;
+          }
+          if (_code === "ALLERGY_COLLISION") {
+            const _d = _e.response.data || {};
+            const _key = (_d.drugName || "").toLowerCase();
+            if (_key && !_rxOverrides[_key]) {
+              const _reason = window.prompt(
+                `Allergy alert: ${_d.drugName} matches the patient's "${_d.allergen}" allergy.\n\nEnter an override reason to prescribe anyway, or Cancel to abort and remove it:`,
+              );
+              if (!_reason || !_reason.trim()) {
+                toast.warn("Save cancelled — remove the flagged medication or provide an override reason.");
+                return;
+              }
+              _rxOverrides[_key] = _reason.trim();
+              continue;
+            }
+          }
+          throw _e;   // unknown error / already-overridden → fall to outer catch
+        }
+      }
       // Push meds + investigations as DoctorOrders (bulk)
       const baseOrder = {
         UHID: visit?.UHID || uhid, visitId: visitNumber, visitType: "OPD",
@@ -752,13 +805,33 @@ export default function OPDAssessmentPage() {
       // available — the final source-of-truth is the bulk POST in
       // handleSave(). Keep the optimistic UI; surface failures via toast
       // (R7az-D4-HIGH-5: was silently swallowed pre-fix).
+      const _medToAdd = { ...newMed };
       try { await axios.post(`${API_ENDPOINTS.OPD}/${visitNumber}/prescription`, newMed); }
       catch (e) {
-        if (e.response?.status && e.response?.status >= 500) {
+        // D9 — the OPD Rx now runs the drug-allergy gate. On a 409 collision,
+        // prompt for a documented override reason and retry; stamp it on the
+        // local row so the later assessment save carries it too (no re-prompt).
+        if (e.response?.data?.code === "ALLERGY_COLLISION") {
+          const _d = e.response.data || {};
+          const _reason = window.prompt(
+            `Allergy alert: ${_d.drugName || newMed.name} matches the patient's "${_d.allergen}" allergy.\n\nEnter an override reason to add it anyway, or Cancel to skip:`,
+          );
+          if (!_reason || !_reason.trim()) {
+            toast.warn("Medication not added — it matches a recorded allergy.");
+            return;   // finally { setIsAddingMed(false) } still runs
+          }
+          _medToAdd._allergyOverrideReason = _reason.trim();
+          try { await axios.post(`${API_ENDPOINTS.OPD}/${visitNumber}/prescription`, { ...newMed, _allergyOverrideReason: _reason.trim() }); }
+          catch (e2) {
+            if (e2.response?.status && e2.response?.status >= 500) {
+              toast.warn("Could not sync override to server immediately — will save on next Save click.");
+            }
+          }
+        } else if (e.response?.status && e.response?.status >= 500) {
           toast.warn("Could not sync to server immediately — will save on next Save click.");
         }
       }
-      setMeds(p => [...p, { ...newMed }]);
+      setMeds(p => [...p, _medToAdd]);
       // Reset must mirror the initial state — including mealStatus, else
       // the new field stays sticky across rows.
       setNewMed({ name: "", dose: "", frequency: "", mealStatus: "", duration: "", route: "Oral" });

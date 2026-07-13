@@ -109,6 +109,13 @@ function nextRunAt(hourIST, minuteIST) {
   return new Date(todayIST.getTime() + 24 * 60 * 60 * 1000);
 }
 
+// ─── D16-fix: job registry for the retry sweeper ─────────────
+// scheduleDaily is the only producer of CronFailure rows, so registering
+// every (name → fn) it arms gives the retry sweeper a way to resolve a
+// failure record back to the job function it must replay. Keyed on the bare
+// job name (no `cron:` prefix) — the same value CronFailure.name stores.
+const _JOB_REGISTRY = new Map();
+
 /**
  * Schedule a daily IST cron. The function fires once per IST calendar
  * day at the chosen HH:MM IST, behind a 30-minute distributed lock so
@@ -118,6 +125,9 @@ function nextRunAt(hourIST, minuteIST) {
  * Returns a cancel() function to clear the timer (useful on shutdown).
  */
 function scheduleDaily(name, hourIST, minuteIST, fn) {
+  // D16-fix: expose this job to the retry sweeper. Idempotent — a re-arm
+  // just overwrites the same name with the same fn.
+  _JOB_REGISTRY.set(name, fn);
   let timer = null;
   // R7at-FIX-6/D10-MED-4: `cancelled` flag captured in closure. On SIGTERM
   // the returned cancel() sets `cancelled=true` AND clears the pending
@@ -224,4 +234,114 @@ function scheduleDaily(name, hourIST, minuteIST, fn) {
   };
 }
 
-module.exports = { scheduleDaily, acquireLock, releaseLock };
+// ─── D16-fix: cron-failure retry sweeper ─────────────────────
+// scheduleDaily records every failed tick into the CronFailure queue
+// (cronRetry.recordCronFailure) on a 30/60/120-min backoff ladder, but
+// pre-D16 nothing replayed those rows. The sweeper drains the rows that are
+// due (cronRetry.dueRetries), re-invokes the matching job — looked up in
+// _JOB_REGISTRY — behind the SAME `cron:<name>` distributed lock the
+// scheduler uses, then marks the row resolved. Interval-driven (not
+// IST-anchored): the fire instant is already baked into each row's
+// nextRetryAt, so the sweep only has to run often enough to pick rows up.
+// Best-effort at every layer — a bad row or throwing job can never crash the
+// process or abort the rest of the sweep.
+
+/** Retire a CronFailure row so dueRetries() stops returning it. Never throws. */
+async function _resolveCronFailure(rowId, resolution) {
+  try {
+    const CronFailure = require("../models/Compliance/CronFailureModel");
+    await CronFailure.findByIdAndUpdate(rowId, {
+      resolvedAt:  new Date(),
+      nextRetryAt: null,          // drop out of the dueRetries() index at once
+      resolution,
+    });
+  } catch (e) {
+    console.warn("[cron-retry-sweep] resolve row failed (non-fatal):", e.message);
+  }
+}
+
+/** One pass over the due retry rows. Never throws. */
+async function _sweepCronRetriesOnce() {
+  let retry;
+  try {
+    retry = require("./cronRetry");
+  } catch (e) {
+    console.warn("[cron-retry-sweep] cronRetry unavailable (non-fatal):", e.message);
+    return;
+  }
+  let rows;
+  try {
+    rows = await retry.dueRetries();
+  } catch (e) {
+    console.error("[cron-retry-sweep] dueRetries failed (non-fatal):", e.stack || e.message);
+    return;
+  }
+  for (const row of rows || []) {
+    let acquired = false;
+    try {
+      const fn = _JOB_REGISTRY.get(row.name);
+      if (typeof fn !== "function") {
+        // No live registration (job renamed/removed, or a non-scheduleDaily
+        // producer). Retire the row so it stops surfacing every sweep; the
+        // audit register still holds it for a human to review.
+        await _resolveCronFailure(row._id, "manual-override");
+        console.warn(`[cron-retry-sweep] no registered job for "${row.name}" — retired row ${row._id}`);
+        continue;
+      }
+      // Re-invoke behind the SAME lock scheduleDaily uses so a multi-replica
+      // deploy (or a concurrent daily tick) never double-runs the job. If a
+      // peer holds it, skip — the row stays due for the next sweep.
+      acquired = await acquireLock(`cron:${row.name}`, 30 * 60);
+      if (!acquired) {
+        console.log(`[cron-retry-sweep] skip "${row.name}" — lock held elsewhere`);
+        continue;
+      }
+      try {
+        await fn();
+        await retry.markRetrySuccess(row._id);
+        console.log(`[cron-retry-sweep] replay ok "${row.name}" (row ${row._id})`);
+      } catch (jobErr) {
+        // The replay itself threw: schedule the next ladder step (or a
+        // terminal permanent-failure row past the ceiling), then retire THIS
+        // row — but only once its successor exists, so a DB blip can't
+        // silently drop the ladder (the row just stays due for a later sweep).
+        console.error(`[cron-retry-sweep] replay failed "${row.name}":`, jobErr.stack || jobErr.message);
+        let advanced = false;
+        try {
+          await retry.recordCronFailure(row.name, jobErr, row);
+          advanced = true;
+        } catch (recErr) {
+          console.warn("[cron-retry-sweep] recordCronFailure failed (non-fatal):", recErr.message);
+        }
+        if (advanced) await _resolveCronFailure(row._id, "superseded");
+      }
+    } catch (rowErr) {
+      // One bad row must never abort the whole sweep.
+      console.error(`[cron-retry-sweep] row ${row?._id} errored (non-fatal):`, rowErr.stack || rowErr.message);
+    } finally {
+      if (acquired) await releaseLock(`cron:${row.name}`);
+    }
+  }
+}
+
+/**
+ * Start the retry sweeper: one boot pass ~90s after start (so Mongo + all
+ * scheduleDaily registrations are up) then every `intervalMs` (default 5m).
+ * Both timers are unref()'d so they never keep the event loop alive through
+ * shutdown. Returns a cancel() that clears them. Best-effort throughout.
+ */
+function startRetrySweeper({ intervalMs = 5 * 60 * 1000 } = {}) {
+  const safeSweep = () => {
+    _sweepCronRetriesOnce().catch((e) =>
+      console.error("[cron-retry-sweep] sweep crashed (non-fatal):", e.stack || e.message),
+    );
+  };
+  const boot = setTimeout(safeSweep, 90 * 1000);
+  if (typeof boot.unref === "function") boot.unref();
+  const interval = setInterval(safeSweep, intervalMs);
+  if (typeof interval.unref === "function") interval.unref();
+  console.log(`[cron-retry-sweep] armed — boot+90s, then every ${(intervalMs / 60000).toFixed(0)} min`);
+  return () => { clearTimeout(boot); clearInterval(interval); };
+}
+
+module.exports = { scheduleDaily, acquireLock, releaseLock, startRetrySweeper };

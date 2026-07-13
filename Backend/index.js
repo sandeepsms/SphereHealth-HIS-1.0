@@ -244,7 +244,7 @@ require("./services/nursing/nursingChargesService")
 // don't double-charge the same admission. The boot-time catch-up still
 // runs 60s after start so a missed midnight cron still flushes the day.
 const autoBilling = require("./services/Billing/autoBillingService");
-const { scheduleDaily, acquireLock, releaseLock } = require("./utils/cronScheduler");
+const { scheduleDaily, acquireLock, releaseLock, startRetrySweeper } = require("./utils/cronScheduler");
 
 // R7at-FIX-1/D10-HIGH-1+2: boot-catchup now uses the SAME lock name as
 // the daily cron (`cron:daily-accrual`, not the divergent `:boot`
@@ -1149,7 +1149,7 @@ const _cancelRetentionReview = scheduleDaily("retention-review", 4, 0, async () 
 // Mirrors the retention startup-self-test pattern directly above.
 (() => {
   const cronDeps = [
-    { name: "cronScheduler", path: "./utils/cronScheduler", needs: ["acquireLock", "releaseLock"] },
+    { name: "cronScheduler", path: "./utils/cronScheduler", needs: ["acquireLock", "releaseLock", "startRetrySweeper"] },
   ];
   const failures = [];
   for (const dep of cronDeps) {
@@ -1186,7 +1186,10 @@ const _cancelVisitorPassExpiry = (() => {
       console.info(`[cron:visitor-pass-expiry] tick OK — expired=${result?.expired||0} dur=${Date.now()-start}ms`);
     } catch (e) {
       console.error('[cron:visitor-pass-expiry] error:', e.stack || e.message);
-      // TODO B4-T05 retry: recordCronFailure('visitor-pass-expiry', e);
+      // D16: the CronFailure retry queue + sweeper (startRetrySweeper) now
+      // exist, but only scheduleDaily jobs are addressable by name for replay.
+      // This interval job isn't in that registry, so it stays log-only — a
+      // stale pass simply re-flips on the next 5-min tick anyway.
     }
   }, 5 * 60 * 1000);
   if (typeof interval.unref === "function") interval.unref();
@@ -1304,6 +1307,12 @@ const _cancelNightlyMongoBackup = scheduleDaily("nightly-mongo-backup", 2, 30, a
   }
 });
 
+// D16-fix — cron-failure retry sweeper. scheduleDaily records every failed
+// daily tick into the CronFailure queue (30/60/120-min backoff ladder) but
+// pre-D16 nothing replayed them. This drains the due rows every 5 min and
+// re-invokes the matching job behind the same cron:<name> lock. Best-effort.
+const _cancelRetrySweeper = startRetrySweeper({ intervalMs: 5 * 60 * 1000 });
+
 // Keep a reference name for the graceful-shutdown handler below.
 const _autoBillingInterval = {
   _cancel: () => {
@@ -1329,6 +1338,7 @@ const _autoBillingInterval = {
     _cancelInfusionIntakeCron();            // R7bq-4
     _cancelMissedDoseCron();                // R7bq-J1
     _cancelNightlyMongoBackup();            // R7bx-2
+    _cancelRetrySweeper();                 // D16-fix — cron retry sweeper
   },
 };
 

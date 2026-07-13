@@ -369,6 +369,26 @@ const OPDSchema = new mongoose.Schema(
       }],
       default: [],
     },
+
+    // ── Post-signature assessment amendments (D8) ───────────────
+    // Once the doctor signs (doctorSignatureImage stamped), the structured
+    // assessment is medico-legally immutable: a subsequent /assessment POST is
+    // blocked with a typed 409 (OPD_ASSESSMENT_SIGNED) UNLESS it carries an
+    // explicit amendReason. When it does, the overwrite is allowed and captured
+    // here append-only (never overwritten) — mirroring DoctorNotesModel
+    // .amendments (NABH IMS.2 / MCI Reg 1.4.2). The original doctorSignedAt
+    // attestation is preserved; only the structured fields the doctor re-sent
+    // change.
+    assessmentAmendments: {
+      type: [{
+        _id:         false,
+        amendedAt:   { type: Date,   default: Date.now },
+        reason:      { type: String, default: "", trim: true, maxlength: 1000 },
+        amendedBy:   { type: String, default: "" },    // doctor's full name
+        amendedById: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+      }],
+      default: [],
+    },
   },
   { timestamps: true }
 );

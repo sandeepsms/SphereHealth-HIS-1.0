@@ -231,10 +231,23 @@ class AdmissionService {
             // flag so the dischargeSummary finalize endpoint demands an
             // explicit senior-cosign acknowledgement at sign-off.
             mustCosign: await (async () => {
-              if (!data.attendingDoctorId) return false;
+              if (!data.attendingDoctorId && !data.attendingDoctorUserId) return false;
               try {
+                // attendingDoctorId is a Doctor._id — the designation lives on
+                // the LINKED User (Doctor.loginUserId -> User.doctorDetails).
+                // Pre-fix this did User.findById(attendingDoctorId) against a
+                // Doctor._id, always missed, so mustCosign never fired. Resolve
+                // the User id (prefer the one the caller passed, else hop via
+                // Doctor.loginUserId) then read the designation. (D7)
+                const Doctor = require("../../models/Doctor/doctorModel");
                 const User = require("../../models/User/userModel");
-                const u = await User.findById(data.attendingDoctorId).select("doctorDetails.designation").lean();
+                let userId = data.attendingDoctorUserId || null;
+                if (!userId) {
+                  const d = await Doctor.findById(data.attendingDoctorId).select("loginUserId").lean();
+                  userId = d?.loginUserId || null;
+                }
+                if (!userId) return false;
+                const u = await User.findById(userId).select("doctorDetails.designation").lean();
                 return u?.doctorDetails?.designation === "Junior Resident";
               } catch (_) { return false; }
             })(),
@@ -1250,6 +1263,14 @@ class AdmissionService {
     const bedFilter = filters.bedId || filters.bed;
     if (bedFilter && mongoose.isValidObjectId(String(bedFilter)))
       query.bedId = new mongoose.Types.ObjectId(String(bedFilter));
+
+    // R7hr-D6 — honour the Doctor-scope $or the controller stamps
+    // (attendingDoctorId OR treatmentTeam.doctorId). The named-key copy
+    // above never merged it, so any Doctor with ipd.read saw EVERY active
+    // inpatient (PHI over-exposure). Admin / Accountant callers pass no
+    // $or -> whole-census view unchanged. Array guard neutralises any
+    // stray query-string ?$or= for non-scoped roles.
+    if (Array.isArray(filters.$or) && filters.$or.length) query.$or = filters.$or;
 
     const admissions = await Admission.find(query)
       .populate(

@@ -92,5 +92,14 @@ CSSDLoadRecordSchema.pre("save", async function (next) {
   } catch (e) { next(e); }
 });
 
+// ── D19 — NABH register tamper-evidence ─────────────────────
+// Stamp a keyed HMAC-SHA256 integrity digest on every save so an out-of-band
+// edit of this surveyor-inspected register row is detectable. Non-blocking +
+// backward-compatible: legacy rows (no stored digest) verify as "unverified",
+// never "tampered". Registered AFTER the loadNumber pre('save') hook above so
+// the minted loadNumber is included in the digest. Keyed by REGISTER_HMAC_SECRET.
+const { registerIntegrityPlugin } = require("../../utils/registerIntegrity");
+CSSDLoadRecordSchema.plugin(registerIntegrityPlugin);
+
 module.exports =
   mongoose.models.CSSDLoadRecord || mongoose.model("CSSDLoadRecord", CSSDLoadRecordSchema);

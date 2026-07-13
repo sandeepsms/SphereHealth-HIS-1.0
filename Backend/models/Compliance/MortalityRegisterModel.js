@@ -134,6 +134,14 @@ MortalityRegisterSchema.index(
   { unique: true, sparse: true, name: "uniq_mortality_admission" },
 );
 
+// ── D19 — NABH register tamper-evidence ─────────────────────
+// Stamp a keyed HMAC-SHA256 integrity digest on every save so an out-of-band
+// edit of this surveyor-inspected register row is detectable. Non-blocking +
+// backward-compatible: legacy rows (no stored digest) verify as "unverified",
+// never "tampered". Keyed by env REGISTER_HMAC_SECRET.
+const { registerIntegrityPlugin } = require("../../utils/registerIntegrity");
+MortalityRegisterSchema.plugin(registerIntegrityPlugin);
+
 module.exports =
   mongoose.models.MortalityRegister ||
   mongoose.model("MortalityRegister", MortalityRegisterSchema);

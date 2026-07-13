@@ -153,8 +153,14 @@ const ClinicalAuditSchema = new mongoose.Schema(
         // Discharge (NABH AAC.4)
         "DISCHARGE_SUMMARY_CREATED",
         "DISCHARGE_SUMMARY_FINALIZED",
+        // R7bb-FIX-E-4 / D3-CRIT-4 — senior co-sign of a JR self-finalized
+        // summary (POST /discharge-summary/:id/cosign). Signature → 7y floor.
+        "DISCHARGE_SUMMARY_COSIGNED",
         "DISCHARGE_WORKFLOW_ADVANCED",
         "ADMISSION_REACTIVATED",
+        // NABH IMS.3 (#138) — retention legal-hold set/clear on a clinical
+        // record (Admission / DischargeSummary / MLC). Custody → 7y floor.
+        "LEGAL_HOLD_UPDATED",
 
         // Vitals / Assessment writes
         "VITALS_RECORDED",

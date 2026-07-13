@@ -390,6 +390,8 @@ export const ACTIONS = {
   // Hand-Hygiene, HAI, Med-Error, etc.
   "compliance.nabh.read":          ["Admin", "Doctor", "Nurse", "MRD"],
   "compliance.nabh.write":         ["Admin", "Doctor", "Nurse", "MRD"],
+  // D19 — mirror of backend: NABH register tamper-evidence verify surface.
+  "compliance.nabh.verify":        ["Admin", "MRD"],
   "print.audit.write":             ["Admin", "Doctor", "Nurse", "Pharmacist", "Lab Technician", "Receptionist", "MRD"],
 
   // Mirror of Backend/config/permissions.js — NABH HRM.1 duty roster +
@@ -405,6 +407,9 @@ export const ACTIONS = {
   "tax.tds.write":                 ["Admin", "Accountant"],
   "tax.tds.read":                  ["Admin", "Accountant"],
   "compliance.retention.read":     ["Admin", "MRD"],
+  // Mirror — NABH IMS.3 retention legal-hold setter (POST /api/mrd/legal-hold).
+  // MRD / Admin only; hides the "Legal hold" control for everyone else.
+  "compliance.legal-hold.write":   ["Admin", "MRD"],
   "pharmacy.cold-chain.write":     ["Admin", "Pharmacist", "Nurse"],
   "pharmacy.cold-chain.read":      ["Admin", "Pharmacist", "Nurse", "Doctor"],
 

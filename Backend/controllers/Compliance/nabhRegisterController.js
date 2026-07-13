@@ -31,6 +31,14 @@ const AntimicrobialUseRegister = require("../../models/Compliance/AntimicrobialU
 // R7en — ECG Register (NABH AAC.4 + IPSG.2 + COP.7)
 const ECGRegister = require("../../models/Compliance/ECGRegisterModel");
 const emitter = require("../../services/Compliance/nabhRegisterEmitter");
+// D19 — surveyor-critical registers + per-row integrity verifier (tamper-evidence).
+// MortalityRegister + EmergencyRegister are already required above.
+const SentinelEventRegister   = require("../../models/Compliance/SentinelEventRegisterModel");
+const RCARegister             = require("../../models/Compliance/RCARegisterModel");
+const NearMissEventRegister   = require("../../models/Compliance/NearMissEventRegisterModel");
+const MedicationErrorRegister = require("../../models/Compliance/MedicationErrorRegisterModel");
+const CSSDLoadRecord          = require("../../models/Compliance/CSSDLoadRecordModel");
+const { verifyRegisterModel } = require("../../utils/registerIntegrity");
 
 function _dateRange(query) {
   const out = {};
@@ -660,6 +668,43 @@ exports.dashboardSummary = async (req, res) => {
         { id: "ecg", name: "ECG Register", route: "/compliance/nabh-registers#ecg", nabhRef: "AAC.4 / COP.7", ...ecg },
       ],
     });
+  } catch (e) {
+    sendErr(res, e);
+  }
+};
+
+// ───────────────────────────────────────────────────────────────────
+// D19 — Register integrity verification (tamper-evidence)
+// ───────────────────────────────────────────────────────────────────
+// GET /registers/nabh/integrity-verify/:register — recompute the per-row HMAC
+// integrity digest for a surveyor-critical register and flag any row whose
+// stored digest no longer matches its material content (an out-of-band edit
+// that bypassed the pre-save stamp). Rows with no stored digest report as
+// "legacy" (unverified), NOT "tampered". Admin / MRD only (compliance.nabh.verify).
+const _INTEGRITY_MODELS = {
+  "mortality":        MortalityRegister,
+  "sentinel":         SentinelEventRegister,
+  "rca":              RCARegister,
+  "near-miss":        NearMissEventRegister,
+  "medication-error": MedicationErrorRegister,
+  "cssd-load":        CSSDLoadRecord,
+  "emergency":        EmergencyRegister,
+};
+
+exports.verifyRegisterIntegrity = async (req, res) => {
+  try {
+    const key = String(req.params.register || "").toLowerCase();
+    const Model = _INTEGRITY_MODELS[key];
+    if (!Model) {
+      return res.status(400).json({
+        success: false,
+        message: `Unknown register "${key}". Expected one of: ${Object.keys(_INTEGRITY_MODELS).join(", ")}`,
+      });
+    }
+    const filter = {};
+    if (req.query.UHID) filter.UHID = String(req.query.UHID).toUpperCase();
+    const result = await verifyRegisterModel(Model, filter, { limit: req.query.limit });
+    return res.json({ success: true, register: key, ...result });
   } catch (e) {
     sendErr(res, e);
   }

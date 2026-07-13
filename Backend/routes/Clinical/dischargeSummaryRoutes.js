@@ -20,6 +20,12 @@ router.post("/",                requireAction("discharge-summary.write"), ctrl.c
 router.get("/:id",              validateObjectIdParam("id"), requireAction("discharge-summary.read"),  ctrl.getById);
 router.put("/:id",              validateObjectIdParam("id"), requireAction("discharge-summary.write"), ctrl.update);
 router.patch("/:id/finalize",   validateObjectIdParam("id"), requireAction("discharge-summary.write"), ctrl.finalize);
+// R7bb-FIX-E-4 / D3-CRIT-4 — senior co-sign of a Junior-Resident self-
+// finalized summary (NABH COP.7). Gated on the senior-attestation token
+// (Admin/Doctor at the route); the controller additionally enforces the
+// senior designation + separation-of-duties and stamps cosignedBy /
+// cosignedByName / cosignedAt from the authenticated user (never body).
+router.post("/:id/cosign",      validateObjectIdParam("id"), requireAction("signature.consultant-grade"), ctrl.cosign);
 router.delete("/:id",           validateObjectIdParam("id"), requireAction("discharge-summary.write"), ctrl.delete);
 
 module.exports = router;

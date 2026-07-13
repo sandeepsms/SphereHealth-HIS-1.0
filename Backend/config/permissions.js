@@ -574,6 +574,10 @@ const ACTIONS = {
   // include bedside clinicians who first detect / log the incident.
   "compliance.nabh.read":          ["Admin", "Doctor", "Nurse", "MRD"],
   "compliance.nabh.write":         ["Admin", "Doctor", "Nurse", "MRD"],
+  // D19 — NABH register tamper-evidence verify surface. Recomputes per-row HMAC
+  // integrity digests + flags out-of-band edits; MRD owns the audit, Admin gets
+  // oversight. (Mirrored in Frontend/src/config/permissions.js.)
+  "compliance.nabh.verify":        ["Admin", "MRD"],
   "print.audit.write":             ["Admin", "Doctor", "Nurse", "Pharmacist", "Lab Technician", "Receptionist", "MRD"],
 
   // NABH HRM.1 — dated staff duty roster. Read open to clinical leads; write
@@ -600,6 +604,12 @@ const ACTIONS = {
   // oversight. Writes (mark-archived, restore, soft-delete) are deferred
   // to a follow-up cycle pending DPDP / IT-44AA legal sign-off.
   "compliance.retention.read":     ["Admin", "MRD"],
+  // NABH IMS.3 (#138) — retention legal-hold setter. MRD / Admin toggle the
+  // hold flag (open litigation / MLC / insurance dispute / court order) that
+  // excludes a clinical record (Admission / DischargeSummary / MLC) from the
+  // retentionEnforcer purge-candidate sweep. Narrower than the read token:
+  // only the two records custodians may WRITE a hold. POST /api/mrd/legal-hold.
+  "compliance.legal-hold.write":   ["Admin", "MRD"],
   // Pharmacy cold-chain — F5's coordination contract. Write tier is
   // bedside (Pharmacist + Nurse for vaccine fridge logs, Admin for
   // master config); read also includes Doctor for clinical context

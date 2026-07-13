@@ -1223,7 +1223,11 @@ exports.dispense = async (req, res) => {
         // accept a client-supplied unitPrice. Pre-R7bh a malicious caller
         // could POST { unitPrice: 0.01 } and walk out with discounted stock.
         const unit  = Number(u.batch.salePrice || 0);
-        const gstR  = Number(it.gstRate ?? 12);
+        // D10 — same rule for the GST rate: ALWAYS use the batch's immutable
+        // stamped gstRate (memorialised from the HSN master at GRN, R7hr-50),
+        // never a client-supplied it.gstRate. A crafted client could otherwise
+        // bill a wrong-but-valid slab -> corrupt tax invoice + GSTR-1.
+        const gstR  = Number(u.batch.gstRate ?? 12);
         const discR = Math.max(0, Math.min(100, Number(it.discountPercent ?? discountPercent ?? 0) || 0)); // R7hr-241 (audit: unbounded line discount) — clamp 0–100%
         const gross = qty * unit;
         const discAmt = gross * discR / 100;
@@ -3521,7 +3525,11 @@ exports.addItems = async (req, res) => {
         // R7bh-F4 / R7bg-10-CRIT-1: ALWAYS use the batch's salePrice — never
         // trust a client-supplied unitPrice on supplementary invoices either.
         const unit  = Number(u.batch.salePrice || 0);
-        const gstR  = Number(it.gstRate ?? 12);
+        // D10 — same rule for GST on supplementary invoices: use the batch's
+        // immutable stamped gstRate (R7hr-50), never a client-supplied
+        // it.gstRate, so a crafted supplement can't push a wrong slab into the
+        // GSTR-1 debit-note bucket.
+        const gstR  = Number(u.batch.gstRate ?? 12);
         const discR = Math.max(0, Math.min(100, Number(it.discountPercent ?? discountPercent ?? 0) || 0)); // R7hr-241 (audit: unbounded line discount) — clamp 0–100%
         const gross = qty * unit;
         const discAmt = gross * discR / 100;

@@ -80,6 +80,14 @@ SentinelEventRegisterSchema.index({ UHID: 1, createdAt: -1 });
 SentinelEventRegisterSchema.index({ status: 1, createdAt: -1 });
 SentinelEventRegisterSchema.index({ eventType: 1, discoveredAt: -1 });
 
+// ── D19 — NABH register tamper-evidence ─────────────────────
+// Stamp a keyed HMAC-SHA256 integrity digest on every save so an out-of-band
+// edit of this surveyor-inspected register row is detectable. Non-blocking +
+// backward-compatible: legacy rows (no stored digest) verify as "unverified",
+// never "tampered". Keyed by env REGISTER_HMAC_SECRET.
+const { registerIntegrityPlugin } = require("../../utils/registerIntegrity");
+SentinelEventRegisterSchema.plugin(registerIntegrityPlugin);
+
 module.exports =
   mongoose.models.SentinelEventRegister ||
   mongoose.model("SentinelEventRegister", SentinelEventRegisterSchema);
