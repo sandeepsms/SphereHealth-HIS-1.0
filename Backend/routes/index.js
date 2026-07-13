@@ -234,6 +234,11 @@ router.use("/investigation-orders", investigationOrderRoutes);
 
 // Phase 1: NABH Paperless Modules
 router.use("/discharge-summary", dischargeSummaryRoutes);
+
+// AI Clinical Documentation Assistant (ambient scribe) — structures a consult
+// transcript into a reviewable clinical-note draft. Feature-flagged by
+// ANTHROPIC_API_KEY; gated on clinical.scribe (Admin/Doctor).
+router.use("/clinical-scribe", require("./Clinical/clinicalScribeRoutes"));
 router.use("/consent-forms", consentFormRoutes);
 // R7hr-113 — Paperless PROM/PREM surveys. Discharge finalize gate consults
 // /api/prom-prem-surveys?admissionId=X to confirm one signed PROM + one

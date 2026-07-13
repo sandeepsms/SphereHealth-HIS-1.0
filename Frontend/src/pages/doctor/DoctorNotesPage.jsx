@@ -64,6 +64,8 @@ import SignaturePad from "../../Components/signature/SignaturePad";
 // all render with the same polished layout as Daily Progress.
 import TimelineNoteCard from "../../Components/notes/TimelineNoteCard";
 import Icd10Picker from "../../Components/clinical/Icd10Picker";   // R7hr(PCS-P1) — system="pcs" on the procedure form
+import AmbientScribe from "../../Components/scribe/AmbientScribe";
+import { ipdFromNote } from "../../Components/scribe/scribeApply";
 
 /* ── Design tokens (blue/indigo — doctor theme) ── */
 const C = {
@@ -2824,6 +2826,23 @@ function DoctorNotesContent({ selectedPatient }) {
                 </div>
               </div>
               <div style={{ display: "flex", gap: 8 }}>
+                {/* AI Scribe — daily progress note only; fills SOAP/vitals/Dx/
+                    investigations + adds order rows (fill-empty). Doctor signs. */}
+                {activeModal === "daily" && (
+                  <AmbientScribe
+                    surface="ipd"
+                    context={{ age: selectedPatient?.age, sex: selectedPatient?.gender || selectedPatient?.sex }}
+                    onApply={(note) => {
+                      const f = ipdFromNote(note);
+                      setSoap((p) => { const q = { ...p }; Object.entries(f.soap).forEach(([k, v]) => { if (v && !String(q[k] || "").trim()) q[k] = v; }); return q; });
+                      setVitals((p) => { const q = { ...p }; Object.entries(f.vitals).forEach(([k, v]) => { if (v && !String(q[k] || "").trim()) q[k] = v; }); return q; });
+                      setDiag((p) => { const q = { ...p }; Object.entries(f.diag).forEach(([k, v]) => { if (v && !String(q[k] || "").trim()) q[k] = v; }); return q; });
+                      if (f.invxString) setInvx((p) => (String(p || "").trim() ? p : f.invxString));
+                      if (f.orderRows.length) setOrders((p) => [...p, ...f.orderRows]);
+                      toast.success("AI draft applied — review the note, then Sign.");
+                    }}
+                  />
+                )}
                 <button onClick={() => { setActiveModal(null); setEditingNote(null); }} className="his-btn--ghost">
                   Cancel
                 </button>

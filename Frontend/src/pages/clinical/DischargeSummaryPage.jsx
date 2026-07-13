@@ -21,6 +21,8 @@ import SignaturePad from "../../Components/signature/SignaturePad";
 import ClinicalLayout from "../../Components/clinical/ClinicalLayout";
 import MLCAutoStamp from "../../Components/mlc/MLCAutoStamp";
 import Icd10Picker from "../../Components/clinical/Icd10Picker";   // R7hr(ICD-P1.3)
+import AmbientScribe from "../../Components/scribe/AmbientScribe";
+import { dischargeFromNote } from "../../Components/scribe/scribeApply";
 import { buildChronologicalLabNarrative } from "../../utils/labNarrative";   // R7hr(LAB-FU)
 import { confirm } from "../../Components/common/ConfirmDialog";
 import "../../Components/clinical/clinical-forms.css";
@@ -1620,6 +1622,27 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
               <button onClick={() => setView("catalogue")} style={{ padding: "7px 14px", borderRadius: 8, border: `1px solid ${C.border}`, background: "white", cursor: "pointer", fontSize: 12, color: C.muted, fontWeight: 600 }}>
                 <i className="pi pi-arrow-left" style={{ marginRight: 5 }} />Departments
               </button>
+              {/* AI Scribe — dictate the discharge; fills final diagnosis,
+                  course-in-hospital, meds, follow-up etc. (fill-empty). Doctor
+                  reviews + Saves/finalises as usual. */}
+              <AmbientScribe
+                surface="discharge"
+                context={{ age: selectedPatient?.age, sex: selectedPatient?.gender || selectedPatient?.sex }}
+                onApply={(note) => {
+                  const f = dischargeFromNote(note);
+                  setForm((p) => { const q = { ...p }; Object.entries(f.formPatch).forEach(([k, v]) => { if (v && !String(q[k] || "").trim()) q[k] = v; }); return q; });
+                  if (f.medRows.length) setMedications((p) => {
+                    const real = (p || []).filter((m) => !m._fromTemplate);
+                    const have = new Set(real.map((m) => String(m.drug || "").toLowerCase()));
+                    return [...real, ...f.medRows.filter((r) => r.drug && !have.has(r.drug.toLowerCase()))];
+                  });
+                  if (f.investRows.length) setInvestigations((p) => {
+                    const have = new Set((p || []).map((i) => String(i.name || "").toLowerCase()));
+                    return [...(p || []), ...f.investRows.filter((r) => r.name && !have.has(r.name.toLowerCase()))];
+                  });
+                  toast.success("AI draft applied — review the summary, then Save.");
+                }}
+              />
               <button onClick={openPrint} style={{ padding: "7px 14px", borderRadius: 8, border: "none", background: "#eef2ff", color: C.blue, cursor: "pointer", fontSize: 12, fontWeight: 700 }}>
                 <i className="pi pi-eye" style={{ marginRight: 5 }} />Preview
               </button>

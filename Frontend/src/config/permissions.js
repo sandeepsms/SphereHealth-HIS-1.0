@@ -319,6 +319,8 @@ export const ACTIONS = {
   "mar.read":                  ["Admin", "Doctor", "Nurse", "MRD"],
   "discharge-summary.read":    ["Admin", "Doctor", "Nurse", "MRD"],
   "discharge-summary.write":   ["Admin", "Doctor"],
+  // Mirror — AI Clinical Documentation Assistant (ambient scribe). Doctor-only.
+  "clinical.scribe":           ["Admin", "Doctor"],
   "mlc.write":                 ["Admin", "Doctor"],
   "mlc.read":                  ["Admin", "Doctor", "Nurse"],
   "ipd.read":                  ["Admin", "Doctor", "Nurse", "Receptionist"],

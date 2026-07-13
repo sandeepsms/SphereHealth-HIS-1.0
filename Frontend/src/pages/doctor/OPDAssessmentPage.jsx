@@ -17,6 +17,8 @@ import DrugAutocomplete, { parseStrength, drugDisplayName } from "../../Componen
 import ServiceAutocomplete from "../../Components/clinical/ServiceAutocomplete";
 import Icd10Picker from "../../Components/clinical/Icd10Picker";   // R7hr(ICD-P1.3)
 import InfusionPanel from "../../Components/clinical/InfusionPanel";
+import AmbientScribe from "../../Components/scribe/AmbientScribe";
+import { opdFromNote } from "../../Components/scribe/scribeApply";
 import { useHospitalSettings } from "../../context/HospitalSettingsContext";
 // R7ar-P1-14/D4-aq-02: centralised Decimal128 unwrap.
 import { toMoney } from "../../utils/money";
@@ -1659,6 +1661,23 @@ export default function OPDAssessmentPage() {
           </div>
         </div>
         <div style={{ display: "flex", gap: 10 }}>
+          {/* AI Clinical Documentation Assistant — dictate the consult, review a
+              structured draft, apply into the fields below (fill-empty; never
+              overwrites what the doctor typed). Doctor still Saves + signs. */}
+          <AmbientScribe
+            surface="opd"
+            context={{ age: visit?.age, sex: visit?.gender || visit?.sex }}
+            style={{ background: "rgba(255,255,255,.15)", color: "#fff", border: "1.5px solid rgba(255,255,255,.6)" }}
+            onApply={(note) => {
+              const f = opdFromNote(note);
+              setSoap((p) => { const q = { ...p }; Object.entries(f.soapPatch).forEach(([k, v]) => { if (v && !String(q[k] || "").trim()) q[k] = v; }); return q; });
+              setHopi((h) => { const q = { ...h }; Object.entries(f.hopiPatch).forEach(([k, v]) => { if (k === "associatedSymptoms") { if (Array.isArray(v) && v.length && !(q.associatedSymptoms || []).length) q.associatedSymptoms = v; } else if (v && !String(q[k] || "").trim()) q[k] = v; }); return q; });
+              if (f.chronic && !String(chronic.others || "").trim() && !(chronic.conditions || []).length) setChronic(f.chronic);
+              if (f.medRows.length) setMeds((p) => { const have = new Set(p.map((m) => String(m.name || m.medicineName || "").toLowerCase())); return [...p, ...f.medRows.filter((r) => r.name && !have.has(r.name.toLowerCase()))]; });
+              if (f.investRows.length) setInvests((p) => { const have = new Set(p.map((i) => String(i.name || "").toLowerCase())); return [...p, ...f.investRows.filter((r) => r.name && !have.has(r.name.toLowerCase()))]; });
+              toast.success("AI draft applied — review each field, then Save.");
+            }}
+          />
           <button onClick={handlePrint} style={{
             background: "rgba(255,255,255,.15)", color: "#fff",
             border: "1.5px solid rgba(255,255,255,.6)", padding: "11px 20px", borderRadius: 10,

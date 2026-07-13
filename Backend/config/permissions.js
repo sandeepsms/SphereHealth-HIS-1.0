@@ -384,6 +384,10 @@ const ACTIONS = {
   "mar.read":                  ["Admin", "Doctor", "Nurse", "MRD"],
   "discharge-summary.read":    ["Admin", "Doctor", "Nurse", "MRD"],
   "discharge-summary.write":   ["Admin", "Doctor"],
+  // AI Clinical Documentation Assistant (ambient scribe) — structure a consult
+  // transcript into a reviewable note draft. Doctor-only; the scribe drafts,
+  // the doctor reviews + signs via the normal note flow. (Mirrored in FE.)
+  "clinical.scribe":           ["Admin", "Doctor"],
   // MLC reads include Nurse (treatment-team awareness) but writes
   // are clinician-only — police-relevant document, the nurse cannot
   // author or amend an MLR.
