@@ -98,10 +98,11 @@ function acquireLock() {
 }
 function releaseLock() { try { if (lockFd != null) fs.closeSync(lockFd); fs.unlinkSync(LOCK); } catch (_) {} }
 
-(async () => {
-  if (!acquireLock()) { log("another backup run is in progress (lock held) — exiting without action."); process.exit(0); }
+async function run(opts = {}) {
+  if (!acquireLock()) { log("another backup run is in progress (lock held) — skipping this run."); return { ok: true, skipped: "lock-held" }; }
 
-  const mode = String(opt("mode", "nightly"));
+  try {
+  const mode = String(opts.mode || opt("mode", "nightly"));
   const isMonthly = mode === "monthly";
   const subdir = isMonthly ? "monthly" : "nightly";
   const name = isMonthly ? `sphere_${ymStamp()}.shbak.gz` : `sphere_${stamp()}.shbak.gz`;
@@ -165,7 +166,7 @@ function releaseLock() { try { if (lockFd != null) fs.closeSync(lockFd); fs.unli
 
   // 5) MONTHLY: real restore-drill — restore into a SEPARATE drill DB and
   //    confirm the ACTUAL doc count in the restored DB (not file-read counts).
-  if (isMonthly || flag("verify")) {
+  if (isMonthly || (opts.verify != null ? !!opts.verify : flag("verify"))) {
     const liveDb = dbNameOf(MONGO_URI), drillDb = dbNameOf(VERIFY_URI);
     if (!drillDb || drillDb === liveDb || !/drill|verify/i.test(drillDb)) {
       throw new Error(`UNSAFE restore-drill target — BACKUP_VERIFY_URI db "${drillDb}" must differ from the live DB "${liveDb}" and contain "drill"/"verify". Refusing to wipe.`);
@@ -195,11 +196,21 @@ function releaseLock() { try { if (lockFd != null) fs.closeSync(lockFd); fs.unli
   try { fs.writeFileSync(path.join(OFFLINE, "last-backup.json"), JSON.stringify(status, null, 2)); } catch (_) {}
 
   log(`=== ${mode.toUpperCase()} backup COMPLETE ===`);
-  releaseLock();
-  process.exit(0);
-})().catch((e) => {
-  log(`BACKUP FAILED: ${e.stack || e.message}`);
-  try { fs.mkdirSync(OFFLINE, { recursive: true }); fs.writeFileSync(path.join(OFFLINE, "last-backup.json"), JSON.stringify({ ok: false, error: e.message, at: new Date().toISOString() }, null, 2)); } catch (_) {}
-  releaseLock();
-  process.exit(2);
-});
+  return status;
+  } catch (e) {
+    log(`BACKUP FAILED: ${e.stack || e.message}`);
+    try { fs.mkdirSync(OFFLINE, { recursive: true }); fs.writeFileSync(path.join(OFFLINE, "last-backup.json"), JSON.stringify({ ok: false, error: e.message, at: new Date().toISOString() }, null, 2)); } catch (_) {}
+    throw e;
+  } finally {
+    releaseLock();
+  }
+}
+
+// CLI entry point — preserves the standalone / PowerShell-scheduled behaviour
+// (`node runBackup.js --mode=nightly|--mode=monthly|--verify`): exit 0 on
+// success, exit 2 on failure so Task Scheduler / an OS cron alerts on non-zero.
+if (require.main === module) {
+  run().then(() => process.exit(0)).catch(() => process.exit(2));
+}
+
+module.exports = { run };

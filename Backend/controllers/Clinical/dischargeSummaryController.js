@@ -431,7 +431,7 @@ class DischargeSummaryController {
         event: "DISCHARGE_SUMMARY_FINALIZED",
         UHID: summary.UHID,
         admissionId: summary.admissionId,
-        patientId: summary.patientId,
+        patientId: summary.patient,
         patientName: summary.patientName,
         targetType: "DischargeSummary",
         targetId: summary._id,
@@ -456,7 +456,7 @@ class DischargeSummaryController {
       if (summary.icdCode) diags.push({ code: summary.icdCode, description: summary.finalDiagnosis || "" });
       const raised = await raiseNotifiableCases({
         diagnoses: diags,
-        patient: { _id: summary.patientId, UHID: summary.UHID, name: summary.patientName },
+        patient: { _id: summary.patient, UHID: summary.UHID, name: summary.patientName },
         admission: { _id: summary.admissionId },
         actor: req.user || {},
       });
@@ -473,9 +473,9 @@ class DischargeSummaryController {
       try {
         const { emitMortality } = require("../../services/Compliance/nabhRegisterEmitter");
         const Patient = require("../../models/Patient/patientModel");
-        const patient = summary.patientId
-          ? await Patient.findById(summary.patientId).select("_id UHID fullName name age gender sex").lean()
-          : { _id: summary.patientId, UHID: summary.UHID, fullName: summary.patientName, age: summary.age, sex: summary.gender };
+        const patient = summary.patient
+          ? await Patient.findById(summary.patient).select("_id UHID fullName name age gender sex").lean()
+          : { _id: summary.patient, UHID: summary.UHID, fullName: summary.patientName, age: summary.age, sex: summary.gender };
         const admission = summary.admissionId
           ? await Admission.findById(summary.admissionId).select("_id admissionNumber admissionDate attendingDoctor attendingDoctorId isMLC mlcNumber").lean()
           : null;
@@ -499,9 +499,9 @@ class DischargeSummaryController {
       try {
         const { emitLAMA } = require("../../services/Compliance/nabhRegisterEmitter");
         const Patient = require("../../models/Patient/patientModel");
-        const lamaPatient = summary.patientId
-          ? await Patient.findById(summary.patientId).select("_id UHID fullName name age gender sex").lean()
-          : { _id: summary.patientId, UHID: summary.UHID, fullName: summary.patientName, age: summary.age, sex: summary.gender };
+        const lamaPatient = summary.patient
+          ? await Patient.findById(summary.patient).select("_id UHID fullName name age gender sex").lean()
+          : { _id: summary.patient, UHID: summary.UHID, fullName: summary.patientName, age: summary.age, sex: summary.gender };
         const lamaAdmission = summary.admissionId
           ? await Admission.findById(summary.admissionId).select("_id admissionNumber admissionDate attendingDoctor attendingDoctorId").lean()
           : null;

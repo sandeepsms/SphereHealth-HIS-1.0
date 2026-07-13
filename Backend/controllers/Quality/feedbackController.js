@@ -12,7 +12,7 @@
  *   POST /api/public-feedback/:token  publicSubmit  — patient submits
  */
 const PatientFeedback = require("../../models/Quality/PatientFeedbackModel");
-const { escapeRegex } = require("../../utils/queryGuards");   // TD-3 dedup — was hand-rolled twice below
+const { escapeRegex, parseHospitalDate } = require("../../utils/queryGuards");   // TD-3 dedup — was hand-rolled twice below
 const { RATING_KEYS } = PatientFeedback;
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -166,8 +166,12 @@ exports.list = async (req, res) => {
     if (minOverall) q["ratings.overall"] = { $gte: Number(minOverall) };
     if (from || to) {
       q.submittedAt = {};
-      if (from) q.submittedAt.$gte = new Date(from);
-      if (to) q.submittedAt.$lte = new Date(`${to}T23:59:59.999Z`);
+      try {
+        if (from) q.submittedAt.$gte = parseHospitalDate(from);
+        if (to) q.submittedAt.$lte = parseHospitalDate(to, { endOfDay: true });
+      } catch (e) {
+        return res.status(e.status || 400).json({ success: false, code: e.code || "INVALID_DATE", message: e.message });
+      }
     }
     const limit = clamp(Number(req.query.limit) || 100, 1, 500);
     const page = clamp(Number(req.query.page) || 1, 1, 100000);
@@ -190,8 +194,12 @@ exports.stats = async (req, res) => {
     if (department) match.department = new RegExp(`^${escapeRegex(String(department))}$`, "i");
     if (from || to) {
       match.submittedAt = {};
-      if (from) match.submittedAt.$gte = new Date(from);
-      if (to) match.submittedAt.$lte = new Date(`${to}T23:59:59.999Z`);
+      try {
+        if (from) match.submittedAt.$gte = parseHospitalDate(from);
+        if (to) match.submittedAt.$lte = parseHospitalDate(to, { endOfDay: true });
+      } catch (e) {
+        return res.status(e.status || 400).json({ success: false, code: e.code || "INVALID_DATE", message: e.message });
+      }
     }
 
     // Category averages — one $avg per key, only counting answered (>0) rows.
@@ -286,8 +294,12 @@ exports.cqiIndicator = async (req, res) => {
     if (department) match.department = new RegExp(`^${escapeRegex(String(department))}$`, "i");
     if (from || to) {
       match.submittedAt = {};
-      if (from) match.submittedAt.$gte = new Date(from);
-      if (to) match.submittedAt.$lte = new Date(`${to}T23:59:59.999Z`);
+      try {
+        if (from) match.submittedAt.$gte = parseHospitalDate(from);
+        if (to) match.submittedAt.$lte = parseHospitalDate(to, { endOfDay: true });
+      } catch (e) {
+        return res.status(e.status || 400).json({ success: false, code: e.code || "INVALID_DATE", message: e.message });
+      }
     } else {
       // Default window: the last `months` calendar months up to now.
       const start = new Date();

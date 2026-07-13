@@ -78,14 +78,20 @@ function _salt(myNonceB64, theirNonceB64) {
 // ── encrypt / decrypt ──────────────────────────────────────────────
 /**
  * HIP-side encrypt: encrypt `plaintext` for the HIU.
- * @returns base64 of (ciphertext ‖ 16-byte GCM tag)
+ * @returns base64 of (12-byte random GCM IV ‖ ciphertext ‖ 16-byte GCM tag)
  */
 function encrypt({ plaintext, senderPrivateKey, receiverPublicKeyB64, senderNonceB64, receiverNonceB64 }) {
-  const { key, iv } = _deriveKeyIv(senderPrivateKey, receiverPublicKeyB64, _salt(senderNonceB64, receiverNonceB64));
+  const { key } = _deriveKeyIv(senderPrivateKey, receiverPublicKeyB64, _salt(senderNonceB64, receiverNonceB64));
+  // D5 — fresh random 96-bit GCM IV per message, prepended to the blob (the
+  // NIST-recommended GCM construction), so that even when several entries in
+  // one push share the ECDH-derived key each (key,IV) pair is unique. The old
+  // code reused the HKDF-derived IV for every entry → catastrophic GCM
+  // nonce-reuse (keystream + auth-subkey leak) on any multi-entry push.
+  const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
   const ct = Buffer.concat([cipher.update(Buffer.from(plaintext, "utf8")), cipher.final()]);
   const tag = cipher.getAuthTag();
-  return Buffer.concat([ct, tag]).toString("base64");
+  return Buffer.concat([iv, ct, tag]).toString("base64");   // iv(12) || ciphertext || tag(16)
 }
 
 /**
@@ -95,10 +101,11 @@ function encrypt({ plaintext, senderPrivateKey, receiverPublicKeyB64, senderNonc
  * @returns utf8 plaintext
  */
 function decrypt({ cipherB64, receiverPrivateKey, senderPublicKeyB64, senderNonceB64, receiverNonceB64 }) {
-  const { key, iv } = _deriveKeyIv(receiverPrivateKey, senderPublicKeyB64, _salt(senderNonceB64, receiverNonceB64));
+  const { key } = _deriveKeyIv(receiverPrivateKey, senderPublicKeyB64, _salt(senderNonceB64, receiverNonceB64));
   const buf = Buffer.from(cipherB64, "base64");
+  const iv = buf.subarray(0, 12);                 // D5 — iv(12) || ciphertext || tag(16)
   const tag = buf.subarray(buf.length - 16);
-  const ct = buf.subarray(0, buf.length - 16);
+  const ct = buf.subarray(12, buf.length - 16);
   const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
   decipher.setAuthTag(tag);
   return Buffer.concat([decipher.update(ct), decipher.final()]).toString("utf8");

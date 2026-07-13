@@ -1291,20 +1291,25 @@ const _cancelAssessmentComplianceSweeper = (() => {
   return () => clearInterval(interval);
 })();
 
-// R7bx-2 — nightly mongodump backup. Runs at 02:30 IST every day with
-// the same distributed lock pattern as every other daily cron so a
-// multi-replica deploy doesn't double-write the same archive name. The
-// child process is spawned by scripts/backupMongoDB.js — backup failures
-// are logged but never crash the server (the script returns a structured
-// error which the cron wrapper logs).
+// D2 — nightly TOOL-FREE backup. Runs at 02:30 IST every day behind the
+// same distributed lock as every other daily cron. The old cron shelled out
+// to `mongodump`, which is ABSENT from the node:alpine image, so it ENOENT'd
+// on every nightly tick in every Docker deployment. This wires the in-process
+// EJSON backup engine (scripts/backup/*) instead: it uses the bundled MongoDB
+// driver, needs NO external binary, and writes a verified .shbak.gz to
+// BACKUP_OFFLINE_DIR (set to the persistent /app/backups volume in
+// docker-compose.yml).
+//
+// We deliberately do NOT try/catch-and-swallow here: the old wrapper caught
+// the rejection and returned { error }, so scheduleDaily saw outcome="ok" and
+// the mongodump ENOENT was SILENT (no CRON_FAILED, no CronFailure row).
+// Letting run() throw makes scheduleDaily emit a CRON_FAILED BillingAudit
+// heartbeat, record a CronFailure retry row, and hand the job to the retry
+// sweeper — so a broken backup is loud. run() never calls process.exit and
+// closes its own Mongo client, so a failure can never crash the server.
 const _cancelNightlyMongoBackup = scheduleDaily("nightly-mongo-backup", 2, 30, async () => {
-  try {
-    const { runBackup } = require("./scripts/backupMongoDB");
-    return await runBackup();
-  } catch (e) {
-    console.error("[cron:nightly-mongo-backup] error:", e.stack || e.message);
-    return { error: e.message };
-  }
+  const { run } = require("./scripts/backup/runBackup");
+  return await run({ mode: "nightly" });
 });
 
 // D16-fix — cron-failure retry sweeper. scheduleDaily records every failed

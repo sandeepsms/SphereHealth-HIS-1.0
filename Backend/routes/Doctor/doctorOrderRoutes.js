@@ -1350,7 +1350,15 @@ router.post("/:id/administer", validateObjectIdParam("id"), requireAction("mar.w
     // (ISMP two-nurse rule, NABH MOM.3) AND is not the same person doing
     // the administration. Previously we only checked presence — any user id
     // (or none) passed. Hardens against forged witness on HAM doses.
-    if (verifiedBy) {
+    // D3 — verifiedBy may arrive as a User ObjectId (structured picker) OR as a
+    // free-text nurse NAME (Treatment Chart primary-nurse UI, placeholder "Name
+    // of verifying nurse"). A name is NOT castable to ObjectId, so run the User
+    // lookup + role/self checks ONLY when it IS a valid ObjectId; otherwise the
+    // name is stored verbatim as the witness (entry.verifiedBy below). Pre-fix
+    // User.findById(<name>) threw a CastError -> 400 and blocked charting a HAM
+    // dose as GIVEN from the primary-nurse UI.
+    const mongoose = require("mongoose");
+    if (verifiedBy && mongoose.isValidObjectId(verifiedBy)) {
       const wUser = await User.findById(verifiedBy).select("role employeeId fullName").lean();
       if (!wUser) {
         return res.status(400).json({ success: false, code: "VERIFIER_NOT_FOUND", message: "verifiedBy user not found" });
@@ -1624,7 +1632,12 @@ router.post("/:id/infusion-rate", validateObjectIdParam("id"), requireAction("ma
     // rate change — verify the actor is a real Nurse (ISMP two-nurse rule)
     // AND is not the same person changing the rate. Previously we only
     // checked presence — any user id (or none) passed.
-    if (verifiedBy) {
+    // D3 — same contract as /administer: verifiedBy may be a free-text nurse
+    // NAME, which is not castable to ObjectId. Only run the User lookup +
+    // Nurse/self checks when it IS a valid ObjectId; a name is accepted verbatim
+    // as the witness (pre-fix User.findById(<name>) threw a CastError -> 400).
+    const mongoose = require("mongoose");
+    if (verifiedBy && mongoose.isValidObjectId(verifiedBy)) {
       const wUser = await User.findById(verifiedBy).select("role employeeId fullName").lean();
       if (!wUser) {
         return res.status(400).json({ success: false, code: "VERIFIER_NOT_FOUND", message: "verifiedBy user not found" });

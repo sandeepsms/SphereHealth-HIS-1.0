@@ -95,6 +95,13 @@ cat <<EOF
 
    ⚠️  Put a TLS reverse proxy (Caddy/Traefik/nginx) in front for HTTPS —
       without it, logins + patient data cross the network in plaintext.
-   ⚠️  Back up this hospital regularly:
+   💾 Automated backup is ON: the backend runs a tool-free nightly DB backup
+      at 02:30 IST (HOSPITAL_TZ) onto the backend-backups volume — no mongodump
+      needed. Check it:
+        docker compose -p $SLUG exec backend cat /app/backups/last-backup.json
+      Run one now:
         docker compose -p $SLUG exec backend node scripts/backup/runBackup.js
+   ⚠️  For real disaster recovery, also configure an OFF-SITE copy — mount an
+      off-site/synced dir into the backend, set BACKUP_SYNCED_DIR to it and
+      BACKUP_ALLOW_OFFLINE_ONLY=0 (see deploy/DEPLOY.md → Backups).
 EOF

@@ -65,6 +65,13 @@ const AdminRecordSchema = new mongoose.Schema({
     type: String,
     validate: {
       validator: function (v) {
+        // D3 — the independent double-check witness is only mandatory at the
+        // actual administration moment (status === "given"). A HAM order that
+        // is held / refused / missed / not-available never gave a drug, so
+        // there is no second-nurse witness to record; requiring one there threw
+        // a spurious ValidationError. Route POST /:id/administer enforces the
+        // same status === "given" gate for the presence check.
+        if (this.status !== "given") return true;
         const parent = (typeof this.ownerDocument === "function" ? this.ownerDocument() : null);
         if (parent && parent.hamFlag === true) {
           return typeof v === "string" && v.trim().length > 0;

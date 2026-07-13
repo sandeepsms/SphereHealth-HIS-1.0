@@ -399,7 +399,11 @@ class EmergencyController {
           visit,
           actor: req.user,
           disposition: body.disposition || visit.disposition,
-          admissionLinkId: visit.admissionId,
+          // D17 — the ER visit's linked-admission field is `admission` (not
+          // `admissionId`), so this was always undefined and the register's
+          // admissionLinkId never got set for Admitted exits. Read the real
+          // field, tolerating any legacy shape that carries admissionId.
+          admissionLinkId: visit.admission || visit.admissionId,
           referredTo: body.referredTo,
           notes: body.dispositionNotes,
         }).catch((e) => console.error("ER NABH disposition error:", e.message));

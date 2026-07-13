@@ -106,8 +106,17 @@ docker compose --env-file deploy/apollo.env -p apollo up -d --build
       in once as admin — first login forces a rotation for every account.
 - [ ] **Secrets**: `deploy/<slug>.env` is git-ignored and `chmod 600`. Back it up
       somewhere safe — losing `JWT_SECRET`/Mongo creds means re-issuing logins.
-- [ ] **Backups**: schedule `scripts/backup/runBackup.js` (cron on the host) and
-      copy the `backend-backups` volume off-box.
+- [x] **Backups (automated)**: the backend now runs a **tool-free** nightly DB
+      backup in-process at 02:30 IST (no `mongodump` needed — works inside
+      `node:alpine`). Archives land on the `backend-backups` volume
+      (`BACKUP_OFFLINE_DIR=/app/backups`). Verify with
+      `docker compose -p <slug> exec backend cat /app/backups/last-backup.json`;
+      a failed run is loud (a `CronFailure` row + a `CRON_FAILED` BillingAudit
+      heartbeat + `/app/backups/backup.log`). **Off-site is still on you**: for
+      DR, mount an off-site/synced dir into the backend, set `BACKUP_SYNCED_DIR`
+      to it and `BACKUP_ALLOW_OFFLINE_ONLY=0`, and copy the `backend-backups`
+      volume off-box. The monthly restore-drill remains an ops task
+      (`node scripts/backup/runBackup.js --mode=monthly`).
 - [ ] **Uploads** (PHI) live on the `backend-uploads` volume — include it in backups.
 - [ ] **External MongoDB (optional)**: to use Atlas / a managed DB instead of the
       bundled `mongo` service, delete the `mongo` service + `depends_on` in
