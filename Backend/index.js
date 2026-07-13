@@ -1036,6 +1036,59 @@ const _cancelFireDrillOverdue = scheduleDaily("fire-drill-overdue", 3, 0, async 
   }
 });
 
+// NABH FMS.5 — daily PPM-adherence sweep (equipment nextServiceDue + facility
+// PPM nextDueDate). Mirrors the fire-drill overdue sweep.
+const _cancelMaintenanceOverdue = scheduleDaily("maintenance-overdue", 3, 15, async () => {
+  try {
+    const cron = require("./services/Compliance/maintenanceOverdueCron");
+    return await cron.runOverdueSweep();
+  } catch (e) {
+    console.error("[cron:maintenance-overdue] error:", e.stack || e.message);
+    return { error: e.message };
+  }
+});
+
+// NABH HIC.6 — monthly antibiogram roll-up. On the 1st (IST) aggregate the
+// previous calendar month's micro isolates into cumulative susceptibility
+// rows. Window is computed in IST (like gst-monthly-snapshot) so the UTC-vs-
+// IST date boundary can't attribute isolates to the wrong month.
+const _cancelAntibiogramRollup = scheduleDaily("antibiogram-monthly-rollup", 3, 45, async () => {
+  try {
+    const TZ = process.env.HOSPITAL_TZ || "Asia/Kolkata";
+    const istParts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit",
+    }).formatToParts(new Date());
+    const get = (t) => Number(istParts.find((p) => p.type === t).value);
+    const Y = get("year"), M = get("month"), D = get("day");
+    if (D !== 1) return { skipped: "not 1st of month (IST)" };
+
+    const prevM = M === 1 ? 12 : M - 1;
+    const prevY = M === 1 ? Y - 1 : Y;
+    const period = `${prevY}-${String(prevM).padStart(2, "0")}`;
+    const from = new Date(`${period}-01T00:00:00+05:30`);
+    const to   = new Date(`${Y}-${String(M).padStart(2, "0")}-01T00:00:00+05:30`);
+
+    const agg = require("./services/Compliance/antibiogramAggregator");
+    return await agg.runAggregation({ period, from, to, actor: { name: "System (antibiogram-rollup)" } });
+  } catch (e) {
+    console.error("[cron:antibiogram-monthly-rollup] error:", e.stack || e.message);
+    return { error: e.message };
+  }
+});
+
+// GST §34 — nightly refund↔credit-note reconciliation. Flags REFUNDED bills
+// missing a credit note (phantom output-GST liability) + dangling CNs, so the
+// accountant clears exceptions before the GSTR-1 month is filed.
+const _cancelRefundRecon = scheduleDaily("refund-cn-reconciliation", 3, 50, async () => {
+  try {
+    const cron = require("./services/Compliance/refundReconciliationCron");
+    return await cron.runReconciliation({ lookbackDays: 45 });
+  } catch (e) {
+    console.error("[cron:refund-cn-reconciliation] error:", e.stack || e.message);
+    return { error: e.message };
+  }
+});
+
 const _cancelRetentionReview = scheduleDaily("retention-review", 4, 0, async () => {
   try {
     const svc = require("./services/MRD/retentionEnforcer");

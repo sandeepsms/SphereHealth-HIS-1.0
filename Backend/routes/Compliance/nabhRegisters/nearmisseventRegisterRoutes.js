@@ -157,6 +157,9 @@ router.post("/", requireAction("compliance.nabh.write"), async (req, res) => {
       recommendation: body.recommendation || "",
       linkedSentinelId: mongoose.isValidObjectId(body.linkedSentinelId) ? body.linkedSentinelId : null,
       status: body.status || "Open",
+      // NABH FMS/PSQ — optionally pin the implicated device (e.g. the
+      // malfunctioning pump the near-miss caught) for RCA + recall join.
+      equipmentRef: body.equipmentRef || undefined,
       // Manual entries get an explicit sourceRef so retries on the same
       // payload are idempotent. Caller can supply one; default to a UUID.
       sourceRef: body.sourceRef || undefined,

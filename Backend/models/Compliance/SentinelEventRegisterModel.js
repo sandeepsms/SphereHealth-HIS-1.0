@@ -67,6 +67,8 @@ const SentinelEventRegisterSchema = new Schema({
   sourceRef: { type: String, default: "", index: true }, // UUID/string for auto-emit idempotency
 
   // ── Audit ──
+  // NABH FMS/PSQ — equipment implicated in the event, for RCA + recall join.
+  equipmentRef: { assetTag: { type: String, default: "" }, serialNo: { type: String, default: "" }, equipmentId: { type: Schema.Types.ObjectId, ref: "Equipment", default: null } },
   auditTrail: { type: [AuditSchema], default: [] },
 
   // ── Tenant ──

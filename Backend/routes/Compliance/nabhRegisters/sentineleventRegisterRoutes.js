@@ -114,6 +114,9 @@ router.post("/", requireAction("compliance.nabh.write"), async (req, res) => {
       rcaInitiated: !!body.rcaInitiated,
       rcaId: mongoose.isValidObjectId(body.rcaId) ? body.rcaId : null,
       status: body.status || "Open",
+      // NABH FMS/PSQ — optionally pin the implicated device so RCA + recall
+      // can join events to the equipment register.
+      equipmentRef: body.equipmentRef || undefined,
       // Manual entries get an explicit sourceRef so retries on the same
       // payload are idempotent. Caller can supply one; default to a UUID.
       sourceRef: body.sourceRef || undefined,

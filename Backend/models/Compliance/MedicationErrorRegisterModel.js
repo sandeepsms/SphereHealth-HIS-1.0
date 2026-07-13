@@ -90,6 +90,8 @@ const MedicationErrorRegisterSchema = new Schema({
     index: true,
   },
 
+  // NABH FMS/PSQ — device implicated (e.g. infusion pump), for RCA + recall join.
+  equipmentRef:     { assetTag: { type: String, default: "" }, serialNo: { type: String, default: "" }, equipmentId: { type: Schema.Types.ObjectId, ref: "Equipment", default: null } },
   auditTrail:       { type: [AuditSchema], default: [] },
 
   hospitalId:       { type: Schema.Types.ObjectId, ref: "Hospital", default: null },

@@ -90,6 +90,32 @@ router.get(
   },
 );
 
+// ── POST /aggregate — auto-roll micro isolates → cumulative rows ──
+// NABH HIC.6. AMSC / IC officer (or the monthly cron) rolls per-isolate
+// culture-&-sensitivity steps into cumulative antibiogram rows. Defaults to
+// the previous calendar month; ?period=YYYY-MM with ?from/&to overrides the
+// window. Declared BEFORE "/:id" so "aggregate" is not read as an id.
+router.post(
+  "/aggregate",
+  requireAction("compliance.nabh.write"),
+  async (req, res) => {
+    try {
+      const { period = "", from = "", to = "" } = req.body || {};
+      const { runAggregation } = require("../../../services/Compliance/antibiogramAggregator");
+      const opts = { actor: req.user || {} };
+      if (period) opts.period = period;
+      if (from) opts.from = from;
+      if (to) opts.to = to;
+      const result = await runAggregation(opts);
+      return res.json({ success: true, data: result });
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error("[antibiogramRegisterRoutes] aggregate failed:", e.message);
+      return res.status(500).json({ success: false, message: e.message || "Aggregation failed" });
+    }
+  },
+);
+
 // ── GET /:id ──────────────────────────────────────────────────────
 router.get(
   "/:id",

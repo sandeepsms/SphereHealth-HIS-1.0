@@ -10,8 +10,11 @@ const { authenticate, requireAction } = require("../../middleware/auth");
 router.use(authenticate);
 
 // Read — dashboard + list (Admin / Quality / Receptionist / MRD)
-router.get("/stats", requireAction("feedback.read"), ctrl.stats);
-router.get("/",      requireAction("feedback.read"), ctrl.list);
+router.get("/stats",         requireAction("feedback.read"), ctrl.stats);
+// NABH PRE.6 / QPS — month-bucketed PROM/PREM experience indicator for the CQI
+// committee's quality dashboard (satisfaction rate + NPS trend over time).
+router.get("/cqi-indicator", requireAction("feedback.read"), ctrl.cqiIndicator);
+router.get("/",              requireAction("feedback.read"), ctrl.list);
 
 // Write — staff entry + mint a patient link
 router.post("/",              requireAction("feedback.write"), ctrl.staffCreate);

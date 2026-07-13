@@ -99,6 +99,8 @@ const NearMissEventRegisterSchema = new Schema({
   // ── Reporting metadata ──
   emittedAt: { type: Date, default: Date.now, index: true },
 
+  // NABH FMS/PSQ — equipment implicated in the near-miss, for RCA + recall join.
+  equipmentRef: { assetTag: { type: String, default: "" }, serialNo: { type: String, default: "" }, equipmentId: { type: Schema.Types.ObjectId, ref: "Equipment", default: null } },
   auditTrail: { type: [AuditSchema], default: [] },
 
   hospitalId: { type: Schema.Types.ObjectId, ref: "Hospital", default: null },
