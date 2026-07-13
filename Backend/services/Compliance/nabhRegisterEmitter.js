@@ -295,6 +295,22 @@ async function emitEmergencyTriage(args = {}) {
   }
 }
 
+// The ER *visit* disposition enum (models/Patient/emergencyModel.js) uses labels
+// that differ from this *register's* enum (models/Compliance/EmergencyRegisterModel.js):
+// notably the two most legally-sensitive exits — "Expired" → "Death" and
+// "Left Against Medical Advice" → "DAMA". Without this normalisation the register
+// save fails Mongoose enum validation and is swallowed by the catch below, so the
+// NABH Emergency Register was never updated/locked for Death & DAMA/LAMA exits.
+const ER_DISPOSITION_MAP = {
+  "Left Against Medical Advice": "DAMA",
+  Expired: "Death",
+  "Brought Dead": "DOA",
+  "Dead on Arrival": "DOA",
+};
+const ER_REGISTER_DISPOSITIONS = new Set([
+  "Admitted", "Discharged", "DAMA", "Referred", "Death", "DOA", "Absconded", "Observation",
+]);
+
 async function emitEmergencyDisposition(args = {}) {
   try {
     const { visit, actor = {}, disposition, admissionLinkId, referredTo, notes } = args;
@@ -303,8 +319,12 @@ async function emitEmergencyDisposition(args = {}) {
     if (!row) return null;
     if (row.locked) return row;
 
+    const mappedDisposition = ER_DISPOSITION_MAP[disposition] || disposition;
+    // A non-terminal / unknown value (e.g. "Pending") must not lock the register.
+    if (!ER_REGISTER_DISPOSITIONS.has(mappedDisposition)) return null;
+
     const at = new Date();
-    row.disposition = disposition;
+    row.disposition = mappedDisposition;
     row.dispositionAt = at;
     row.doorToDispositionMinutes = _diffMinutes(at, row.arrivalAt);
     if (admissionLinkId) row.admissionLinkId = admissionLinkId;
