@@ -3,7 +3,7 @@
 > **Ye file kya hai:** Har session ka running task log. Naya session shuru karo toh **sirf ye file padho** — 2 minute me pata chal jayega kya chal raha tha, kaha se pick karna hai, aage kya karna hai.
 > **Rule:** Har work-session ke END pe ye file update karke commit karni hai.
 
-**Last updated:** 2026-07-13 · **Branch:** `claude/multi-hospital-deploy` · **Tree:** clean ✅ · **Build:** green ✅ · **Head:** `5c1129f5` · **Pending:** **SAARE 25 Minor + SAARE 10 Major NABH/NABL DONE + ABDM framework DONE (disabled) + FULL-SCALE CAPABILITY AUDIT DONE.** Audit ne 19 confirmed defect nikale (report `SYSTEM-CAPABILITY-AUDIT.md`) — 1 HIGH turant fix+verify (ER Death/DAMA register), baaki 18 owner-priority pe pending. E2E **136/136** hold.
+**Last updated:** 2026-07-13 · **Branch:** `claude/multi-hospital-deploy` · **Tree:** clean ✅ · **Build:** green ✅ (FE vite + E2E 136/136) · **Head:** `62a15f8c` · **Pending:** **CAPABILITY AUDIT DONE + D1 (HIGH) + SAARE 12 MEDIUM defect (D6–D16, D19) FIX+VERIFY+COMMIT (`62a15f8c`).** Bacha sirf owner-call: D2 (critical, container backup), D3/D4/D5 (high), D17/D18 (low). E2E **136/136** hold (new code pe re-run).
 
 ---
 
@@ -37,7 +37,25 @@
 
 ---
 
-**Abhi hua (2026-07-13, part 4):** **FULL-SCALE SYSTEM CAPABILITY & WORKING AUDIT DONE** (owner: "do all system working and capabilities audit for full scale from receptionist work to final discharge and billing all aspects") — commit `5c1129f5`, report `SYSTEM-CAPABILITY-AUDIT.md` + interactive visual audit-board artifact (claude.ai).
+**Abhi hua (2026-07-13, part 5):** **SAARE 12 MEDIUM AUDIT DEFECT FIX + VERIFY + COMMIT** (owner: "do all medium ones") — commit `62a15f8c`, 34 files (33 mod + 1 naya `utils/registerIntegrity.js`).
+- **Method (ultracode):** discovery ke liye 9-agent parallel Workflow (`his-medium-defects-fixspec`) ne har defect ki apply-ready fix-spec (exact verbatim edits + verification + regression notes) banayi → maine sequential apply kiya (shared repo/DB), har file `node --check`, phir end-to-end verify.
+- **12 MEDIUM (D6–D16, D19) — sab fix:**
+  - **D6** IPD `/admissions/active` doctor-scope `$or` service-layer pe merge (pehle drop → har Doctor sab inpatient dekhta = PHI leak).
+  - **D7** `mustCosign` ab Doctor.loginUserId→User se JR-designation resolve karta (pehle User.findById(Doctor._id) → gate kabhi fire nahi).
+  - **D8** signed OPD assessment immutable (409 `OPD_ASSESSMENT_SIGNED` unless amendReason → append-only `assessmentAmendments`) + `pick("")` field-wipe band (omitted fields prune, blank nahi) + FE amend-reason prompt.
+  - **D9** OPD embedded-Rx pe shared fail-closed drug-allergy gate (`_assertRxSafe`) `/assessment`+`/prescription` dono pe + FE override prompt.
+  - **D10** pharmacy dispense/supplement GST rate ab batch ka stamped rate se (client `it.gstRate` ignore → galat-slab tax-invoice/GSTR-1 hole band).
+  - **D11** persisted `order.safetyWarnings` (LASA/Do-Not-Use) ab Treatment Chart + Doctor Orders panel pe amber advisory (MOM.4/MOM.5 point-of-care pe live).
+  - **D12** built-but-unmounted shift-handover router `routes/index.js` pe mount (NABH MOM.2 404 fix).
+  - **D13** `POST /discharge-summary/:id/cosign` implement (senior co-sign of JR self-finalize, authenticated actor, atomic CAS, ClinicalAudit).
+  - **D14** `POST /api/mrd/legal-hold` setter (Admin/MRD) + who/when fields Admission/DischargeSummary/MLC pe (IMS.3 hold ka write-path tha hi nahi).
+  - **D15** HAI device-day denominator ab cursor-stream (50k cap hata) → lambi window pe silent truncation nahi → infection-rate overstate nahi.
+  - **D16** cron-failure retry sweeper wire (job registry + `startRetrySweeper`) — `dueRetries()` ko `cron:<name>` lock ke peeche replay karta (pehle kabhi chalta hi nahi tha).
+  - **D19** reusable HMAC-SHA256 register-integrity plugin (`utils/registerIntegrity.js`) 7 surveyor-critical registers pe + Admin/MRD verify endpoint (`/registers/nabh/integrity-verify/:register`) — tamper-EVIDENCE; legacy rows "unverified" (kabhi "tampered" nahi).
+- **Naye permission token (FE+BE mirror):** `compliance.legal-hold.write`, `compliance.nabh.verify`. Sab additive/backward-compatible.
+- **Verify (sab pass):** fresh backend clean boot (D16 sweeper armed, self-tests OK); 4 naye route live-smoke (D12 200, D19 success+legacy, D14 400-validation, D13 404-record); **E2E 136/136 new-code pe re-run** (ek baar stale backend confusion tha — sab node kill kar ke fresh boot pe re-run); D19 plugin self-test (intact/tampered/audit-only-intact/legacy sab sahi); D1 probe 8/8 hold; FE `vite build` green. Report `SYSTEM-CAPABILITY-AUDIT.md` §7/§8 + visual audit-board artifact updated (13 fixed).
+
+**Pichla arc (2026-07-13, part 4):** **FULL-SCALE SYSTEM CAPABILITY & WORKING AUDIT DONE** (owner: "do all system working and capabilities audit for full scale from receptionist work to final discharge and billing all aspects") — commit `5c1129f5`, report `SYSTEM-CAPABILITY-AUDIT.md` + interactive visual audit-board artifact (claude.ai).
 - **Method:** 16 parallel auditor-agents (ek per subsystem) real models/services/controllers/routes padh ke `file:line` evidence ke saath maturity+strengths+gaps+risks report kiye → cross-cutting synthesis. Top findings code-read se re-verify; sabse HIGH compliance bug live-probe se verify.
 - **Verdict:** **12/15 subsystem Strong, 3 Partial (Medication, ABDM, Deployment/Ops), 0 weak.** Core clinical+revenue loop **production-ready** (E2E 136/136), lekin **100+ hospital scale pe turnkey NAHI** jab tak 3 go-live blocker close na hon: (1) in-container backup TOOTA (mongodump Alpine image me nahi) — sabse critical; (2) point-of-care safety controls inert (LASA/allergy warnings UI pe nahi, HAM two-nurse charting primary UI se fail, WHO checklist non-gating); (3) ABDM live-interop + audit tamper-proofing cert-ready nahi.
 - **19 confirmed defect** severity-ranked (report §7): 1 Critical (D2 backup), 4 High (D1 fixed, D3 HAM witness, D4 mortality-register field bug, D5 ABDM GCM IV reuse), 11 Medium, 2 Low.
