@@ -460,7 +460,10 @@ const updateNurseNote = async (id, data, nurseUserId) => {
     "remarks",
   ];
 
-  if (note.status === "submitted") {
+  // R8-FIX(#20): route BOTH submitted AND already-amended notes through the
+  // append-only addendum path. Pre-fix an "amended" note fell to the draft
+  // in-place mutate below, silently rewriting the attested record.
+  if (note.status === "submitted" || note.status === "amended") {
     // ── ADDENDUM path ──
     const base = note.toObject();
     delete base._id;
@@ -642,8 +645,10 @@ const deleteNurseNote = async (id, nurseUserId) => {
     e.statusCode = 404;
     throw e;
   }
-  if (note.status === "submitted") {
-    const e = new Error("Cannot delete submitted note");
+  // R8-FIX(#5): block delete of ANY attested note (submitted OR amended).
+  // Pre-fix an amended note was deletable → amend-then-delete data loss.
+  if (note.status === "submitted" || note.status === "amended") {
+    const e = new Error("Cannot delete a submitted/amended note");
     e.statusCode = 400;
     throw e;
   }
@@ -723,8 +728,9 @@ const deleteNurseNote = async (id, nurseUserId) => {
 const addBloodMonitoringEntry = async (noteId, entry) => {
   const note = await NurseNotes.findById(noteId);
   if (!note) throw new Error("Nurse note not found");
-  if (note.status === "submitted") {
-    const e = new Error("Cannot append blood-monitoring entry on a submitted note — create an addendum");
+  // R8-FIX(#20): also block in-place mutation of an already-amended note.
+  if (note.status === "submitted" || note.status === "amended") {
+    const e = new Error("Cannot append blood-monitoring entry on a submitted/amended note — create an addendum");
     e.statusCode = 400;
     throw e;
   }
@@ -752,8 +758,9 @@ const addBloodMonitoringEntry = async (noteId, entry) => {
 const updateBloodTransfusionStatus = async (noteId, status, notes = "") => {
   const note = await NurseNotes.findById(noteId);
   if (!note) throw new Error("Nurse note not found");
-  if (note.status === "submitted") {
-    const e = new Error("Cannot change blood-transfusion status on a submitted note — create an addendum");
+  // R8-FIX(#20): also block in-place mutation of an already-amended note.
+  if (note.status === "submitted" || note.status === "amended") {
+    const e = new Error("Cannot change blood-transfusion status on a submitted/amended note — create an addendum");
     e.statusCode = 400;
     throw e;
   }

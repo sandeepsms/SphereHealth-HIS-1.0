@@ -788,8 +788,12 @@ const updateDoctorNote = async (id, data, doctorUserId) => {
     "patientStatus",
   ];
 
-  if (note.status === "signed") {
-    // ── ADDENDUM path: clone the signed note, apply changes, link.
+  // R8-FIX(#6): route BOTH signed AND already-amended notes through the
+  // append-only addendum path. Pre-fix an "amended" note (not "signed") fell to
+  // the draft in-place mutate below, silently rewriting the attested record
+  // with no addendum, no amendment entry, no audit.
+  if (note.status === "signed" || note.status === "amended") {
+    // ── ADDENDUM path: clone the attested note, apply changes, link.
     const base = note.toObject();
     delete base._id;
     delete base.__v;
@@ -1154,8 +1158,10 @@ const deleteDoctorNote = async (id, doctorUserId, opts = {}) => {
     error.statusCode = 404;
     throw error;
   }
-  if (note.status === "signed") {
-    const error = new Error("Cannot delete signed note");
+  // R8-FIX(#4): block delete of ANY attested note (signed OR amended). Pre-fix
+  // an amended note was deletable, so amend-then-delete erased the attested record.
+  if (note.status === "signed" || note.status === "amended") {
+    const error = new Error("Cannot delete a signed/amended note");
     error.statusCode = 400;
     throw error;
   }
