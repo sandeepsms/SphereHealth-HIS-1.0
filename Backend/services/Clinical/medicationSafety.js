@@ -98,9 +98,15 @@ for (const [a, b, ta, tb] of LASA_PAIRS) {
   _LASA_INDEX.set(b, { partner: a, tallSelf: tb, tallPartner: ta });
 }
 
+// R8-FIX(#44): strip a leading dosage-form prefix (Inj/Tab/Cap/Syp…) before
+// taking the first alphabetic token — else "Inj Amoxicillin" / "Tab Metformin"
+// normalise to "inj" / "tab" and the LASA / tall-man lookup silently misses the
+// real drug.
+const _DOSAGE_FORM_PREFIX = /^(?:inj|injection|tab|tabs|tablet|cap|caps|capsule|syp|syrup|susp|suspension|sol|solution|oint|ointment|cream|gel|drops?|neb|amp|ampoule|vial|iv|im|sc|supp|suppository)\b[\s.]*/i;
 function _normDrug(name) {
-  // First alphabetic token, lower-cased (strips strength/brand suffixes).
-  const first = String(name || "").trim().toLowerCase().match(/[a-z]+/);
+  // First alphabetic token after stripping any dosage-form prefix, lower-cased.
+  const cleaned = String(name || "").trim().replace(_DOSAGE_FORM_PREFIX, "");
+  const first = cleaned.toLowerCase().match(/[a-z]+/);
   return first ? first[0] : "";
 }
 

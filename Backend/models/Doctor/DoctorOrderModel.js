@@ -277,7 +277,9 @@ const DoctorOrderSchema = new mongoose.Schema({
         // rejected by the lookahead.
         validator: (v) => {
           if (v == null || v === "") return true;
-          if (!/^\s*\d+(?:\.\d+)?\s*(?:mg|mcg|µg|g|kg|ml|l|iu|u|units?|drops?|tabs?|caps?|puffs?|sprays?|patch(?:es)?|tsp|tbsp|%)(?:[\s\/]|$)/i.test(v)) return false;
+          // R8-FIX(#14): mEq / mmol are valid electrolyte-dose units (the order
+          // form offers "mEq") — without them a legit "20 mEq" KCl dose was rejected.
+          if (!/^\s*\d+(?:\.\d+)?\s*(?:mg|mcg|µg|g|kg|ml|l|iu|u|units?|meq|mmol|drops?|tabs?|caps?|puffs?|sprays?|patch(?:es)?|tsp|tbsp|%)(?:[\s\/]|$)/i.test(v)) return false;
           // Lookahead-style zero rejection: extract the leading numeric and
           // ensure it's > 0. Catches "0 mg", "0.0 ml", "00 IU".
           const num = parseFloat(v);
@@ -640,8 +642,14 @@ DoctorOrderSchema.pre("save", function (next) {
   //    Re-runs on creation or whenever medicineName changes — modifying
   //    the drug name after the order exists must be able to flip the
   //    flag in either direction.
-  if (this.isNew || this.isModified("orderDetails.medicineName")) {
-    const name = this.orderDetails?.medicineName || this.orderDetails?.displayName || "";
+  if (this.isNew || this.isModified("orderDetails")) {
+    const d = this.orderDetails || {};
+    // R8-FIX(#26): IV_Fluid orders carry the drug identity in fluidName +
+    // additives (e.g. a KCl-spiked bag), NOT medicineName — scan those too so a
+    // concentrated-electrolyte IV bag is HAM-flagged + two-nurse gated. Re-run
+    // widened to any orderDetails change so editing additives can flip the flag.
+    const name = [d.medicineName, d.displayName, d.fluidName, d.additives]
+      .filter(Boolean).join(" ");
     if (name) {
       this.hamFlag = isHAM(name);
       this.twoNurseRequired = this.hamFlag;

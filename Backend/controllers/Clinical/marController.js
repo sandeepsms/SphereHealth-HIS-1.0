@@ -71,6 +71,12 @@ class MARController {
       return res.status(400).json({ success: false, message: "patient (UHID) required to open a MAR" });
     }
 
+    // R8-FIX(#25): reject embedded GIVEN administrations — charting a dose must
+    // go through recordAdministration (five-rights + HAM dual-witness enforced
+    // there). Scheduled/pending placeholder slots are fine; a GIVEN embed is not.
+    if ((req.body.medications || []).some((m) => (m?.administrations || []).some((a) => normalizeStatus(a?.status) === "GIVEN")))
+      return res.status(422).json({ success: false, code: "EMBEDDED_GIVEN_FORBIDDEN", message: "Cannot embed a GIVEN administration on MAR create — chart doses via the administer endpoint (five-rights + HAM dual-witness enforced there)." });
+
     mar = await MAR.create({
       patient: patientId,
       UHID,
@@ -123,6 +129,11 @@ class MARController {
 
   // POST /api/mar/:id/medication — add medication to MAR
   addMedication = handle(async (req, res) => {
+    // R8-FIX(#25): a medication pushed to the MAR must not carry a pre-charted
+    // GIVEN administration — that bypasses the five-rights + HAM dual-witness
+    // gates on recordAdministration.
+    if (((req.body && req.body.administrations) || []).some((a) => normalizeStatus(a?.status) === "GIVEN"))
+      return res.status(422).json({ success: false, code: "EMBEDDED_GIVEN_FORBIDDEN", message: "Cannot embed a GIVEN administration when adding a MAR medication — chart doses via the administer endpoint." });
     const mar = await MAR.findByIdAndUpdate(
       req.params.id,
       { $push: { medications: req.body } },
@@ -186,6 +197,35 @@ class MARController {
     if (!mar) return res.status(404).json({ success: false, message: "MAR or medication not found" });
     const med = mar.medications.id(req.params.medId);
     if (!med) return res.status(404).json({ success: false, message: "Medication not found in MAR" });
+
+    // R8-FIX(#27): drug-allergy safety gate via the CANONICAL allergyCheck util
+    // (its header names recordAdministration as intended call-site #4, but it was
+    // never wired here). Ward-stock drugs are charted straight on the MAR with no
+    // pharmacy dispense, so this is the ONLY allergy checkpoint. Reads
+    // authoritative Patient.allergies (falls back to the MAR snapshot). An
+    // allergyOverrideReason lets a prescriber-authorised dose proceed; the reason
+    // is recorded on the administration entry (below) for the NABH trail.
+    let allergyOverrideNote = "";
+    if (finalStatus === "GIVEN") {
+      const { assertDrugSafeOrOverride } = require("../../utils/allergyCheck");
+      let patientAllergies = mar.allergies;
+      try {
+        const pt = await Patient.findById(mar.patient).select("knownAllergies allergyList").lean();
+        if (pt && ((pt.allergyList && pt.allergyList.length) || pt.knownAllergies))
+          patientAllergies = (pt.allergyList && pt.allergyList.length) ? pt.allergyList : pt.knownAllergies;
+      } catch (_) { /* fall back to the MAR allergy snapshot */ }
+      try {
+        const r = assertDrugSafeOrOverride(med, patientAllergies, {
+          overrideReason: req.body.allergyOverrideReason, label: "mar-admin",
+        });
+        if (r && r.overridden)
+          allergyOverrideNote = `Allergy override (${r.allergen}): ${String(req.body.allergyOverrideReason).trim()}`;
+      } catch (e) {
+        if (e.code === "ALLERGY_COLLISION")
+          return res.status(409).json({ success: false, code: "ALLERGY_COLLISION", allergen: e.allergen, drug: e.drugName, message: e.message });
+        throw e;
+      }
+    }
 
     if (scheduledTime) {
       const dup = (med.administrations || []).find((a) => _isSameSchedule(a, scheduledTime));
@@ -259,7 +299,8 @@ class MARController {
       signatureUrl: resolvedSignature || undefined,
       batchNumber,
       reason,
-      remarks,
+      // R8-FIX(#27): keep the allergy-override reason on the record for the trail.
+      remarks: allergyOverrideNote ? [remarks, allergyOverrideNote].filter(Boolean).join(" | ") : remarks,
       fiveRightsChecked: fiveRightsChecked === true,
       // R7bb-FIX-E-19: stamp both witnesses on HAM doses for audit.
       ...(hamWitness ? {

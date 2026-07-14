@@ -1344,6 +1344,26 @@ router.post("/:id/administer", validateObjectIdParam("id"), requireAction("mar.w
     // Validate HAM 2-nurse check
     if (order.twoNurseRequired && status === "given" && !verifiedBy)
       return res.status(422).json({ ok: false, message: "HAM order requires second nurse verification (verifiedBy)" });
+    // R8-FIX(#13): a HAM given-dose witness must resolve to a REGISTERED,
+    // DISTINCT, active nurse. A free-text name (Treatment Chart primary-nurse UI)
+    // is otherwise un-attributable and lets one nurse defeat the ISMP independent
+    // double-check by typing ANY name. When verifiedBy is a free-text name, match
+    // it against the nurse roster (case-insensitive exact): exactly one active
+    // Nurse (≠ the acting nurse) → accept; zero → reject (fake/misspelt name);
+    // ambiguous → reject (ask for the unique full name). A valid ObjectId falls
+    // through to the role=Nurse + distinct-actor checks already below.
+    if (order.twoNurseRequired && status === "given" && verifiedBy &&
+        !require("mongoose").isValidObjectId(verifiedBy)) {
+      const nm  = String(verifiedBy).trim();
+      const esc = nm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const matches = await User.find({ role: "Nurse", fullName: { $regex: `^${esc}$`, $options: "i" } })
+        .select("_id fullName isActive status").lean();
+      const active = matches.filter((u) => u.isActive !== false && u.status !== "Inactive" && String(u._id) !== String(req.user.id));
+      if (active.length === 0)
+        return res.status(422).json({ ok: false, code: "HAM_WITNESS_UNVERIFIED", message: `HAM witness "${nm}" does not match any registered nurse — enter a real verifying nurse's name.` });
+      if (active.length > 1)
+        return res.status(422).json({ ok: false, code: "HAM_WITNESS_AMBIGUOUS", message: `HAM witness "${nm}" matches more than one nurse — enter the full unique name.` });
+    }
 
     // B1-T05: When a witness (verifiedBy) is supplied — for HAM, controlled
     // substances, or voluntary co-sign — verify the actor is a real Nurse
