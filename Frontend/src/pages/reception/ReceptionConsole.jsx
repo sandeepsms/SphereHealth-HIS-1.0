@@ -846,6 +846,9 @@ export default function ReceptionConsole() {
         // Optional but useful when present
         department:      primaryDept || undefined,
         doctor:          primaryDoctor || undefined,
+        // R8-CRIT — carry the consult fee into registration so the auto-dispatched
+        // OPD visit bills it (the fee-bearing createOPDVisit below is deduped away).
+        consultationFee: visitType === "OPD" ? (Number(opd.consultationFee) || undefined) : undefined,
         registrationType: visitType === "Daycare" ? "Daycare" : visitType,
       };
 

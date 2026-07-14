@@ -2052,7 +2052,11 @@ async function onOPDRegistered(opdVisit, admission) {
   // Falls back to undefined if missing so addItemToBill drops to its
   // ServiceMaster lookup like before.
   const visitFee = Number(opdVisit.consultationFee);
-  const overrideAmount = Number.isFinite(visitFee) && visitFee >= 0 ? visitFee : undefined;
+  // R8-CRIT — a 0/unset consultationFee must FALL BACK to the ServiceMaster
+  // consult price, not bill the OPD-CON line at ₹0. `0` is the schema default
+  // (indistinguishable from unset), so only a positive fee is a real override;
+  // this closes the silent ₹0 consult on auto-dispatched new-patient OPD visits.
+  const overrideAmount = Number.isFinite(visitFee) && visitFee > 0 ? visitFee : undefined;
   return createTrigger({
     admissionId:         admission._id,
     opdVisitId:          opdVisit._id,

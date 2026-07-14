@@ -380,8 +380,13 @@ async function _bucketPharmacySales(periodStart, periodEnd, hsnMap) {
     let dominantTax = -1;
     const ratesByItem = {};
     for (const it of s.items || []) {
-      const r = Number(it.gstPercent ?? it.taxPercent ?? 0);
-      const v = toNum(it.taxableValue ?? it.netAmount ?? it.sellingPrice);
+      // R8-CRIT — pharmacy SALE_ITEM stores the rate as `gstRate` and the
+      // pre-tax base as `taxableAmount` (netAmount is tax-INCLUSIVE). Reading
+      // the non-existent gstPercent/taxableValue made every pharmacy line
+      // resolve to rate 0 and an inflated (tax-inclusive) base — zeroing all
+      // pharmacy output GST on GSTR-1 and mislabelling taxable supplies exempt.
+      const r = Number(it.gstRate ?? it.gstPercent ?? it.taxPercent ?? 0);
+      const v = toNum(it.taxableAmount ?? it.taxableValue ?? it.grossAmount ?? it.sellingPrice);
       ratesByItem[r] = (ratesByItem[r] || 0) + v;
       if (v > dominantTax) {
         dominantTax = v;
@@ -446,27 +451,35 @@ async function _bucketPharmacySales(periodStart, periodEnd, hsnMap) {
     } else if (invoice.invoiceValue > B2CL_THRESHOLD && !intraState) {
       b2cl.push(invoice);
     } else {
-      const k = `${placeOfSupply}-${dominantRate}`;
-      const cur = b2cMap.get(k) || {
-        placeOfSupply,
-        rate: dominantRate,
-        taxableValue: 0,
-        cgstAmount: 0,
-        sgstAmount: 0,
-        igstAmount: 0,
-        cessAmount: 0,
-        invoiceCount: 0,
-      };
-      cur.taxableValue += taxable;
-      const gstAtRate = (taxable * Number(dominantRate)) / 100;
-      if (intraState) {
-        cur.cgstAmount += gstAtRate / 2;
-        cur.sgstAmount += gstAtRate / 2;
-      } else {
-        cur.igstAmount += gstAtRate;
+      // R8-CRIT — emit one B2C(S) row PER GST rate. The previous code keyed the
+      // whole sale on a single `dominantRate` applied to the sale-level taxable,
+      // so a mixed-rate basket (e.g. 5% + 18%) was declared entirely at one rate
+      // — understating (or, when the largest line was exempt, zeroing) output tax.
+      let counted = false;
+      for (const [rate, rTaxable] of Object.entries(ratesByItem)) {
+        const rr = Number(rate);
+        const k = `${placeOfSupply}-${rr}`;
+        const cur = b2cMap.get(k) || {
+          placeOfSupply,
+          rate: rr,
+          taxableValue: 0,
+          cgstAmount: 0,
+          sgstAmount: 0,
+          igstAmount: 0,
+          cessAmount: 0,
+          invoiceCount: 0,
+        };
+        cur.taxableValue += rTaxable;
+        const gstAtRate = (rTaxable * rr) / 100;
+        if (intraState) {
+          cur.cgstAmount += gstAtRate / 2;
+          cur.sgstAmount += gstAtRate / 2;
+        } else {
+          cur.igstAmount += gstAtRate;
+        }
+        if (!counted) { cur.invoiceCount += 1; counted = true; }
+        b2cMap.set(k, cur);
       }
-      cur.invoiceCount += 1;
-      b2cMap.set(k, cur);
     }
   }
   return { b2b, b2cl, b2c: [...b2cMap.values()] };

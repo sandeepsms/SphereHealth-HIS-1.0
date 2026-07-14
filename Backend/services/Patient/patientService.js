@@ -120,6 +120,10 @@ class PatientService {
           // — NOT the visit-CATEGORY ("OPD"/"IPD"/etc). First registration
           // is always First Visit; follow-ups go through their own form.
           visitType:      "First Visit",
+          // R8-CRIT — carry the receptionist's consult fee so the auto-created
+          // OPD visit bills it; the frontend's fee-bearing createOPDVisit call
+          // is deduped away, so without this the OPD-CON line was billed ₹0.
+          consultationFee: patientData.consultationFee,
           paymentType:    patient.paymentType || "GENERAL",
         });
       } catch (e) {
