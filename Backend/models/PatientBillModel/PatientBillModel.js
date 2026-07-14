@@ -683,10 +683,17 @@ PatientBillSchema.methods.recalcTotals = function () {
   // closed-out bill.
   const totalPaid = this.payments.reduce((s, p) => s + toNum(p.amount), 0);
   this.advancePaid = toDec(totalPaid);
+  // R8-FIX(#34): TPA_CLAIM remittances pay down the TPA share (tpaPayableAmount),
+  // NOT the patient's residual (patientPayableAmount). Counting them here zeroed
+  // any short-pay/co-pay routed to the patient — the bill falsely read balance 0
+  // and per-bill collection rejected the patient's payment as OVERPAY. advancePaid
+  // stays all money received; the patient balance excludes TPA_CLAIM.
+  const patientPaid = this.payments.reduce(
+    (s, p) => s + (p.paymentMode === "TPA_CLAIM" ? 0 : toNum(p.amount)), 0);
   if (this.billStatus === "REFUNDED" || this.billStatus === "CANCELLED") {
     this.balanceAmount = toDec(0);
   } else {
-    this.balanceAmount = toDec(Math.max(0, toNum(this.patientPayableAmount) - totalPaid));
+    this.balanceAmount = toDec(Math.max(0, toNum(this.patientPayableAmount) - patientPaid));
   }
 };
 

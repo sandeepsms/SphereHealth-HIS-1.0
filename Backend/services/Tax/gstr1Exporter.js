@@ -495,7 +495,49 @@ async function _bucketCreditNotes(periodStart, periodEnd) {
   const cns = await CreditNote.find({
     creditNoteDate: { $gte: periodStart, $lt: periodEnd },
   }).lean();
-  return cns.map((c) => ({
+
+  // R8-FIX(#2): a CANCELLED numbered invoice is already reversed by EXCLUSION
+  // from outward supply (_bucketPatientBills: billStatus $nin [DRAFT,CANCELLED]).
+  // The cancel-time credit note (reasonCode "07") would then reverse the SAME
+  // tax a second time in this CDNR section → output tax under-reported. Drop
+  // such cancel-CNs when the original bill's GST period is still OPEN (the
+  // exclusion is the single, complete reversal). Keep them when the period is
+  // LOCKED/filed — the frozen outward can only be reversed via a current-month
+  // CDNR. Refund/write-off CNs (original bill NOT cancelled) are never dropped.
+  const skip = new Set();
+  const cancelCnBillIds = cns
+    .filter((c) => String(c.reasonCode) === "07" && c.billId)
+    .map((c) => c.billId);
+  if (cancelCnBillIds.length) {
+    const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+    const GstMonthlySnapshot = require("../../models/Billing/GstMonthlySnapshot");
+    const cancelledBills = await PatientBill.find({
+      _id: { $in: cancelCnBillIds }, billStatus: "CANCELLED",
+    }).select("_id billGeneratedAt billDate createdAt").lean();
+    const byId = new Map(cancelledBills.map((b) => [String(b._id), b]));
+    const TZ = process.env.HOSPITAL_TZ || "Asia/Kolkata";
+    const lockByPeriod = new Map();
+    for (const c of cns) {
+      if (String(c.reasonCode) !== "07" || !c.billId) continue;
+      const b = byId.get(String(c.billId));
+      if (!b) continue; // original bill not CANCELLED → genuine refund/writeoff CN, keep
+      const d = b.billGeneratedAt || b.billDate || b.createdAt;
+      if (!d) continue;
+      const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: TZ, year: "numeric", month: "2-digit",
+      }).formatToParts(new Date(d));
+      const period = `${parts.find((x) => x.type === "year")?.value}-${parts.find((x) => x.type === "month")?.value}`;
+      let locked = lockByPeriod.get(period);
+      if (locked === undefined) {
+        const snap = await GstMonthlySnapshot.findOne({ period, lockedAt: { $ne: null } }).select("_id").lean();
+        locked = !!snap;
+        lockByPeriod.set(period, locked);
+      }
+      if (!locked) skip.add(String(c._id)); // open period → drop the double reversal
+    }
+  }
+
+  return cns.filter((c) => !skip.has(String(c._id))).map((c) => ({
     creditNoteNumber: c.creditNoteNumber || c.cnNumber || `CN-${c._id}`,
     creditNoteDate: (c.creditNoteDate || c.createdAt).toISOString().slice(0, 10),
     originalInvoiceNumber: c.originalBillNumber || "",

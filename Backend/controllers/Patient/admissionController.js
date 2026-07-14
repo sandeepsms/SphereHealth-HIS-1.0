@@ -1097,6 +1097,21 @@ class AdmissionController {
       }
     }
 
+    // R8-FIX(#19): reject OVERPAYMENT symmetrically. remainingAfter < 0 means the
+    // entered amount exceeds total open-bill dues. Previously the waterfall's
+    // `isLast ? remaining` absorbed the surplus onto the last bill, where
+    // recalcTotals' max(0,…) clamp silently swallowed it (no advance/refund
+    // record). Force the cashier to collect the exact dues; route any genuine
+    // excess through a separate advance deposit.
+    if (remainingAfter < -0.5) {
+      const overpayment = +(-remainingAfter).toFixed(2);
+      return res.status(400).json({
+        success: false, code: "OVERPAY",
+        message: `Entered ₹${enteredAmt.toFixed(2)} exceeds outstanding ₹${balanceNow.toFixed(2)} by ₹${overpayment.toFixed(2)}. Collect the exact balance; route any excess through a separate advance deposit (POST /api/billing/advance).`,
+        balance: balanceNow, entered: enteredAmt, overpayment,
+      });
+    }
+
     const set = {
       "dischargeWorkflow.stage":         "BillCleared",
       "dischargeWorkflow.billClearedAt": new Date(),
@@ -1215,10 +1230,12 @@ class AdmissionController {
           const patientShare = toNum(bill.patientPayableAmount) || toNum(bill.netAmount) || 0;
           const paidSoFar    = bill.payments.reduce((s, p) => s + toNum(p.amount), 0);
           const billBal      = Math.max(0, patientShare - paidSoFar);
-          const isLast       = i === bills.length - 1;
-          // Each bill takes what it owes; the last one absorbs any leftover
-          // (rounding / overpayment) so nothing collected goes unrecorded.
-          const pay = isLast ? remaining : Math.min(remaining, billBal);
+          // R8-FIX(#19): cap EVERY bill at its own balance (drop the isLast
+          // absorb). The gate above now rejects overpayment, so `remaining`
+          // never exceeds the summed dues; capping each bill guarantees no
+          // single bill is overpaid even if the gate/waterfall bill sets
+          // diverge. Sub-rupee rounding stays within the 0.5 PAID tolerance.
+          const pay = Math.min(remaining, billBal);
           if (pay <= 0.005) continue;
 
           // R7hr(NABH-P3.4) — receipt serial on the discharge collection too.

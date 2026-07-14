@@ -2433,7 +2433,10 @@ exports.tpaSettle = async (req, res, next) => {
               // (the common TPA case) silently dropped the patient
               // liability bump. Now: rebase percent to the post-move
               // share of the line total so subsequent recalc agrees.
-              const lineTotal = toN(item.netAmount) || (itemTpa + itemPt);
+              // R8-FIX(#34): tax-INCLUSIVE lineTotal — recalcTotals re-derives
+              // tpaShare = (net+tax)*tpaPercent/100, so rebasing tpaPercent off
+              // the tax-EXCLUSIVE netAmount would skew the split on taxable lines.
+              const lineTotal = (toN(item.netAmount) + toN(item.taxAmount)) || (itemTpa + itemPt);
               if (lineTotal > 0) {
                 item.tpaPercent = Math.max(0, Math.min(100,
                   Number(((item.tpaPayableAmount / lineTotal) * 100).toFixed(2)),

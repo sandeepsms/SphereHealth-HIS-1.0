@@ -1692,7 +1692,12 @@ class BillingService {
       // the cashier. With a tolerance of 50 paise for rounding, reject
       // overpays so the receptionist routes excess to PatientAdvance
       // explicitly.
-      const currentPaid = bill.payments.reduce((s, p) => s + toNum(p.amount), 0);
+      // R8-FIX(#34): patient-side balance excludes TPA_CLAIM (insurer money
+      // settles the TPA share, not the patient residual). Counting it zeroed
+      // the collectable balance on a TPA short-pay routed to the patient →
+      // the patient's co-pay was rejected as OVERPAY.
+      const currentPaid = bill.payments.reduce(
+        (s, p) => s + (p.paymentMode === "TPA_CLAIM" ? 0 : toNum(p.amount)), 0);
       const balanceNow  = Math.max(0, toNum(bill.patientPayableAmount) - currentPaid);
       const tolerance   = 0.5;
       if (toNum(amount) > balanceNow + tolerance) {
@@ -1730,7 +1735,11 @@ class BillingService {
       });
 
       const totalPaid = bill.payments.reduce((s, p) => s + toNum(p.amount), 0);
-      const balance = Math.max(0, toNum(bill.patientPayableAmount) - totalPaid);
+      // R8-FIX(#34): balance/status from patient-side payments only (exclude
+      // TPA_CLAIM, which pays the TPA share). advancePaid stays all money in.
+      const patientPaid = bill.payments.reduce(
+        (s, p) => s + (p.paymentMode === "TPA_CLAIM" ? 0 : toNum(p.amount)), 0);
+      const balance = Math.max(0, toNum(bill.patientPayableAmount) - patientPaid);
       bill.advancePaid   = totalPaid;
       bill.balanceAmount = balance;
       // R7hr-188: a DRAFT (live IPD) bill stays DRAFT after a payment —
@@ -1867,8 +1876,16 @@ class BillingService {
         remarks:        `VOID of payment ${pay._id} — ${String(reason).trim()}`,
       });
       const totalPaid = b.payments.reduce((s, p) => s + toNum(p.amount), 0);
+      // R8-FIX(#34): patient balance from patient-side payments only (exclude
+      // TPA_CLAIM). Without this a void on a TPA short-pay bill read balance 0
+      // and wrongly kept the still-owed bill at PAID (recalcTotals corrects
+      // balanceAmount on save but NOT billStatus). advancePaid stays all money
+      // in; the PAID-vs-GENERATED gate still keys on totalPaid so a fully-TPA-
+      // covered (patient-0) bill stays PAID.
+      const patientPaid = b.payments.reduce(
+        (s, p) => s + (p.paymentMode === "TPA_CLAIM" ? 0 : toNum(p.amount)), 0);
       b.advancePaid   = totalPaid;
-      b.balanceAmount = Math.max(0, toNum(b.patientPayableAmount) - totalPaid);
+      b.balanceAmount = Math.max(0, toNum(b.patientPayableAmount) - patientPaid);
       // R7hr-188: voiding a payment on a live DRAFT bill must keep it
       // DRAFT (never GENERATED — that would fake a billNumber-less
       // generated bill and detach the auto-biller).
@@ -2033,12 +2050,25 @@ class BillingService {
         const v = toNum(p.amount);
         return s + (v > 0 && p.paymentMode === "ADVANCE_ADJUSTMENT" ? v : 0);
       }, 0);
-      const refundableCash = paid - advanceApplied;
-      if (amt > refundableCash + 0.5) {
-        const err = new Error(
-          `Cannot refund ₹${amt} — only ₹${refundableCash.toFixed(2)} was collected as cash/card/UPI on this bill ` +
-          `(advance-applied credit is returned to the advance pool, not the cash drawer)`,
-        );
+      // R8-FIX(#36) — TPA_CLAIM settlements are the insurer's money, never the
+      // cash drawer. A TPA refund flows back to the insurer (mode TPA_CLAIM,
+      // handled by the TPA_REFUND_PENDING_INSURER leg below) and is capped at
+      // TPA net-collected; a cash/card/UPI refund must NOT be able to draw
+      // against TPA money. Split the refundable pool by mode-class. tpaNet nets
+      // prior negative TPA_CLAIM refund rows so the cap shrinks on repeat
+      // reversals; paid = cashClass + tpaNet + advanceApplied.
+      const tpaNet = (bill.payments || []).reduce(
+        (s, p) => s + (p.paymentMode === "TPA_CLAIM" ? toNum(p.amount) : 0),
+        0,
+      );
+      const cashClass = paid - advanceApplied - tpaNet;
+      const refundableForMode = payMode === "TPA_CLAIM" ? tpaNet : cashClass;
+      if (amt > refundableForMode + 0.5) {
+        const msg = payMode === "TPA_CLAIM"
+          ? `Cannot refund ₹${amt} to the insurer — only ₹${refundableForMode.toFixed(2)} was settled via TPA on this bill`
+          : `Cannot refund ₹${amt} — only ₹${refundableForMode.toFixed(2)} was collected as cash/card/UPI on this bill ` +
+            `(TPA settlements are refunded to the insurer, and advance-applied credit is returned to the advance pool, not the cash drawer)`;
+        const err = new Error(msg);
         err.code = "OVER_REFUND"; err.status = 400; throw err;
       }
 
@@ -2203,12 +2233,13 @@ class BillingService {
               cnDateOverride = new Date(`${ny}-${nm}-${nd}T00:00:00+05:30`);
             }
           }
-          // R7ar-P1-16/D1-aq-08/D2-aq-07: tax math fix. Pre-R7ar:
-          //   taxShare = (amt/billGross) × billTax
-          // But billGross = netAmount which is POST-tax — overstates the
-          // reversal. Correct math: taxableValue = amt × (gross − tax) /
-          // (gross + tax); taxAmount = amt − taxableValue. Also: only
-          // reverse the tax from items still billable (skip excludedByPackage).
+          // R7ar/R8-FIX(#3): tax math. item.netAmount is PRE-tax (the taxable
+          // base), NOT post-tax. `amt` (the refund) is a slice of the
+          // tax-INCLUSIVE gross the patient paid = net + tax. So:
+          //   gross paid    = eligibleNet + eligibleTax
+          //   taxShare      = amt × tax / (net + tax)
+          //   taxableValue  = amt − taxShare
+          // Only reverse the tax from items still billable (skip excludedByPackage).
           const eligibleItems = (bill.billItems || []).filter((it) => !it.excludedByPackage);
           const eligibleNet   = eligibleItems.reduce((s, it) => s + toNum(it.netAmount), 0);
           const eligibleTax   = eligibleItems.reduce((s, it) => s + toNum(it.taxAmount), 0);
@@ -2220,10 +2251,13 @@ class BillingService {
           // no eligible items remain, the refund is a package refund —
           // treat as non-taxable (taxShare=0). The package's bundled
           // GST is already booked at PER_DAY/PER_PROCEDURE rate.
-          const billGross  = eligibleNet || 0;
-          const billTax    = eligibleTax || 0;
-          // taxShare proportional, taxable = refund − tax (pre-tax slice)
-          const taxShare    = billGross > 0 ? +((amt / billGross) * billTax).toFixed(2) : 0;
+          const billGross     = eligibleNet || 0;   // sum of item.netAmount — PRE-TAX taxable base
+          const billTax       = eligibleTax || 0;
+          // `amt` is a slice of the tax-INCLUSIVE gross the patient PAID, so the
+          // denominator must be the gross paid (net + tax), NOT the pre-tax net —
+          // else the tax share is overstated and the CDNR over-reverses GST.
+          const billGrossPaid = billGross + billTax; // tax-INCLUSIVE gross paid
+          const taxShare      = billGrossPaid > 0 ? +((amt * billTax) / billGrossPaid).toFixed(2) : 0;
           // R7ar-D2-aq-08: detect inter-state via placeOfSupply, fall back
           // to igstAmount marker for legacy bills missing placeOfSupply.
           const _hosp       = (process.env.HOSPITAL_STATE_CODE || "").trim();

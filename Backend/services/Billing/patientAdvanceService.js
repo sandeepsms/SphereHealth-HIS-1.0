@@ -262,9 +262,13 @@ class PatientAdvanceService {
           // completed, and over-credit the bill if the order is later cancelled).
           const itemsNet      = (bill.billItems || []).reduce((s, i) =>
             s + ((!i.orderStatus || i.orderStatus === "Completed") ? toNum(i.netAmount) : 0), 0);
+          // R8-FIX(#34): exclude TPA_CLAIM (insurer money settles the TPA
+          // share, not the patient residual) so an advance CAN be applied to a
+          // TPA short-pay routed to the patient. ADVANCE_ADJUSTMENT stays
+          // counted — applying advance IS a patient-side payment.
           const paidPositive  = bill.payments.reduce((s, p) => {
             const v = toNum(p.amount);
-            return s + (v > 0 ? v : 0);
+            return s + (v > 0 && p.paymentMode !== "TPA_CLAIM" ? v : 0);
           }, 0);
           const referenceNet  = Math.max(toNum(bill.patientPayableAmount), itemsNet);
           const billBalance   = Math.max(0, referenceNet - paidPositive);
@@ -310,7 +314,11 @@ class PatientAdvanceService {
           const newPayment = bill.payments[bill.payments.length - 1];
 
           const totalPaid = bill.payments.reduce((s, p) => s + toNum(p.amount), 0);
-          const balance   = Math.max(0, toNum(bill.patientPayableAmount) - totalPaid);
+          // R8-FIX(#34): patient balance + status from patient-side payments
+          // only (exclude TPA_CLAIM). advancePaid stays all money in.
+          const patientPaid = bill.payments.reduce(
+            (s, p) => s + (p.paymentMode === "TPA_CLAIM" ? 0 : toNum(p.amount)), 0);
+          const balance   = Math.max(0, toNum(bill.patientPayableAmount) - patientPaid);
           bill.advancePaid   = totalPaid;
           bill.balanceAmount = balance;
           // R7hr-188: live DRAFT bill stays DRAFT after the apply so the
@@ -473,6 +481,13 @@ class PatientAdvanceService {
             approvedAt:   new Date(),
           } : {}),
         },
+        // R8-FIX(#7): bump the optimistic-concurrency version key. findOneAndUpdate
+        // (unlike .save()) does NOT honour schema optimisticConcurrency, so without
+        // this a concurrently in-flight applyAdvanceToBill save({_id,__v}) still
+        // matches (__v unchanged) and resurrects this REFUNDED advance,
+        // double-spending the deposit. Bumping __v forces that apply's save to
+        // VersionError → retry → re-read REFUNDED → abort cleanly.
+        $inc: { __v: 1 },
       },
       { new: true },
     );
