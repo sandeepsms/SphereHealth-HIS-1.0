@@ -3,7 +3,7 @@
 > **Ye file kya hai:** Har session ka running task log. Naya session shuru karo toh **sirf ye file padho** — 2 minute me pata chal jayega kya chal raha tha, kaha se pick karna hai, aage kya karna hai.
 > **Rule:** Har work-session ke END pe ye file update karke commit karni hai.
 
-**Last updated:** 2026-07-13 · **Branch:** `claude/multi-hospital-deploy` · **Tree:** clean ✅ · **Build:** green ✅ (E2E 136/136 + FE vite) · **Head:** `f0812c89` · **Pending:** **CAPABILITY AUDIT (19/19 defect fix) + AI AMBIENT SCRIBE DONE (`f0812c89`, feature-flagged OFF).** Scribe sirf `ANTHROPIC_API_KEY` set hone pe on hota hai; live LLM path keyless dev pe untested. E2E **136/136** hold.
+**Last updated:** 2026-07-14 · **Branch:** `claude/multi-hospital-deploy` · **Tree:** clean ✅ · **Build:** green ✅ (E2E 136/136 + FE vite) · **Head:** `a15fdcf2` · **Pending:** **OPTIONAL LOW-SEVERITY CLEANUP ARC DONE (`a15fdcf2`) — 7 fixes applied, 11 already-done, 5 deferred (verified render-path).** Coding queue khaali; bacha sirf owner-input/hardware (VPS dry-run, `ANTHROPIC_API_KEY`, insurer PDFs). E2E **136/136** hold. (Is session me Obsidian knowledge-vault bhi bana: `D:\@claude\SpherehealthVault`, 67 notes — repo ke bahar.)
 
 ---
 
@@ -37,7 +37,17 @@
 
 ---
 
-**Abhi hua (2026-07-13, part 7):** **AI CLINICAL DOCUMENTATION ASSISTANT (AMBIENT SCRIBE)** (owner: "voice input build system ko AI clinical documentation assistant bana do") — commit `f0812c89`, doc `AI-SCRIBE.md`, 12 files. Existing global voice-dictation widget ko AI scribe me evolve kiya: consult bolo → structured clinical-note DRAFT (Claude forced tool_use) → doctor review+edit → form me apply → normal Save/Sign. **Kabhi auto-save/auto-sign nahi.** Owner ne "all 3 surfaces" + "live mic + consent gate" choose kiya.
+**Abhi hua (2026-07-14, part 8):** **OPTIONAL LOW-SEVERITY CLEANUP ARC** (owner: "do 3. optional low-severity cleanups") — commit `a15fdcf2`, 10 files. 7-agent discovery Workflow (`his-cleanup-discovery`) ne har backlog item ka current-state map kiya: **23 findings → 11 pehle se DONE (purana R7hr pass), 7 apply, 5 defer-risky.** Sirf 7 genuine low-risk fix lagaye; 5 verified render-path wale defer (documented). Har fix launch-verified print/IA output protect karte hue.
+- **[BE] PER_SECTION_LIMIT truncation notice**: 5 → saare 13 capped sections (pagination.hasMore mirror) → koi section apni oldest rows chup-chaap drop nahi karti. Additive field, no query change.
+- **[BE] RATING_KEYS**: redundant static hatao (module.exports wala rakha jo controller destructure karta hai).
+- **[FE] printEnrichment `isIpdIsh`**: OR-chain → per-key presence test; present-but-falsy IPD key (`bedNumber:''`) ab detect → bed/ward admission backfill fires. Working cases behaviour-preserving.
+- **[FE] Feedback dashboard**: debounced `/stats` load me AbortController → slow superseded response late land karke stale data nahi dikhata.
+- **[FE] `htmlEscape.js` (naya)**: ek shared 5-char escaper; 4 byte-identical inline copies (doctor/nurse note builders + IA builder + signatureImg) import pe swap. iaNabhRenderers ka intentional 4-char esc chhoda.
+- **[FE] Nurse-IA**: psychosocial `language` input render+bind (state/save me tha, dikhta nahi tha); `assessedAt` ab save-time pe stamp (pehle page-open pe frozen).
+- **Defer (documented, verified render path):** fmtDate→shared util (output differ), IA `_isEmpty` merge, grid-formula const, 3 IA adapters, nursing-IA 3-site union. **Already-done (R7hr pass):** buildReceipt×2, signImg, escapeRegex, stats `$facet`, authHeaders, qrcode, doctor-draft (restore/rolekey/datetime), navSplash timer.
+- **Verify:** node --check + RATING_KEYS export smoke; vite build green; **E2E 136/136** (opd22 er21 services13 ipd29 tasks23 accounts28) fresh new-code backend pe.
+
+**Pichla arc (2026-07-13, part 7):** **AI CLINICAL DOCUMENTATION ASSISTANT (AMBIENT SCRIBE)** (owner: "voice input build system ko AI clinical documentation assistant bana do") — commit `f0812c89`, doc `AI-SCRIBE.md`, 12 files. Existing global voice-dictation widget ko AI scribe me evolve kiya: consult bolo → structured clinical-note DRAFT (Claude forced tool_use) → doctor review+edit → form me apply → normal Save/Sign. **Kabhi auto-save/auto-sign nahi.** Owner ne "all 3 surfaces" + "live mic + consent gate" choose kiya.
 - **Discovery:** 3 parallel Explore-agent ne OPD Assessment / IPD DoctorNotes / Discharge Summary forms ke exact state-vars + setters + button-spots map kiye.
 - **Backend (feature-flagged by `ANTHROPIC_API_KEY`, no key → 503):** `services/Clinical/clinicalScribeService.js` (ek superset `structure_clinical_note` tool, per-surface prompt, PII-safe log; invoice-extractor ka proven pattern; model ko sirf transcript-supported cheez structure karne ka instruct — invent nahi); `controllers/Clinical/clinicalScribeController.js` + routes + mount (`GET /api/clinical-scribe/status`, `POST /structure`); permission `clinical.scribe` = [Admin, Doctor] (FE+BE mirror).
 - **Frontend:** `Components/scribe/AmbientScribe.jsx` (reusable button+modal: consent gate + PHI notice → live Web Speech capture reusing `medicalDictionary` → editable review with confidence badge + ⚠️ red-flags → apply; `enabled:false` pe render null = disabled-safe); `Components/scribe/scribeApply.js` (pure note→form mappers). OPD Assessment + IPD daily progress note + Discharge summary teeno me button wired; **Apply fill-empty + meds/tests append (doctor ka type kiya kabhi overwrite nahi)**.
