@@ -239,7 +239,7 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
   const [saved,     setSaved]     = useState(false);
 
   // ── Assessment date/time ──────────────────────────────────────
-  const [assessedAt] = useState(new Date().toISOString().slice(0, 16));
+  const [assessedAt, setAssessedAt] = useState(new Date().toISOString().slice(0, 16));
 
   // ── Vitals at admission ───────────────────────────────────────
   const [vitals, setVitals] = useState({
@@ -476,9 +476,14 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
     setSaving(true);
     try {
       const token = (sessionStorage.getItem("his_token"));
+      // R7hr(DEFER-19) — stamp the assessment time at SAVE, not at page-open;
+      // the frozen mount value made every saved record show when the nurse
+      // opened the form (even before a patient was selected).
+      const stampedAt = new Date().toISOString().slice(0, 16);
+      setAssessedAt(stampedAt);
       const payload = {
         UHID: patInfo.UHID || patInfo.patientId?.UHID || uhid,
-        assessedAt,
+        assessedAt: stampedAt,
         assessedBy: signoff.nurseName,
         nurseName: signoff.nurseName,   // R7hu — the backend NABH sign-off audit reads `signoff.name || nurseName`; the old payload sent only `assessedBy`, so the audit trail + initialAssessment.nurseName were recorded BLANK on every save.
         nurseId: signoff.nurseId,
@@ -711,7 +716,7 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
       <Section title="Patient Identification & Assessment Details" icon="pi-id-card" color={C.primary} nabh>
         <G3>
           <F label="Assessment Date & Time" required>
-            <input className="his-field" type="datetime-local" defaultValue={assessedAt} readOnly />
+            <input className="his-field" type="datetime-local" value={assessedAt} readOnly />
           </F>
           <F label="Nurse Name" required>
             <input
@@ -1200,6 +1205,11 @@ function NurseInitialAssessmentContent({ selectedPatient }) {
               {["No","Yes — Interpreter needed"].map(v => <option key={v}>{v}</option>)}
             </select>
           </F>
+          {psycho.languageBarrier.startsWith("Yes") && (
+            <F label="Preferred Language / Interpreter">
+              <input className="his-field" value={psycho.language} onChange={upd(setPsycho)("language")} placeholder="e.g. Hindi, Tamil, Bengali…" />
+            </F>
+          )}
           <F label="Social Support">
             <select className="his-select" value={psycho.socialSupport} onChange={upd(setPsycho)("socialSupport")}>
               {["Family Present","Friend Present","Caregiver Present","Alone","No Support"].map(v => <option key={v}>{v}</option>)}

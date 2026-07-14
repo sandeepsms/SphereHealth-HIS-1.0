@@ -562,7 +562,12 @@ exports.getCompleteFile = async (req, res) => {
     // OLDEST rows with no signal to the reader. Surface which sections were
     // truncated so the UI/print can show an honest "showing latest N" note
     // instead of implying the record is complete.
-    const truncatedSections = Object.entries({ doctorNotes, nurseNotes, doctorOrders, mar, vitals })
+    const truncatedSections = Object.entries({
+      doctorNotes, nurseNotes, doctorOrders,
+      nursingAssessments, nursingCarePlans, shiftHandovers,
+      mar, vitals, investigations, billingTriggers,
+      activityLog, labTrends, labReports,
+    })
       .filter(([, rows]) => Array.isArray(rows) && rows.length >= PER_SECTION_LIMIT)
       .map(([name]) => name);
 

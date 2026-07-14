@@ -52,10 +52,8 @@ const IPD_KEYS  = ["ipdNo", "admissionNumber", "bedNumber", "wardName", "admissi
 
 // A payload "smells IPD-ish" when the caller supplied ANY admission-context
 // key — only then is chasing bed/ward/admission data meaningful.
-const isIpdIsh = (payload) =>
-  (payload.ipdNo || payload.admissionNumber || payload.admissionId ||
-   payload.bedNumber || payload.wardName || payload.admissionDate ||
-   payload.dischargeDate) !== undefined;
+const IPD_CONTEXT_KEYS = ["ipdNo", "admissionNumber", "admissionId", "bedNumber", "wardName", "admissionDate", "dischargeDate"];
+const isIpdIsh = (payload) => IPD_CONTEXT_KEYS.some((k) => payload[k] !== undefined);
 
 export function payloadNeedsEnrichment(payload) {
   if (!payload || typeof payload !== "object") return false;

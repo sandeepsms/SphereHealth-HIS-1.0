@@ -14,10 +14,7 @@ import {
   renderNursingNabhExtras,
 } from "../../Components/clinical/iaNabhRenderers";
 import { sigImgInline, sigImgPanel } from "../../utils/signatureImg";  // R7hr(DEFER-13) — shared, hardened (data:/uploads only)
-
-const escapeHtml = (s) =>
-  String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"); // R7hr-251 (audit) — single-quoted attribute contexts
+import { escapeHtml } from "../../utils/htmlEscape";  // R7hr(DEDUP) — shared 5-char escaper (was inline ×4)
 
 const ISO_RX = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
 

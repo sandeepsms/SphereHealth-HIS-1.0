@@ -14,9 +14,7 @@
  */
 
 // Attribute-safe escaping (the src lands inside an HTML attribute).
-const esc = (s) => String(s ?? "")
-  .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-  .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+import { escapeHtml as esc } from "./htmlEscape";  // R7hr(DEDUP) — shared 5-char escaper
 
 export const isSafeSigSrc = (src) =>
   typeof src === "string" && !!src &&

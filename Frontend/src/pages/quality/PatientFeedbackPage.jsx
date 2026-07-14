@@ -217,23 +217,29 @@ function Dashboard() {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (signal) => {
     setLoading(true);
     try {
       const params = Object.fromEntries(Object.entries(filters).filter(([, v]) => v));
-      const { data } = await axios.get(`${FB}/stats`, { params });
+      const { data } = await axios.get(`${FB}/stats`, { params, signal });
       setStats(data.data);
     } catch (e) {
+      if (axios.isCancel(e)) return;                    // superseded by a newer filter — ignore
       toast.error(e?.response?.data?.message || "Could not load dashboard.");
-    } finally { setLoading(false); }
+    } finally {
+      if (!signal?.aborted) setLoading(false);          // don't clear the spinner for an aborted call
+    }
   }, [filters]);
 
   // R7hr(DEFER-15): the department text filter used to refetch /stats on
   // every keystroke; a 400ms debounce coalesces typing into one request
   // (dropdown/date changes share the same small delay — imperceptible).
+  // R7hr(DEFER-15b): an AbortController cancels the debounced-away / superseded
+  // request so a slow earlier /stats response can't land late and show stale data.
   useEffect(() => {
-    const t = setTimeout(load, 400);
-    return () => clearTimeout(t);
+    const ctrl = new AbortController();
+    const t = setTimeout(() => load(ctrl.signal), 400);
+    return () => { clearTimeout(t); ctrl.abort(); };
   }, [load]);
 
   const field = { padding: "8px 10px", borderRadius: 9, border: "1px solid #e2e8f0", fontSize: 13, fontFamily: "inherit" };

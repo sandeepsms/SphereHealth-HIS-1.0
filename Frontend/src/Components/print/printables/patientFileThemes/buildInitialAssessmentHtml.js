@@ -25,13 +25,7 @@
 
 /* ── local HTML escaper ─────────────────────────────────────────────── */
 import { sigImgInline } from "../../../../utils/signatureImg";  // R7hr(DEFER-13)
-const esc = (s) =>
-  String(s ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+import { escapeHtml as esc } from "../../../../utils/htmlEscape";  // R7hr(DEDUP) — shared 5-char escaper
 
 /* ── value helpers ──────────────────────────────────────────────────── */
 // A value counts as "empty" (and is dropped) when it is null / undefined /

@@ -90,7 +90,6 @@ PatientFeedbackSchema.virtual("avgRating").get(function () {
 
 // URL-safe random token for the patient link.
 PatientFeedbackSchema.statics.newToken = () => crypto.randomBytes(24).toString("base64url");
-PatientFeedbackSchema.statics.RATING_KEYS = RATING_KEYS;
 
 module.exports = mongoose.models.PatientFeedback || mongoose.model("PatientFeedback", PatientFeedbackSchema);
 module.exports.RATING_KEYS = RATING_KEYS;
