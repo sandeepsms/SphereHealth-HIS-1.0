@@ -1,5 +1,6 @@
 const HospitalCharges = require("../../models/charges/HospitalChargesModel");
 const TPA = require("../../models/tpa/tpaModel");
+const { safeRegex } = require("../../utils/queryGuards"); // R8-FIX(#50): ReDoS/regex-injection guard
 
 const createHospitalCharges = async (body) => {
   const { tpaName, charges } = body;
@@ -58,9 +59,10 @@ const getAllHospitalCharges = async (queryParams) => {
   let query = {};
 
   if (search) {
+    const rx = safeRegex(search); // R8-FIX(#50)
     query.$or = [
-      { tpaName: { $regex: search, $options: "i" } },
-      { tpaCode: { $regex: search, $options: "i" } },
+      { tpaName: rx },
+      { tpaCode: rx },
     ];
   }
 

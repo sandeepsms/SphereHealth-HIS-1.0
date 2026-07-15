@@ -1,5 +1,6 @@
 const TPAServiceModel = require("../../models/tpa/TPAServicesModel");
 const TPA = require("../../models/tpa/tpaModel");
+const { safeRegex } = require("../../utils/queryGuards"); // R8-FIX(#50): ReDoS/regex-injection guard
 
 class TPAServiceService {
   static async createTPAService(data) {
@@ -325,10 +326,11 @@ class TPAServiceService {
 
   static async searchTPAServices(searchTerm) {
     try {
+      const rx = safeRegex(searchTerm); // R8-FIX(#50): escape + length cap
       const tpas = await TPA.find({
         $or: [
-          { tpaName: { $regex: searchTerm, $options: "i" } },
-          { tpaCode: { $regex: searchTerm, $options: "i" } },
+          { tpaName: rx },
+          { tpaCode: rx },
         ],
         isActive: true,
       }).select("_id");
@@ -338,7 +340,7 @@ class TPAServiceService {
       return TPAServiceModel.find({
         $or: [
           { tpaId: { $in: tpaIds } },
-          { "services.Name": { $regex: searchTerm, $options: "i" } },
+          { "services.Name": rx },
         ],
         isActive: true,
       }).populate("tpaId", "tpaName tpaCode");

@@ -31,9 +31,9 @@ router.post  ("/supplies",          requireAction("ward.supplies"), ctrl.supplyU
 router.get   ("/code-blue",         requireAction("ward.read"),     ctrl.codeBlueList);
 router.post  ("/code-blue",         requireAction("ward.code-blue"),ctrl.codeBlueCreate);
 router.post  ("/code-blue/:id/respond",
-  validateObjectIdParam("id"), requireAction("ward.code-blue"), ctrl.codeBlueAddResponder);
+  validateObjectIdParam("id"), requireAction("ward.code-blue.respond"), ctrl.codeBlueAddResponder);
 router.post  ("/code-blue/:id/close",
-  validateObjectIdParam("id"), requireAction("ward.code-blue"), ctrl.codeBlueClose);
+  validateObjectIdParam("id"), requireAction("ward.code-blue.respond"), ctrl.codeBlueClose);
 
 /* ── Mortuary register — sensitive; tighter audience ──────── */
 router.get   ("/mortuary",          requireAction("ward.mortuary"), ctrl.mortuaryList);

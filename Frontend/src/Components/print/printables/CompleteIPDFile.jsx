@@ -40,7 +40,7 @@ import AuditAppendix  from "./patientFileThemes/AuditAppendix";
    themes with zero per-theme edits. Absent/empty printSections
    (old payloads, demo mode, gallery) ⇒ print everything.          */
 const SECTION_FIELDS = {
-  initialAssessment: ["ia", "chiefComplaints", "history", "medicalHistory", "surgicalHistory", "familyHistory", "socialHistory", "generalExamination", "systemicExamination", "vitalsOnAdmission", "patientExtra"],
+  initialAssessment: ["ia", "exam", "chiefComplaints", "history", "medicalHistory", "surgicalHistory", "familyHistory", "socialHistory", "generalExamination", "systemicExamination", "vitalsOnAdmission", "patientExtra"],
   opdAssessments:    ["opdAssessments"],
   devices:           ["devices"],
   doctorNotes:       ["doctorNotes"],
@@ -88,6 +88,15 @@ function filterFileBySections(file, printSections) {
       else out[f] = "";
     });
   });
+  // R8-FIX(#29) — Admission vitals belong to Initial Assessment but live NESTED
+  // under the SHARED `vitals` object, whose `.trend` is governed by the separate
+  // `vitals` section (Executive theme reads f.vitals.trend). Blanking the whole
+  // `vitals` object would wipe the trend, so clear ONLY onAdmission when Initial
+  // Assessment is excluded — mirrors how history/ia/exam are stripped. Closes a
+  // PHI leak: subset/"Billing-only" prints were still rendering admission vitals.
+  if (!keep.has("initialAssessment") && out.vitals && typeof out.vitals === "object") {
+    out.vitals = { ...out.vitals, onAdmission: {} };
+  }
   return out;
 }
 

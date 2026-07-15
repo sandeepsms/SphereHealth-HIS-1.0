@@ -277,6 +277,7 @@ export const ACTIONS = {
   "ward.equipment":        ["Admin", "Ward Boy", "Nurse"],
   "ward.supplies":         ["Admin", "Ward Boy", "Housekeeping", "Nurse"],
   "ward.code-blue":        ["Admin", "Doctor", "Nurse", "Ward Boy"],
+  "ward.code-blue.respond": ["Admin", "Doctor", "Nurse"],             // R8-FIX(#46): respond+close clinical-only (mirror backend)
   "ward.mortuary":         ["Admin", "Doctor", "Nurse", "Ward Boy"],
   "ward.manage":           ["Admin", "Nurse"],
 

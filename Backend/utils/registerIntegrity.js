@@ -41,7 +41,21 @@ const crypto = require("crypto");
 // once REGISTER_HMAC_SECRET is set to a real secret in production.
 const DEV_DEFAULT_SECRET =
   "sphere-health-register-integrity-dev-secret-CHANGE-IN-PROD";
-const SECRET = process.env.REGISTER_HMAC_SECRET || DEV_DEFAULT_SECRET;
+// R8-FIX(#33): NEVER fall back to the source-known dev default in production —
+// that would make every register tamper-evidence digest forgeable by anyone
+// holding the (resale) source. Backend/index.js also fail-fasts on a missing
+// REGISTER_HMAC_SECRET in prod; this guard additionally protects standalone
+// prod scripts that require this module without booting index.js.
+const SECRET =
+  process.env.REGISTER_HMAC_SECRET ||
+  (process.env.NODE_ENV === "production"
+    ? (() => {
+        throw new Error(
+          "[registerIntegrity] REGISTER_HMAC_SECRET must be set in production — " +
+            "refusing to fall back to the source-known dev default.",
+        );
+      })()
+    : DEV_DEFAULT_SECRET);
 const INTEGRITY_VERSION = 1;
 const INTEGRITY_ALGO = "HMAC-SHA256";
 

@@ -24,6 +24,12 @@ class PatientService {
      CREATE — new patient + increment correct counter
   ══════════════════════════════════════════════ */
   async createPatient(patientData) {
+    // R8-FIX(#32): the atomic counter is the SOLE source of UHID — strip any
+    // client-supplied identity fields (mirrors updatePatient) so a crafted
+    // request can't pre-set/collide a UHID or impersonate a patientId/_id.
+    delete patientData.UHID;
+    delete patientData.patientId;
+    delete patientData._id;
     // Department/doctor are now optional at registration (Emergency walk-ins
     // and Services bills don't always have them pre-selected). Validate them
     // only when supplied.

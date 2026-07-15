@@ -5,6 +5,7 @@
 //      When patient.isActive=false, their active admissions stay, bed stays Occupied
 
 const mongoose = require("mongoose");
+const { safeRegex } = require("../../utils/queryGuards"); // R8-FIX(#50): ReDoS/regex-injection guard
 const Admission = require("../../models/Patient/admissionModel");
 const Bed = require("../../models/bedMgmt/bedsModel");
 const Patient = require("../../models/Patient/patientModel");
@@ -1615,7 +1616,7 @@ class AdmissionService {
 
   async searchAdmissions(searchTerm, opts = {}) {
     if (!searchTerm?.trim()) throw new Error("Search term is required");
-    const regex = { $regex: searchTerm.trim(), $options: "i" };
+    const regex = safeRegex(searchTerm); // R8-FIX(#50): escape + length cap (safeRegex trims internally)
     const query = {
       $or: [
         { UHID: regex },
@@ -1713,7 +1714,7 @@ class AdmissionService {
   async getAdmissionsByDoctor(doctorName) {
     if (!doctorName) throw new Error("Doctor name is required");
     return Admission.find({
-      attendingDoctor: { $regex: doctorName.trim(), $options: "i" },
+      attendingDoctor: safeRegex(doctorName), // R8-FIX(#50)
       status: "Active",
     })
       .populate("patientId", "fullName UHID contactNumber")

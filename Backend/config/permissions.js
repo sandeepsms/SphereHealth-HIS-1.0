@@ -324,7 +324,8 @@ const ACTIONS = {
   "ward.shift":            ["Admin", "Ward Boy", "Housekeeping"],   // clock in/out for support staff
   "ward.equipment":        ["Admin", "Ward Boy", "Nurse"],          // issue / return register
   "ward.supplies":         ["Admin", "Ward Boy", "Housekeeping", "Nurse"],
-  "ward.code-blue":        ["Admin", "Doctor", "Nurse", "Ward Boy"],
+  "ward.code-blue":        ["Admin", "Doctor", "Nurse", "Ward Boy"],   // ALERT/create — any clinical role may raise
+  "ward.code-blue.respond": ["Admin", "Doctor", "Nurse"],             // R8-FIX(#46): respond + close — clinical only (Ward Boy excluded per route comment)
   "ward.mortuary":         ["Admin", "Doctor", "Nurse", "Ward Boy"],
   "ward.manage":           ["Admin", "Nurse"],                       // KPI dashboard
 

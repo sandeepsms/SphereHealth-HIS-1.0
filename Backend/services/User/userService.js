@@ -2,6 +2,7 @@ const User = require("../../models/User/userModel");
 const Department = require("../../models/Department/department");
 const userActivity = require("./userActivityLogger");
 const { checkPasswordReuse } = require("../../utils/passwordPolicy");
+const { safeRegex } = require("../../utils/queryGuards"); // R8-FIX(#50): ReDoS/regex-injection guard
 
 class UserService {
   async createUser(userData, actor = null) {
@@ -618,13 +619,14 @@ class UserService {
 
   // Search users
   async searchUsers(searchTerm) {
+    const rx = safeRegex(searchTerm); // R8-FIX(#50): escape metachars + length cap
     const users = await User.find({
       isActive: true,
       $or: [
-        { fullName: { $regex: searchTerm, $options: "i" } },
-        { email: { $regex: searchTerm, $options: "i" } },
-        { employeeId: { $regex: searchTerm, $options: "i" } },
-        { phone: { $regex: searchTerm, $options: "i" } },
+        { fullName: rx },
+        { email: rx },
+        { employeeId: rx },
+        { phone: rx },
       ],
     })
       .select("-password -passwordHistory")

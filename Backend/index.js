@@ -42,6 +42,24 @@ if (!process.env.NODE_ENV) {
 const NODE_ENV = process.env.NODE_ENV || "development";
 const IS_PROD = NODE_ENV === "production";
 
+// R8-FIX(#33) — REGISTER_HMAC_SECRET keys the NABH register tamper-evidence
+// (D19) digests. Fail fast in production so a deploy can't silently key them on
+// the source-known dev default (forgeable by anyone holding the resale source).
+// Dev/local + E2E run without it (registerIntegrity.js uses a guarded dev
+// default off-prod), so this stays a production gate to preserve zero-config dev.
+if (IS_PROD) {
+  requireEnv(
+    "REGISTER_HMAC_SECRET",
+    (v) => v.length >= 32 && v !== "sphere-health-register-integrity-dev-secret-CHANGE-IN-PROD",
+  );
+} else if (!process.env.REGISTER_HMAC_SECRET) {
+  console.warn(
+    "WARN: REGISTER_HMAC_SECRET is not set — using the built-in dev default. " +
+      "NABH register tamper-evidence is only meaningful once it is a private, " +
+      "server-held value in production.",
+  );
+}
+
 // ── Process-level safety net ───────────────────────────────────────────────
 // In Node 15+ an unhandled promise rejection terminates the process by default.
 // We log and let it terminate, but for synchronous uncaught exceptions we
