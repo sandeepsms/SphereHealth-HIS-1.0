@@ -3,7 +3,7 @@
 > **Ye file kya hai:** Har session ka running task log. Naya session shuru karo toh **sirf ye file padho** — 2 minute me pata chal jayega kya chal raha tha, kaha se pick karna hai, aage kya karna hai.
 > **Rule:** Har work-session ke END pe ye file update karke commit karni hai.
 
-**Last updated:** 2026-07-15 · **Branch:** `claude/multi-hospital-deploy` · **Tree:** clean ✅ · **Build:** green ✅ (E2E 136/136 + FE vite) · **Head:** `0d091207` · **Pending:** **AUDIT-R8 remediation IN PROGRESS (8-wave fix-order, plan `AUDIT-R8-REMEDIATION-PLAN.md`). Waves 1-3 DONE+committed; Wave 4 PARTIAL (#9/#10). Waves 4-rest + 5-8 BLOCKED on account weekly usage limit → resets 9:30pm IST.** E2E **136/136** hold.
+**Last updated:** 2026-07-15 · **Branch:** `claude/multi-hospital-deploy` · **Tree:** clean ✅ · **Build:** green ✅ (E2E 136/136 + FE vite) · **Head:** `62800589` · **Pending:** **AUDIT-R8 remediation IN PROGRESS (8-wave fix-order, plan `AUDIT-R8-REMEDIATION-PLAN.md`). Waves 1-4 DONE+committed (24 findings); Wave 5 (audit/cron/registers) design-workflow running. E2E 136/136 after every wave. Waves 6-8 pending.**
 
 ---
 
@@ -14,9 +14,9 @@ Plan: **`AUDIT-R8-REMEDIATION-PLAN.md`** (50 open findings → 8 sequenced waves
 - ✅ **Wave 1** money & books (6) — `0bf977e8`. #2 GST cancel double-reverse (gstr1Exporter open-period cancel-CN skip), #3 CN tax denominator (tax-inclusive net+tax), #7 advance apply+refund double-spend (refund `$inc __v`), #19 discharge overpayment (gate OVERPAY reject + per-bill cap), #34 TPA short-pay collectable (recalcTotals/recordPayment/voidPayment/applyAdvanceToBill exclude TPA_CLAIM from patient balance), #36 TPA refund cash cap (mode-class). Files: billingService, patientAdvanceService, PatientBillModel, billingController, gstr1Exporter, admissionController.
 - ✅ **Wave 2** clinical-record integrity (4) — `dca0ed6e`.
 - ✅ **Wave 3** patient-safety med gates (6) — `679c5eca`.
-- 🔄 **Wave 4** workflow-blocking (9) — **PARTIAL `0d091207`**: #9 ER-Expired (deathDetails.causeOfDeath.immediate nesting) + #10 ER-LAMA (damaDetails.patientSignature capture) — EmergencyList.jsx, FE build green, both reviewed CONFIRMED. **BACHA (7):** #11 ER→IPD bed/nursing ₹0, #12 lab collectSamples 409, #23 lab rejectSample 409, #15 pharmacy supplemented-credit uncollectable, #21 ER generic-disposition bypass, #22 discharge OT-gate UHID-scope, #35 insurer PDF encryption.
-- ⏳ **Waves 5-8** — Audit/cron/registers (10) · Security (6) · ABDM (3) · Polish (6). Not started.
-- ⛔ **BLOCKER:** multi-agent design workflows account ki **weekly usage limit** pe fail — **resets 9:30pm IST (2026-07-15)**. Reset ke baad Wave-4-rest → 8 same design→review→apply→verify→commit pipeline se. Wave-4 partial specs cached: `tasks/wjtg55qqz.output` (workflow `wf_e0195847-d7a`).
+- ✅ **Wave 4** workflow-blocking (9) — `0d091207` (#9 ER-Expired, #10 ER-LAMA) + `62800589` (#11 ER→IPD bed/nursing accrual: roomId from claimed Bed + EMERGENCY-gate widen, kept admissionType "Emergency" to preserve ER→IPD bill consolidation; #12 lab collectSamples header-gate PENDING-only; #15 pharmacy Partial-Return/Supplemented collectable; #21 ER disposition strip from generic PUT; #22 discharge OT-gate admission-scoped; #23 rejectSample force-bypass + Sample REJECTED→COLLECTED; #35 insurer PDF ignoreEncryption+fallback). E2E 136/136.
+- 🔄 **Wave 5** audit/cron/registers (10: #8/#16/#24/#28/#31/#39/#40/#42/#45/#47) — design-workflow running (`wf_4edd2516-7bf`). **Waves 6-8** — Security (6) · ABDM (3) · Polish (6) pending.
+- ℹ️ Earlier weekly-limit blocker cleared (usage ~4%). Pipeline per wave: design→adversarial-review workflow → apply reviewer-approved specs → backend boot + E2E 136/136 + build → commit.
 
 ### 📌 PENDING WORK — poora list (2026-07-12)
 **Status:** Saare tracked tasks COMPLETE. Chaaro owner-decisions (2026-07-12) shipped + independent adversarial re-audit pass (`0fc29e2d`, 11 fixes) + **poora E2E acceptance run 136/136 (`b6856160`) — 4 real bugs mile+fix (`25830aed`, `6c69b90b`)**. Coding queue KHAALI. Jo bacha hai wo **owner-input / hardware ka wait** karta hai ya **per-hospital go-live operational** hai — koi pending code-task nahi.
