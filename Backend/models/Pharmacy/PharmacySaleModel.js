@@ -91,6 +91,14 @@ const SALE_ITEM = new mongoose.Schema(
     sgstAmount:     { type: Dec, default: () => toDec(0) },
     igstAmount:     { type: Dec, default: () => toDec(0) },
     netAmount:      { type: Dec, default: () => toDec(0) },     // taxable + gst
+    // R8-FIX(#28): how many units of THIS line the Schedule-X (NDPS) register
+    // actually decremented at dispense. A witness-less / register-failed
+    // dispense records 0 here even though the stock left the shelf — so a
+    // later return/cancel must credit the register back only up to this
+    // number, never the full returned qty (that would inflate the running
+    // balance above physical stock). Reversal paths decrement this as they
+    // consume it, keeping cumulative reversal ≤ what was registered.
+    scheduleXRegisteredQty: { type: Number, default: 0, min: 0 },
   },
   { _id: true }
 );

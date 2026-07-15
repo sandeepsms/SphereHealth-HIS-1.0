@@ -203,6 +203,49 @@ async function recordReceipt({ drugId, qty, receivedBy = "", receivedById = null
   return updated.toObject();
 }
 
+// ── recordReversal ───────────────────────────────────────────────
+// Adjust the running Schedule-X balance by a SIGNED delta. Used by the
+// reversal paths that move controlled stock back through the register:
+//   • sale return / cancel → +qty  (narcotic came back into the cabinet)
+//   • vendor return         → -qty  (narcotic left to the supplier)
+//
+// A decrement (delta < 0) is gated on `balance >= |delta|`, re-checked at
+// write time, so a concurrent dispense that crossed the threshold makes us
+// fail gracefully (null) rather than driving the register negative — which
+// is illegal under NDPS. An increment does NOT upsert: with no existing
+// balance doc there was never a receipt/dispense behind this drug, and
+// minting one here would fabricate controlled-substance stock. Absent /
+// under-balance doc → returns null so the caller can log the anomaly.
+//
+// This is the balance-only sibling of recordDispense/recordReceipt; it does
+// NOT append a ScheduleXEntry row — the caller owns the paper trail (returns
+// and cancels already ride their PHARMACY_RETURNED / cancel audit rows, and
+// vendor returns their PharmacyVendorReturn + audit emit).
+async function recordReversal({ drugId, signedQty, actorName = "", actorById = null } = {}) {
+  if (!drugId) {
+    const e = new Error("drugId required"); e.code = "ARG_MISSING"; throw e;
+  }
+  const delta = Number(signedQty);
+  if (!Number.isFinite(delta) || delta === 0) {
+    const e = new Error("signedQty must be a non-zero number"); e.code = "INVALID_QTY"; throw e;
+  }
+  const filter = { drugId };
+  if (delta < 0) filter.balance = { $gte: -delta };
+  const updated = await ScheduleXBalance.findOneAndUpdate(
+    filter,
+    {
+      $inc: { balance: delta },
+      $set: {
+        lastUpdatedBy:   actorName || "",
+        lastUpdatedById: actorById || null,
+        lastUpdatedAt:   new Date(),
+      },
+    },
+    { new: true }, // no upsert — never mint a balance doc on a reversal
+  );
+  return updated ? updated.toObject() : null;
+}
+
 // ── dailyBalance ─────────────────────────────────────────────────
 // Returns one summary object per Schedule-X drug for the given day:
 // { drugId, drugName, opening, received, dispensed, closing, rows[] }
@@ -307,6 +350,7 @@ async function verifyBalance(date, { verifierId, verifierName } = {}) {
 module.exports = {
   recordDispense,
   recordReceipt,
+  recordReversal,
   dailyBalance,
   verifyBalance,
 };
