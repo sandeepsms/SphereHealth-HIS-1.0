@@ -802,7 +802,7 @@ const _cancelReorderNotifier = scheduleDaily("reorder-notifier", 8, 0, async () 
     return { items: items.length, sent: out.sent, channel: out.channel };
   } catch (e) {
     console.error("[reorder-notifier] cron error:", e.stack || e.message);
-    return { error: e.message };
+    throw e; // R8-FIX(#16): rethrow so cronScheduler records CronFailure + retry-sweeper replays (no false "ok" heartbeat)
   }
 });
 
@@ -851,7 +851,7 @@ const _cancelExpiryWatch = scheduleDaily("pharmacy-expiry-watch", 6, 30, async (
     return { items: items.length, sent: out.sent, channel: out.channel, buckets: out.buckets };
   } catch (e) {
     console.error("[pharmacy-expiry-watch] cron error:", e.stack || e.message);
-    return { error: e.message };
+    throw e; // R8-FIX(#16): rethrow so cronScheduler records CronFailure + retry-sweeper replays (no false "ok" heartbeat)
   }
 });
 
@@ -921,7 +921,7 @@ const _cancelLicenseExpiryWatch = scheduleDaily("drug-license-expiry-watch", 8, 
     return { status, daysToExpiry: days };
   } catch (e) {
     console.error("[drug-license-expiry-watch] cron error:", e.stack || e.message);
-    return { error: e.message };
+    throw e; // R8-FIX(#16): rethrow so cronScheduler records CronFailure + retry-sweeper replays (no false "ok" heartbeat)
   }
 });
 
@@ -975,7 +975,7 @@ const _cancelExpireCredentials = scheduleDaily("expire-credentials", 2, 0, async
     return r;
   } catch (e) {
     console.error("[cron:expire-credentials] error:", e.stack || e.message);
-    return { error: e.message };
+    throw e; // R8-FIX(#16): rethrow so cronScheduler records CronFailure + retry-sweeper replays (no false "ok" heartbeat)
   }
 });
 
@@ -992,7 +992,7 @@ const _cancelPreExpiryEmail = scheduleDaily("credential-pre-expiry-email", 9, 0,
     return await cron.runPreExpirySweep();
   } catch (e) {
     console.error("[cron:credential-pre-expiry-email] error:", e.stack || e.message);
-    return { error: e.message };
+    throw e; // R8-FIX(#16): rethrow so cronScheduler records CronFailure + retry-sweeper replays (no false "ok" heartbeat)
   }
 });
 
@@ -1043,7 +1043,7 @@ const _cancelFireDrillOverdue = scheduleDaily("fire-drill-overdue", 3, 0, async 
     return await cron.runOverdueSweep();
   } catch (e) {
     console.error("[cron:fire-drill-overdue] error:", e.stack || e.message);
-    return { error: e.message };
+    throw e; // R8-FIX(#16): rethrow so cronScheduler records CronFailure + retry-sweeper replays (no false "ok" heartbeat)
   }
 });
 
@@ -1055,7 +1055,7 @@ const _cancelMaintenanceOverdue = scheduleDaily("maintenance-overdue", 3, 15, as
     return await cron.runOverdueSweep();
   } catch (e) {
     console.error("[cron:maintenance-overdue] error:", e.stack || e.message);
-    return { error: e.message };
+    throw e; // R8-FIX(#16): rethrow so cronScheduler records CronFailure + retry-sweeper replays (no false "ok" heartbeat)
   }
 });
 
@@ -1083,7 +1083,7 @@ const _cancelAntibiogramRollup = scheduleDaily("antibiogram-monthly-rollup", 3, 
     return await agg.runAggregation({ period, from, to, actor: { name: "System (antibiogram-rollup)" } });
   } catch (e) {
     console.error("[cron:antibiogram-monthly-rollup] error:", e.stack || e.message);
-    return { error: e.message };
+    throw e; // R8-FIX(#16): rethrow so cronScheduler records CronFailure + retry-sweeper replays (no false "ok" heartbeat)
   }
 });
 
@@ -1096,7 +1096,7 @@ const _cancelRefundRecon = scheduleDaily("refund-cn-reconciliation", 3, 50, asyn
     return await cron.runReconciliation({ lookbackDays: 45 });
   } catch (e) {
     console.error("[cron:refund-cn-reconciliation] error:", e.stack || e.message);
-    return { error: e.message };
+    throw e; // R8-FIX(#16): rethrow so cronScheduler records CronFailure + retry-sweeper replays (no false "ok" heartbeat)
   }
 });
 
@@ -1106,7 +1106,7 @@ const _cancelRetentionReview = scheduleDaily("retention-review", 4, 0, async () 
     return await svc.runRetentionReview();
   } catch (e) {
     console.error("[cron:retention-review] error:", e.stack || e.message);
-    return { error: e.message };
+    throw e; // R8-FIX(#16): rethrow so cronScheduler records CronFailure + retry-sweeper replays (no false "ok" heartbeat)
   }
 });
 

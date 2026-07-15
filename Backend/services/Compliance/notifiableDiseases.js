@@ -102,7 +102,7 @@ function scanDiagnoses(diagnoses = []) {
  * discharge doesn't duplicate cases. Best-effort — returns the rows created.
  * @returns Promise<Array<{caseNumber, disease}>>
  */
-async function raiseNotifiableCases({ diagnoses = [], patient = {}, admission = {}, actor = {} } = {}) {
+async function raiseNotifiableCases({ diagnoses = [], patient = {}, admission = {}, actor = {}, diagnosisDate = null } = {}) {
   const hits = scanDiagnoses(diagnoses);
   if (!hits.length) return [];
   const NotifiableDiseaseRegister = require("../../models/Compliance/NotifiableDiseaseRegisterModel");
@@ -122,7 +122,7 @@ async function raiseNotifiableCases({ diagnoses = [], patient = {}, admission = 
         admissionId: admId,
         disease: hit.disease,
         icdCode: hit.code,
-        diagnosisDate: new Date(),
+        diagnosisDate: diagnosisDate ? new Date(diagnosisDate) : new Date(), // R8-FIX(#31): anchor the statutory clock to the real diagnosis moment (not discharge)
         reportingWindowHours: hit.hours,
         sourceRef,
         sourceType: "AutoDiagnosis",

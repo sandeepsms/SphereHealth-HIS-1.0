@@ -102,6 +102,9 @@ const LONG_RETENTION_EVENTS = new Set([
   // NABH IMS.3 (#138) — retention legal-hold set/clear is a legal-custody
   // event; 7y floor so the hold history survives with the record.
   "LEGAL_HOLD_UPDATED",
+  // R8-FIX(#39) — PROM/PREM survey signature is a signed clinical instrument
+  // (NABH PRE.4); 7y retention floor like other SIGNED events.
+  "PROM_PREM_SIGNED",
 ]);
 
 function computeRetainUntil(event) {

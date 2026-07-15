@@ -1448,6 +1448,13 @@ async function emitReadmission(args = {}) {
       UHID: patient.UHID,
       _id: { $ne: admission._id },
       actualDischargeDate: { $ne: null, $exists: true },
+      // R8-FIX(#42): only a real INPATIENT discharge is a valid readmission index.
+      // Exclude OPD/Services visits and OPD→IPD same-episode conversions (the OPD
+      // half auto-closes with an actualDischargeDate + convertedToAdmission set) —
+      // counting them made an OPD→IPD same-day conversion look like a readmission,
+      // inflating the NABH COP.16 readmission rate reported to leadership.
+      admissionType: { $nin: ["OPD", "Services"] },
+      convertedToAdmission: null,
     })
       .sort({ actualDischargeDate: -1 })
       // R7hr-NABH-READMIT-DX: Admission has no `primaryDiagnosis` field — the

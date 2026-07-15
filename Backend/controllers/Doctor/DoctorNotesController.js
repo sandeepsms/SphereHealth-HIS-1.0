@@ -81,6 +81,26 @@ class DoctorNotesController {
       });
     } catch (_) { /* silent */ }
 
+    // R8-FIX(#31) — IDSP notifiable-disease auto-raise at DIAGNOSIS capture, not
+    // only at discharge. For a weeks-long inpatient the 24h statutory window
+    // starts when the notifiable condition is first coded, so raise here
+    // idempotently (dedup per admission+disease via sourceRef); the discharge-
+    // finalize raise stays as a backstop. Best-effort — never blocks the write.
+    if (note.icd10Code) {
+      try {
+        const { raiseNotifiableCases } = require("../../services/Compliance/notifiableDiseases");
+        raiseNotifiableCases({
+          diagnoses: [{ code: note.icd10Code, description: note.icd10Description || note.finalDiagnosis || note.workingDiagnosis || note.provisionalDiagnosis || "" }],
+          patient: { _id: note.patient || note.patientId, UHID: note.patientUHID || note.UHID, name: note.patientName },
+          admission: { _id: note.admissionId },
+          actor: req.user || {},
+          diagnosisDate: note.visitDate || note.signedAt || note.createdAt || new Date(),
+        }).then((raised) => {
+          if (raised && raised.length) console.log(`[doctorNote] notifiable-disease raised: ${raised.map((r) => `${r.caseNumber}(${r.disease})`).join(", ")}`);
+        }).catch((e) => console.warn("[doctorNote] notifiable raise failed:", e.message));
+      } catch (_) { /* best-effort surveillance raise */ }
+    }
+
     return res.status(201).json({ success: true, data: note });
   });
 

@@ -562,19 +562,58 @@ exports.getCompleteFile = async (req, res) => {
     // OLDEST rows with no signal to the reader. Surface which sections were
     // truncated so the UI/print can show an honest "showing latest N" note
     // instead of implying the record is complete.
-    const truncatedSections = Object.entries({
+    // R8-FIX(#45): flag EVERY capped/windowed section, not just the
+    // PER_SECTION_LIMIT ones. Fixed-cap sections (bills@50, prescriptions/
+    // pharmacy@100, consents@100, coverage collections, registers @50…) were
+    // silently truncated with `truncation:null`, implying a complete record.
+    const _P = PER_SECTION_LIMIT;
+    const _sectionCaps = {
+      doctorNotes: _P, nurseNotes: _P, doctorOrders: _P,
+      nursingAssessments: _P, nursingCarePlans: _P, shiftHandovers: _P,
+      mar: _P, vitals: _P, investigations: _P, billingTriggers: _P,
+      activityLog: _P, labTrends: _P, labReports: _P, intakeOutput: _P,
+      admissions: 50, opdVisits: 100, consents: 100, dischargeSummary: 50,
+      bedTransfers: 50, mlc: 50, bills: 50, dietPlans: 50,
+      bloodTransfusion: 50, devices: 100,
+      emergencyCases: 100, prescriptions: 100, medicalCertificates: 50,
+      physioPlans: 50, physioSessions: 100, medReconciliation: 50,
+      diabeticCharts: 100, pharmacySales: 100, advances: 50,
+      appointments: 100, procedureNotes: 100, adrReports: 50,
+      foodReactions: 50, promPremSurveys: 50, codeResponseEvents: 50,
+    };
+    const _sectionRows = {
       doctorNotes, nurseNotes, doctorOrders,
       nursingAssessments, nursingCarePlans, shiftHandovers,
       mar, vitals, investigations, billingTriggers,
-      activityLog, labTrends, labReports,
-    })
-      .filter(([, rows]) => Array.isArray(rows) && rows.length >= PER_SECTION_LIMIT)
+      activityLog, labTrends, labReports, intakeOutput,
+      admissions, opdVisits, consents, dischargeSummary,
+      bedTransfers, mlc, bills, dietPlans, bloodTransfusion, devices,
+      emergencyCases, prescriptions, medicalCertificates,
+      physioPlans, physioSessions, medReconciliation, diabeticCharts,
+      pharmacySales, advances, appointments, procedureNotes,
+      adrReports, foodReactions, promPremSurveys, codeResponseEvents,
+    };
+    const truncatedSections = Object.entries(_sectionRows)
+      .filter(([name, rows]) => Array.isArray(rows) && rows.length >= (_sectionCaps[name] || Infinity))
       .map(([name]) => name);
+    // Grouped safety/compliance registers (each cap 50) — surveyor-critical.
+    Object.entries(complianceRegisters || {}).forEach(([name, rows]) => {
+      if (Array.isArray(rows) && rows.length >= 50) truncatedSections.push(`registers.${name}`);
+    });
 
     return res.json({
       success: true,
       truncation: truncatedSections.length
-        ? { limit: PER_SECTION_LIMIT, sections: truncatedSections }
+        ? {
+            limit: PER_SECTION_LIMIT,          // back-compat: default per-section cap
+            sections: truncatedSections,        // string[] — unchanged shape
+            sectionLimits: Object.fromEntries(  // R8-FIX(#45): actual cap hit per section
+              truncatedSections.map((name) => [
+                name,
+                name.startsWith("registers.") ? 50 : (_sectionCaps[name] || PER_SECTION_LIMIT),
+              ]),
+            ),
+          }
         : null,
       data: {
         patient,

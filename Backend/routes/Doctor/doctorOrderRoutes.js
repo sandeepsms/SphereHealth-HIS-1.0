@@ -2370,20 +2370,10 @@ router.post("/seed-demo", adminOnly, async (req, res) => {
     await DoctorOrder.deleteMany({ UHID, orderedBy: "Dr. Demo" });
     const created = await DoctorOrder.insertMany(DEMO_ORDERS, { ordered: false });
 
-    // R7hr-12-S? (P2-6): audit-trail the demo seed so a surveyor inspecting
-    // the clinical audit collection can immediately distinguish demo data
-    // from real orders. Non-blocking — never fail the seed call.
-    try {
-      const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
-      emitClinicalAudit({
-        req,
-        event: "SEED_DEMO",
-        UHID,
-        patientName,
-        targetType: "DoctorOrder",
-        after: { count: created.length, orderedBy: createdBy, env: process.env.NODE_ENV || "unknown" },
-      });
-    } catch (_) { /* silent */ }
+    // R8-FIX(#40): demo/seed data is intentionally NOT clinical-audited —
+    // synthetic rows (orderedBy "Dr. Demo") must not pollute the ClinicalAudit
+    // timeline, and "SEED_DEMO" was never a valid ClinicalAudit event enum value
+    // (the emit always failed validation and dropped silently anyway).
 
     res.status(201).json({ ok: true, message: `${created.length} demo orders created`, data: created });
   } catch (err) {

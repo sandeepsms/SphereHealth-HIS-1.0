@@ -990,6 +990,22 @@ const updateDiagnosis = async (id, data, actor = {}) => {
     });
   } catch (_) { /* silent */ }
 
+  // R8-FIX(#31) — IDSP raise when an ICD-10 code is added/changed on an existing
+  // note (diagnosis captured post-creation). Idempotent per admission+disease via
+  // sourceRef; safe alongside the create-time and discharge-finalize raises.
+  if (note.icd10Code) {
+    try {
+      const { raiseNotifiableCases } = require("../Compliance/notifiableDiseases");
+      await raiseNotifiableCases({
+        diagnoses: [{ code: note.icd10Code, description: note.icd10Description || note.finalDiagnosis || note.workingDiagnosis || note.provisionalDiagnosis || "" }],
+        patient: { _id: note.patient, UHID: note.patientUHID || note.UHID, name: note.patientName },
+        admission: { _id: note.admissionId },
+        actor: { fullName: actor?.name || "", name: actor?.name || "", id: actor?.id || null },
+        diagnosisDate: note.visitDate || note.signedAt || note.createdAt || new Date(),
+      });
+    } catch (e) { console.warn("[doctorNotes] notifiable raise failed:", e.message); }
+  }
+
   return note;
 };
 
