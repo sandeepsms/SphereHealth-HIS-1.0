@@ -3,7 +3,7 @@
 > **Ye file kya hai:** Har session ka running task log. Naya session shuru karo toh **sirf ye file padho** — 2 minute me pata chal jayega kya chal raha tha, kaha se pick karna hai, aage kya karna hai.
 > **Rule:** Har work-session ke END pe ye file update karke commit karni hai.
 
-**Last updated:** 2026-07-15 · **Branch:** `claude/multi-hospital-deploy` · **Tree:** clean ✅ · **Build:** green ✅ (E2E 136/136 + FE vite) · **Head:** `b5936002` · **Pending:** **AUDIT-R8 remediation IN PROGRESS (8-wave fix-order, plan `AUDIT-R8-REMEDIATION-PLAN.md`). Waves 1-5 DONE+committed (33/50 findings applied; 2 deferred as tasks: #28 NDPS register, #47 fall-sentinel); Wave 6 (security) design-workflow running. E2E 136/136 after every wave. Waves 7-8 pending.**
+**Last updated:** 2026-07-15 · **Branch:** `claude/multi-hospital-deploy` · **Tree:** clean ✅ · **Build:** green ✅ (E2E 136/136 + FE vite) · **Head:** `1ebff5a1` · **Pending:** **AUDIT-R8 remediation IN PROGRESS (8-wave fix-order, plan `AUDIT-R8-REMEDIATION-PLAN.md`). Waves 1-6 DONE+committed (39/50 findings applied; 2 deferred as tasks: #28 NDPS register, #47 fall-sentinel); final Waves 7 (ABDM 3) + 8 (polish 6) design-workflow running. E2E 136/136 after every wave.**
 
 ---
 
@@ -16,7 +16,8 @@ Plan: **`AUDIT-R8-REMEDIATION-PLAN.md`** (50 open findings → 8 sequenced waves
 - ✅ **Wave 3** patient-safety med gates (6) — `679c5eca`.
 - ✅ **Wave 4** workflow-blocking (9) — `0d091207` (#9 ER-Expired, #10 ER-LAMA) + `62800589` (#11 ER→IPD bed/nursing accrual: roomId from claimed Bed + EMERGENCY-gate widen, kept admissionType "Emergency" to preserve ER→IPD bill consolidation; #12 lab collectSamples header-gate PENDING-only; #15 pharmacy Partial-Return/Supplemented collectable; #21 ER disposition strip from generic PUT; #22 discharge OT-gate admission-scoped; #23 rejectSample force-bypass + Sample REJECTED→COLLECTED; #35 insurer PDF ignoreEncryption+fallback). E2E 136/136.
 - ✅ **Wave 5** audit/cron/registers — `b5936002` (8/10: #8 STATUS_CHANGE enum, #16 cron throw×10, #24 handover date YYYY-MM-DD, #31 IDSP raise-at-diagnosis + discharge backstop, #39 PROM_PREM_SIGNED enum+7y, #40 SEED_DEMO emit removed, #42 readmission excludes OPD/converted, #45 truncation cap-map+sectionLimits). **DEFERRED as spawned tasks (both approve:false):** #28 Schedule-X NDPS register reversal (naive +qty over-credits witness-less dispense → needs per-dispense registeredQty tracking), #47 fall-with-major-injury sentinel (frontend fall-event capture + duplicate-raise guard).
-- 🔄 **Wave 6** security (6: #29 print PHI leak, #30 /uploads authz, #32 createPatient UHID strip, #33 HMAC fail-fast, #46 code-blue rbac, #50 regex injection) — design-workflow running (`wf_ae597322-aa6`). **Waves 7-8** — ABDM (3) · Polish (6) pending.
+- ✅ **Wave 6** security (6/6) — `1ebff5a1` (#29 print PHI leak: exam+admission-vitals strip; #30 /uploads per-feature authz gate; #32 createPatient UHID/patientId strip; #33 REGISTER_HMAC_SECRET prod fail-fast + compose/provision passthrough; #46 code-blue respond/close → ward.code-blue.respond [no Ward Boy]; #50 safeRegex on 6 search services). E2E 136/136 + FE build.
+- 🔄 **Waves 7+8** (final 9) — ABDM (#1 consent dateRange, #17 discovery yearOfBirth, #37 consent frequency) + polish (#18 GST fp MMYYYY, #38 BILL seed numeric-max, #41 doctor-access populate, #43 MAR IST date, #48 Emergency counter double-inc, #49 IPD/Daycare counters) — combined design-workflow running (`wf_100c2711-736`).
 - ℹ️ Earlier weekly-limit blocker cleared (usage ~4%). Pipeline per wave: design→adversarial-review workflow → apply reviewer-approved specs → backend boot + E2E 136/136 + build → commit.
 
 ### 📌 PENDING WORK — poora list (2026-07-12)
