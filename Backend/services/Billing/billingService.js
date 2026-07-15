@@ -53,13 +53,23 @@ async function generateBillNumber() {
   // renaming old BILL-YYYY-NNNNNN rows to the new format. If no
   // already-short rows exist, seed is 0 and the counter starts fresh.
   const prefix = `BILL-${yy}-`;
-  const last = await PatientBill.findOne({
-    billNumber: { $regex: `^${prefix}` },
-  })
-    .sort({ billNumber: -1 })
-    .select({ billNumber: 1 })
-    .lean();
-  const seed = last ? parseInt(last.billNumber.slice(prefix.length), 10) || 0 : 0;
+  // R8-FIX(#38): self-heal the seed ONLY when the counter doc is absent (once
+  // per FY), and by NUMERIC max — not a lexicographic `.sort({billNumber:-1})`
+  // under which 'BILL-YY-99' sorts ABOVE 'BILL-YY-100' (2-digit pad auto-widens)
+  // and would reissue an in-use number (E11000). In the hot path (counter
+  // present) skip the scan entirely; nextSequence ignores the seed once the doc
+  // exists (matches the OPDService/CreditNote/PatientAdvance guarded pattern).
+  const Counter = require("../../models/CounterModel");
+  let seed = 0;
+  const existing = await Counter.findOne({ _id: key }).select({ _id: 1 }).lean();
+  if (!existing) {
+    const rows = await PatientBill.find({ billNumber: { $regex: `^${prefix}` } })
+      .select({ billNumber: 1 }).lean();
+    seed = rows.reduce((max, r) => {
+      const n = parseInt(String(r.billNumber || "").slice(prefix.length), 10);
+      return Number.isFinite(n) && n > max ? n : max;
+    }, 0);
+  }
   const seq  = await nextSequence(key, seed);
   return `${prefix}${String(seq).padStart(2, "0")}`;
 }
@@ -73,17 +83,23 @@ async function generatePaymentReceiptNumber() {
   const yy = String(fyStartYear()).slice(-2);
   const key = `receipt:${yy}`;
   const prefix = `REC-${yy}-`;
-  const last = await PatientBill.findOne({
-    "payments.receiptNumber": { $regex: `^${prefix}` },
-  })
-    .sort({ "payments.receiptNumber": -1 })
-    .select({ "payments.receiptNumber": 1 })
-    .lean();
+  // R8-FIX(#38): self-heal only when the counter doc is absent, by NUMERIC max
+  // across ALL matching bills' payments (the old lexicographic sort + single-doc
+  // scan under-counted past serial 99 and could reissue a REC number).
+  const Counter = require("../../models/CounterModel");
   let seed = 0;
-  if (last) {
-    seed = (last.payments || [])
-      .map((p) => (p.receiptNumber || "").startsWith(prefix) ? parseInt(p.receiptNumber.slice(prefix.length), 10) : 0)
-      .reduce((m, n) => (Number.isFinite(n) && n > m ? n : m), 0);
+  const existing = await Counter.findOne({ _id: key }).select({ _id: 1 }).lean();
+  if (!existing) {
+    const docs = await PatientBill.find({ "payments.receiptNumber": { $regex: `^${prefix}` } })
+      .select({ "payments.receiptNumber": 1 }).lean();
+    for (const d of docs) {
+      for (const p of (d.payments || [])) {
+        const rn = p.receiptNumber || "";
+        if (!rn.startsWith(prefix)) continue;
+        const n = parseInt(rn.slice(prefix.length), 10);
+        if (Number.isFinite(n) && n > seed) seed = n;
+      }
+    }
   }
   const seq = await nextSequence(key, seed);
   return `${prefix}${String(seq).padStart(2, "0")}`;

@@ -66,10 +66,18 @@ class PatientService {
     // record (which itself $inc's the counter). Pre-setting to 1 there
     // would land the counter at 2 after the OPDService increment.
     const counterField = visitCounterField(patientData.registrationType);
-    const willDispatchVisit =
+    // R8-FIX(#49): do NOT pre-set the counter for types whose visit/admission
+    // record $inc's it downstream (else it lands at 2): OPD(+doctor) →
+    // OPDService.createOPDVisit; Emergency → emergencyService; IPD/Daycare/
+    // Services → admissionService.createAdmission (now increments). Only
+    // OPD-without-doctor (no downstream incrementer) keeps the pre-set.
+    const counterSetDownstream =
       (patientData.registrationType === "OPD" && patientData.doctor) ||
-       patientData.registrationType === "Emergency";
-    if (counterField && !willDispatchVisit) {
+      patientData.registrationType === "Emergency" ||
+      patientData.registrationType === "IPD" ||
+      patientData.registrationType === "Daycare" ||
+      patientData.registrationType === "Services";
+    if (counterField && !counterSetDownstream) {
       patientData[counterField] = 1;
     }
 
@@ -156,14 +164,9 @@ class PatientService {
       //
       // We still increment the visit counter here so the patient's
       // totalEmergencyVisits is accurate before any redirect.
-      try {
-        await this.updateVisitCount(patient._id, "Emergency");
-      } catch (e) {
-        try {
-          const { logErr } = require("../../utils/logErr");
-          logErr("patientService", `ER visit-count ${patient.UHID}`)(e);
-        } catch { console.error("[patientService] ER visit-count error:", e?.message); }
-      }
+      // R8-FIX(#48): removed the duplicate Emergency visit-count increment — the
+      // canonical +1 lives in emergencyService.createEmergencyVisit (single path
+      // for both new + returning ER patients); this site was double-counting (2/visit).
     }
 
     return patient;

@@ -95,7 +95,7 @@ async function buildGSTR3BJSON(period) {
 
   const json = {
     gstin: HOSPITAL_GSTIN,
-    fp: period.replace("-", ""),
+    fp: period.slice(5, 7) + period.slice(0, 4), // R8-FIX(#18): GSTN filing period MMYYYY (period validated YYYY-MM)
     filingPeriod: period,
     schemaVersion: "GSTR3B-v1",
     generatedAt: new Date().toISOString(),

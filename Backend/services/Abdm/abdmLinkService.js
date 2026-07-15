@@ -114,8 +114,11 @@ async function discoverForDemographics(identifiers = {}) {
   if (abhaAddr) patient = await Patient.findOne({ abhaAddress: abhaAddr }).lean();
   if (!patient && mobile) patient = await Patient.findOne({ contactNumber: String(mobile).replace(/^\+?91/, "") }).lean();
   if (!patient && identifiers.name && identifiers.yearOfBirth) {
+    // R8-FIX(#17): include yearOfBirth so two same-named patients don't collide —
+    // match the birth year of dateOfBirth (the demographic ABDM discovery supplies).
     patient = await Patient.findOne({
       fullName: new RegExp(`^${String(identifiers.name).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i"),
+      $expr: { $eq: [{ $year: "$dateOfBirth" }, Number(identifiers.yearOfBirth)] },
     }).lean();
   }
   if (!patient) return { matched: false, uhid: "", patientDisplay: "", careContexts: [] };

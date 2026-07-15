@@ -882,7 +882,7 @@ async function buildGSTR1JSON(period) {
   return {
     // GSTN portal preamble
     gstin: HOSPITAL_GSTIN,
-    fp: period.replace("-", ""), // GSTN expects "MMYYYY" — derived below
+    fp: period.slice(5, 7) + period.slice(0, 4), // R8-FIX(#18): GSTN filing period MMYYYY (period validated YYYY-MM)
     filingPeriod: period,
     schemaVersion: "GSTR1-v2.1",
     generatedAt: new Date().toISOString(),

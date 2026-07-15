@@ -328,6 +328,24 @@ class AdmissionService {
       ).catch(logErr("admission", `OPD→IPD reverse-link ${convertedFromOpdId}→${admission._id}`));
     }
 
+    // R8-FIX(#49): increment the patient's IPD/Daycare/Services visit counter so
+    // returning-patient admissions are counted (symmetric mirror of cancelAdmission's
+    // decrement). OPD is counted in OPDService.createOPDVisit and Emergency in
+    // emergencyService, so those admissionTypes are skipped to avoid a double count.
+    // Best-effort + non-blocking — visit-count is decorative, never fails an admission.
+    try {
+      const patientService = require("./patientService");
+      if (admission?.patientId && typeof patientService.updateVisitCount === "function") {
+        const at = admission.admissionType;
+        const visitType =
+          (at === "Day Care" || at === "Daycare") ? "Daycare"
+          : (at === "Services") ? "Services"
+          : (at === "OPD" || at === "Emergency") ? null
+          : "IPD";
+        if (visitType) await patientService.updateVisitCount(admission.patientId, visitType);
+      }
+    } catch (_) { /* visit-count is decorative — never block admission */ }
+
     return admission;
   }
 
@@ -1680,7 +1698,11 @@ class AdmissionService {
   async checkDoctorAccess(admissionId, callerOrUserId) {
     const admission = await Admission.findById(admissionId)
       .select("attendingDoctorId attendingDoctor patientName UHID status")
-      .populate("attendingDoctorId", "fullName firstName lastName");
+      // R8-FIX(#41): attendingDoctorId stores a Doctor._id but the schema ref
+      // is "User" — a plain populate resolves against User, finds nothing, nulls
+      // the field, and forces isOwner false. Force model:"Doctor" (mirrors
+      // getMyIPDPatients) so ownerId carries the real Doctor._id.
+      .populate({ path: "attendingDoctorId", model: "Doctor", select: "personalInfo.fullName personalInfo.firstName personalInfo.lastName professional.registrationNumber" });
     if (!admission) throw new Error("Admission not found");
     const ownerId = String(admission.attendingDoctorId?._id || admission.attendingDoctorId || "");
 

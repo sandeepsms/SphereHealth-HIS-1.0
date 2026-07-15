@@ -106,8 +106,14 @@ class MARController {
 
   // GET /api/mar/ipd/:ipdNo/date/:date — get MAR for a specific date
   getByIPDAndDate = handle(async (req, res) => {
-    const marDate = new Date(req.params.date);
-    const mar = await MAR.findOne({ ipdNo: req.params.ipdNo, date: marDate }).lean();
+    // R8-FIX(#43): match the local-(IST-)day WINDOW, not a UTC-midnight exact
+    // instant. MAR.date is stored at server-local midnight (createOrGet), but
+    // `new Date('YYYY-MM-DD')` parses as UTC midnight, so exact equality was off
+    // by the IST offset and returned nothing → spurious 404.
+    const raw = new Date(req.params.date);
+    const marDate = new Date(raw.getFullYear(), raw.getMonth(), raw.getDate());
+    const nextDay = new Date(marDate); nextDay.setDate(nextDay.getDate() + 1);
+    const mar = await MAR.findOne({ ipdNo: req.params.ipdNo, date: { $gte: marDate, $lt: nextDay } }).lean();
     if (!mar) return res.status(404).json({ success: false, message: "MAR not found for this date" });
     return res.json({ success: true, data: mar });
   });

@@ -46,6 +46,9 @@ const AbdmConsentArtefactSchema = new Schema(
     expiry: { type: Date, default: null, index: true },
     lastFetchedAt: { type: Date, default: null },
     fetchCount: { type: Number, default: 0 },
+    // R8-FIX(#37) — sliding-window counters for permission.frequency enforcement.
+    frequencyWindowStart: { type: Date, default: null },
+    fetchCountInWindow: { type: Number, default: 0 },
 
     raw: { type: Schema.Types.Mixed, default: null },      // full notification payload (audit)
     hospitalId: { type: Schema.Types.ObjectId, ref: "Hospital", default: null },
