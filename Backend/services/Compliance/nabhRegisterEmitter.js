@@ -648,22 +648,43 @@ async function emitFallRisk(args = {}) {
     });
     // R7gw-B9-T01 — auto-trigger Sentinel-event register when a fall
     // actually occurred AND a major injury was recorded. Non-blocking.
+    // injurySeverity is case-sensitive — only "Major"/"Severe" escalate.
     const fallOccurred = !!(data.fallOccurred || data.fallEvent);
     const majorInjury = !!(data.majorInjury || data.injurySeverity === "Major" || data.injurySeverity === "Severe");
     if (fallOccurred && majorInjury) {
       try {
+        // R8-FIX(#47): STABLE per-incident sourceRef so re-saving the same
+        // fall coalesces onto ONE SentinelEventRegister row (the Morse page
+        // POSTs a FRESH NursingAssessment + FallRiskRegister row every save,
+        // so the old `FallRisk:${row._id}` minted a duplicate sentinel each
+        // time). emitSentinelEvent is find-or-create by sourceRef.
+        //
+        // PRIMARY key: the client-minted per-incident id (data.fallEventId).
+        // It is generated ONCE when the nurse marks the fall and reused across
+        // saves, so it survives the nurse CORRECTING the fall time or any
+        // admission/UHID scope change — and being an opaque UUID it can never
+        // collide across patients or tenants. A genuinely new fall gets a new
+        // id (checkbox re-armed). FALLBACK for non-UI producers that omit it:
+        // {admission||UHID}:{fall timestamp||date} — best-effort, coarser.
+        const _fallScope = String(canonicalAdmissionId || assessment.UHID || "").trim();
+        const _fallStamp = String(data.fallDateTime || data.fallDate || "").trim() ||
+          new Date(assessment.recordedAt || Date.now()).toISOString().slice(0, 10);
+        const _incidentId = String(data.fallEventId || "").trim();
+        const _sentinelSourceRef = _incidentId
+          ? `FallRisk:${_incidentId}`
+          : `FallRisk:${_fallScope}:${_fallStamp}`;
         await emitSentinelEvent({
           UHID: assessment.UHID,
           patientId: assessment.patientId || null,
           patientName: assessment.patientName || "",
           admissionId: canonicalAdmissionId,
           eventType: "Fall-with-Major-Injury",
-          discoveredAt: assessment.recordedAt || new Date(),
+          discoveredAt: data.fallDateTime || assessment.recordedAt || new Date(),
           discoveredByEmpId: assessment.recordedBy || actorMeta.byName || "",
           severity: "Critical",
           immediateAction: data.postFallActions || "Post-fall huddle activated; vitals + neuro check; imaging ordered; doctor informed",
           rcaInitiated: false,
-          sourceRef: `FallRisk:${row._id}`,
+          sourceRef: _sentinelSourceRef,
           autoTriggeredFrom: "emitFallRisk",
           actor: actor || {},
         });
@@ -2246,7 +2267,13 @@ async function emitSentinelEvent(payload = {}) {
     });
     return row;
   } catch (e) {
-    if (e?.code === 11000) return null;
+    // R8-FIX(#47): a concurrent emit won the unique-sourceRef race; return the
+    // row it created so find-or-create stays idempotent (was `return null`,
+    // which silently dropped the caller's reference to the existing sentinel).
+    if (e?.code === 11000) {
+      try { return await SentinelEventRegister.findOne({ sourceRef }).lean(); }
+      catch (_) { return null; }
+    }
     // eslint-disable-next-line no-console
     console.error("[nabhRegisterEmitter] emitSentinelEvent FAILED:", e.message, "— UHID:", payload?.UHID, "eventType:", payload?.eventType);
     return null;

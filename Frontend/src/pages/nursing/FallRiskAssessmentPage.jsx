@@ -181,6 +181,33 @@ function FallRiskContent({ patient }) {
   const [saved, setSaved] = useState(false);
   const [history, setHistory] = useState([]);
 
+  /* ── Fall-event capture (#47) — feeds emitFallRisk's Fall-with-Major-Injury
+     sentinel auto-chain. Kept SEPARATE from the predictive Morse score: this
+     records whether a fall ACTUALLY occurred + how bad. injurySeverity values
+     are case-sensitive — only "Major"/"Severe" raise a sentinel event.
+     fallEventId is a stable per-incident id, minted ONCE when the fall is
+     marked and reused across every save; the backend keys the sentinel
+     sourceRef off it, so re-saving — even after correcting the fall time —
+     never creates a duplicate sentinel row, while a genuinely new fall
+     (checkbox re-armed) gets a fresh id. */
+  const [fallOccurred, setFallOccurred] = useState(false);
+  const [injurySeverity, setInjurySeverity] = useState("None");
+  const [postFallActions, setPostFallActions] = useState("");
+  const [fallEventId, setFallEventId] = useState("");
+  const [fallDateTime, setFallDateTime] = useState(() => {
+    const d = new Date();
+    d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); // → local wall-clock
+    return d.toISOString().slice(0, 16);                  // YYYY-MM-DDTHH:MM
+  });
+  const isMajorInjury = fallOccurred && (injurySeverity === "Major" || injurySeverity === "Severe");
+  const genFallEventId = () =>
+    (window.crypto?.randomUUID?.() || `fall-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const toggleFallOccurred = (checked) => {
+    setFallOccurred(checked);
+    setFallEventId(checked ? (prev => prev || genFallEventId()) : ""); // mint once; clear = new incident next time
+    setSaved(false);
+  };
+
   /* ── Auto-save + signature ── */
   const draftKey = patient?._id ? `sphere_draft_fall_${patient._id}` : null;
   const { savedAt, hasDraft, clearDraft } = useAutoSave(draftKey, { scores, nurseName, actionsNote }, 2000);
@@ -236,6 +263,12 @@ function FallRiskContent({ patient }) {
       nurse: nurseName,
       actions: actionsNote,
       scores: { ...scores },
+      // #47 — fall-event fields spread into the POST body; the route folds
+      // unknown keys into assessment.data, which emitFallRisk reads. Only
+      // sent when a fall actually occurred so routine assessments stay clean.
+      // fallEventId is the stable per-incident dedup key for the sentinel.
+      fallOccurred,
+      ...(fallOccurred ? { injurySeverity, postFallActions, fallDateTime, fallEventId } : {}),
     };
     try {
       await axios.post(`${API}/nursing-assessments/fall-risk`, {
@@ -252,6 +285,17 @@ function FallRiskContent({ patient }) {
       localStorage.setItem(key, JSON.stringify({ history: newHistory }));
       setHistory(newHistory);
       clearDraft();
+      // #47 — clear the fall-event capture after a successful save so a later
+      // routine reassessment of the SAME patient does not silently re-assert
+      // the fall (the box is collapsed by default, so a stale checked state is
+      // invisible). Without this, every subsequent save re-folds fallOccurred
+      // /Major into NursingAssessment.data + ClinicalAudit + AssessmentCompliance,
+      // fabricating a fall on assessments where none happened. A genuinely new
+      // fall is re-armed by re-checking the box (which mints a fresh fallEventId).
+      setFallOccurred(false);
+      setInjurySeverity("None");
+      setPostFallActions("");
+      setFallEventId("");
       setSaved(true);
       setTimeout(() => setSaved(false), 2500);
     } catch (err) {
@@ -314,6 +358,66 @@ function FallRiskContent({ patient }) {
             </div>
           ))}
         </div>
+      </Section>
+
+      {/* #47 — Fall Event (post-fall). Distinct from the predictive Morse
+          score above: this captures a fall that ACTUALLY happened so the
+          Fall-with-Major-Injury sentinel auto-chain can fire. */}
+      <Section title="Fall Event (post-fall)" icon="pi-flag-fill" color={C.red} badge="NABH PSQ" defaultOpen={false}>
+        <label style={{ display:"flex", alignItems:"center", gap:10, cursor:"pointer", fontSize:13, fontWeight:700, color:C.text }}>
+          <input
+            type="checkbox"
+            checked={fallOccurred}
+            onChange={e => toggleFallOccurred(e.target.checked)}
+            style={{ width:18, height:18, cursor:"pointer", accentColor:C.red }}
+          />
+          A fall actually occurred (record the post-fall event below)
+        </label>
+        {fallOccurred && (
+          <div style={{ marginTop:16, display:"grid", gap:14 }}>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>
+              <Field label="Date & Time of Fall">
+                <input
+                  type="datetime-local"
+                  className="his-field"
+                  value={fallDateTime}
+                  onChange={e => { setFallDateTime(e.target.value); setSaved(false); }}
+                />
+              </Field>
+              <Field label="Injury Severity">
+                <select
+                  className="his-field"
+                  value={injurySeverity}
+                  onChange={e => { setInjurySeverity(e.target.value); setSaved(false); }}
+                >
+                  {/* Values are case-sensitive — the backend treats only
+                      "Major"/"Severe" as a major injury (sentinel trigger). */}
+                  <option value="None">None (no injury)</option>
+                  <option value="Minor">Minor</option>
+                  <option value="Moderate">Moderate</option>
+                  <option value="Major">Major</option>
+                  <option value="Severe">Severe</option>
+                </select>
+              </Field>
+            </div>
+            <Field label="Post-Fall Actions Taken">
+              <textarea
+                className="his-field"
+                value={postFallActions}
+                onChange={e => { setPostFallActions(e.target.value); setSaved(false); }}
+                placeholder="e.g. Vitals + neuro check done, doctor informed, imaging ordered, post-fall huddle activated"
+                rows={2}
+                style={{ resize:"vertical", minHeight:52 }}
+              />
+            </Field>
+            {isMajorInjury && (
+              <div style={{ background:C.redL, border:`1.5px solid ${C.redB}`, borderRadius:10, padding:"10px 14px", display:"flex", alignItems:"center", gap:8, fontSize:12, fontWeight:600, color:C.red }}>
+                <i className="pi pi-exclamation-triangle" />
+                A Sentinel Event ("Fall with Major Injury") will be auto-raised on save. Re-saving the same fall will not create a duplicate.
+              </div>
+            )}
+          </div>
+        )}
       </Section>
 
       <Section title="Risk Score Summary" icon="pi-chart-bar" color={risk.color}>
@@ -410,7 +514,13 @@ export default function FallRiskAssessmentPage() {
   const [patient, setPatient] = useState(null);
   return (
     <ClinicalLayout onPatientSelect={setPatient} selectedId={patient?._id} pageType="fall-risk">
-      <FallRiskContent patient={patient} />
+      {/* #47 — key on patient id so the form REMOUNTS (all useState reset) when
+          the nurse switches patients. ClinicalLayout renders children without a
+          key, so without this FallRiskContent stays mounted across patient
+          switches and stale fall-event state (fallOccurred/Major) — plus Morse
+          scores — would bleed into the next patient, raising a phantom sentinel
+          for someone who never fell. */}
+      <FallRiskContent key={patient?._id || "no-patient"} patient={patient} />
     </ClinicalLayout>
   );
 }

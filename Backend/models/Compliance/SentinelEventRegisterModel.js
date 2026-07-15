@@ -64,7 +64,13 @@ const SentinelEventRegisterSchema = new Schema({
 
   // ── Status + idempotency ──
   status:    { type: String, enum: ["Open", "InProgress", "Closed"], default: "Open", index: true },
-  sourceRef: { type: String, default: "", index: true }, // UUID/string for auto-emit idempotency
+  // R8-FIX(#47): sourceRef is the idempotency key for auto-emits. It carries a
+  // UNIQUE partial index below (mirroring every sibling register — NearMiss,
+  // LAMA, PROMPREM, …) so a race between two concurrent emits with the same
+  // key hits E11000 instead of inserting a duplicate sentinel; emitSentinelEvent
+  // catches 11000 and returns the existing row. Non-unique `index: true` is
+  // dropped here — the unique partial index covers reads too.
+  sourceRef: { type: String, default: "" }, // UUID/string for auto-emit idempotency
 
   // ── Audit ──
   // NABH FMS/PSQ — equipment implicated in the event, for RCA + recall join.
@@ -79,6 +85,15 @@ const SentinelEventRegisterSchema = new Schema({
 SentinelEventRegisterSchema.index({ UHID: 1, createdAt: -1 });
 SentinelEventRegisterSchema.index({ status: 1, createdAt: -1 });
 SentinelEventRegisterSchema.index({ eventType: 1, discoveredAt: -1 });
+// R8-FIX(#47): make the auto-emit idempotency race-safe. A concurrent
+// double-submit of the same fall (axios retry, two devices) would otherwise
+// both pass emitSentinelEvent's findOne(sourceRef) and both create. The
+// partial filter excludes the empty-string default so manual/quality-team
+// entries that leave sourceRef blank are NOT forced unique.
+SentinelEventRegisterSchema.index(
+  { sourceRef: 1 },
+  { unique: true, partialFilterExpression: { sourceRef: { $type: "string", $gt: "" } } },
+);
 
 // ── D19 — NABH register tamper-evidence ─────────────────────
 // Stamp a keyed HMAC-SHA256 integrity digest on every save so an out-of-band
