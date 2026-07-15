@@ -205,7 +205,17 @@ class InvestigationOrderService {
       }
     }
 
-    order.orderStatus = "SAMPLE_COLLECTED";
+    // R8-FIX(#12): advance the header only on the FIRST collection
+    // (PENDING → SAMPLE_COLLECTED). For an add-on/staggered collection on an
+    // order already IN_PROGRESS (or SAMPLE_COLLECTED), leave the header
+    // untouched: forcing IN_PROGRESS → SAMPLE_COLLECTED is semantically wrong
+    // AND rejected by the state-machine guard (409 ILLEGAL_TRANSITION), which
+    // aborts order.save() and discards the accessions just minted above. (Also
+    // unblocks #23's reject→recollect: a recollect leaves the order at
+    // COMPLETED/IN_PROGRESS, so no illegal header transition is attempted.)
+    if (order.orderStatus === "PENDING") {
+      order.orderStatus = "SAMPLE_COLLECTED";
+    }
     order.actionLog.push({
       action: "SAMPLE_COLLECTED",
       performedBy: collectedBy || "Lab Staff",
@@ -250,6 +260,14 @@ class InvestigationOrderService {
     if (!n) { const err = new Error("No eligible sample items to reject"); err.status = 400; throw err; }
 
     order.actionLog.push({ action: "SAMPLE_REJECTED", performedBy: rejectedBy || "Lab Staff", performedAt: now, remarks: `${n} item(s): ${rejectionReason}` });
+    // R8-FIX(#23): NABL/ISO 15189 7.2.6 — rejecting a compromised specimen AFTER
+    // results were drafted must re-open the item for recollection (resultStatus
+    // COMPLETED/IN_PROGRESS → PENDING). That reopen is not in the strict LabResult
+    // matrix, so use the guard's sanctioned force-bypass. Safe + audited: VERIFIED
+    // (released) items are skipped above (never reopened), and the SAMPLE_REJECTED
+    // actionLog row above is the required caller-side audit for the force path.
+    order.__forceTransition = true;
+    order.__forceAdminUserId = rejectedBy || "Lab Staff";
     await order.save();
     return this._populate(order._id);
   }

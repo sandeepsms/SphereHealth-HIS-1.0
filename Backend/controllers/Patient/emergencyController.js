@@ -195,6 +195,13 @@ class EmergencyController {
         payload = { ...req.body };
         for (const k of ER_CLINICAL_FIELDS) delete payload[k];
       }
+      // R8-FIX(#21): `disposition` (+ its dependent attestation objects) must
+      // NEVER be set via the generic update — even by Admin — because that
+      // bypasses updateDisposition's state machine (death-certification / DAMA
+      // attestation / MLC auto-flag / sticky-terminal invariants). Force every
+      // disposition change through the dedicated /disposition endpoint.
+      payload = payload === req.body ? { ...req.body } : payload;
+      for (const k of ["disposition", "deathDetails", "damaDetails", "referralDetails"]) delete payload[k];
       const visit = await emergencyService.updateEmergencyVisit(
         req.params.emergencyNumber,
         payload

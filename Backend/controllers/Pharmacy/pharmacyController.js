@@ -2605,7 +2605,13 @@ exports.collectCredit = async (req, res) => {
       if (!sale) {
         const e = new Error("Sale not found"); e.status = 404; throw e;
       }
-      if (sale.status !== "Completed") {
+      // R8-FIX(#15): accept every open-balance status — a Partial-Return or
+      // Supplemented sale can still owe money (residual balanceDue>0) and is
+      // reported as outstanding by the IPD discharge pharmacy-clearance gate
+      // (getOutstandingForAdmission OPEN_BALANCE_STATUSES). Rejecting them here
+      // left that balance permanently uncollectable and deadlocked discharge.
+      // Cancelled/Refunded/Hold stay rejected; balanceDue<=0 ALREADY_PAID below.
+      if (!["Completed", "Partial-Return", "Supplemented"].includes(sale.status)) {
         const e = new Error(`Cannot collect on a ${sale.status} sale`);
         e.status = 409; e.code = "SALE_NOT_COLLECTABLE"; throw e;
       }
@@ -2770,7 +2776,11 @@ exports.applyAdvanceToSale = async (req, res) => {
       if (!sale) {
         const e = new Error("Sale not found"); e.status = 404; throw e;
       }
-      if (sale.status !== "Completed") {
+      // R8-FIX(#15): accept every open-balance status — mirror collectCredit +
+      // getOutstandingForAdmission so Partial-Return/Supplemented sales with
+      // residual balanceDue can be cleared via advance. Cancelled/Refunded/Hold
+      // stay rejected; balanceDue<=0 handled below.
+      if (!["Completed", "Partial-Return", "Supplemented"].includes(sale.status)) {
         const e = new Error(`Cannot apply advance on a ${sale.status} sale`);
         e.status = 409; e.code = "SALE_NOT_COLLECTABLE"; throw e;
       }

@@ -275,7 +275,9 @@ async function generateStandardClaimPdf(claim) {
 // is present and the pdf has that AcroForm field, we set it; otherwise we draw
 // text at (page,x,y). `resolve(field)` maps a field key → a string value.
 async function overlayOntoTemplate(templateBytes, fieldMap, resolve) {
-  const pdf = await PDFDocument.load(templateBytes);
+  // R8-FIX(#35): ignoreEncryption so encrypted official insurer PDFs load
+  // (the upload path already stores them with ignoreEncryption).
+  const pdf = await PDFDocument.load(templateBytes, { ignoreEncryption: true });
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   let form = null;
   try { form = pdf.getForm(); } catch { form = null; }
@@ -337,8 +339,14 @@ async function fillInsurerForm(billId, insurerCode, opts = {}) {
   // CLAIM-P4.3: prefer an uploaded official template when the caller provides
   // one (controller looks it up). `opts.template = { bytes, fieldMap }`.
   if (opts.template && opts.template.bytes) {
-    const bytes = await overlayOntoTemplate(opts.template.bytes, opts.template.fieldMap, (k) => claimFieldValues(claim)[k]);
-    return { bytes, filename: fileName(claim), insurer: claim.insurer, usedTemplate: true };
+    try {
+      const bytes = await overlayOntoTemplate(opts.template.bytes, opts.template.fieldMap, (k) => claimFieldValues(claim)[k]);
+      return { bytes, filename: fileName(claim), insurer: claim.insurer, usedTemplate: true };
+    } catch (err) {
+      // R8-FIX(#35): a bad/encrypted/corrupt uploaded insurer template must
+      // never 500 the print. Fall back to the generated standard IRDAI-format form.
+      console.error(`[insurerFormService] overlay onto uploaded template failed for bill ${billId}; falling back to standard form:`, err && err.message);
+    }
   }
 
   const bytes = await generateStandardClaimPdf(claim);

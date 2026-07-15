@@ -390,8 +390,25 @@ class EmergencyService {
             admissionType:       "Emergency",
             admissionDate:       now,
             bedNumber:           bed,
-            ...(claimedBed ? { bedId: claimedBed._id, hasBed: true } : {}),
-            roomNumber:          dispositionData.admittedRoom || "",
+            // R8-FIX(#11): carry roomId (+ ward/floor/building + denormalized
+            // names) from the claimed Bed so bed-day + nursing charges accrue.
+            // resolveBedAndNursingRates needs admission.roomId to price; the
+            // bridge previously set only roomNumber (free-text) → zero rates →
+            // ₹0 bed/nursing for the whole stay. claimedBed (un-populated
+            // findOneAndUpdate result) exposes the room ref as `.room`. Paired
+            // with autoBillingService's EMERGENCY-gate widening — keeping
+            // admissionType "Emergency" preserves the consolidated ER→IPD draft
+            // (visitType EMERGENCY); flipping to Transfer/IPD would split it.
+            ...(claimedBed ? {
+              bedId:      claimedBed._id,
+              hasBed:     true,
+              roomId:     claimedBed.room || null,
+              wardId:     claimedBed.ward || null,
+              wardName:   claimedBed.wardName || "",
+              floorId:    claimedBed.floor || null,
+              buildingId: claimedBed.building || null,
+            } : {}),
+            roomNumber:          claimedBed?.roomNumber || dispositionData.admittedRoom || "",
             department:          dispositionData.admittedDepartment || visit.consultantIncharge || "",
             attendingDoctor:     dispositionData.attendingDoctor || visit.consultantIncharge || "",
             attendingDoctorId:   dispositionData.attendingDoctorId || null,

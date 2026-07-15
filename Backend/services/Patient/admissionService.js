@@ -354,10 +354,21 @@ class AdmissionService {
     try {
       const DoctorOrder = require("../../models/Doctor/DoctorOrderModel");
       const ACTIVE = ["Pending", "Acknowledged", "Active", "InProgress", "OnHold", "Modified"];
+      // R8-FIX(#22): scope the gate to THIS admission (admissionId +
+      // admissionNumber/ipdNo mirrors), not the whole UHID — otherwise an open
+      // procedure from a different (e.g. prior) admission of the same patient
+      // blocks a legitimate discharge of the current admission. admissionNumber
+      // is sparse/nullable, so only add the string-mirror branches when present.
+      const admScope = [{ admissionId: admission._id }];
+      if (admission.admissionNumber) {
+        admScope.push({ ipdNo: admission.admissionNumber });
+        admScope.push({ admissionNumber: admission.admissionNumber });
+      }
       const activeOT = await DoctorOrder.findOne({
         UHID: admission.UHID,
         orderType: "Procedure",
         status: { $in: ACTIVE },
+        $or: admScope,
       }).select("_id orderDetails.procedureName status").lean();
       if (activeOT && !dischargeData.allowOverride) {
         const err = new Error(
