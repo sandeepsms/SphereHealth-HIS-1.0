@@ -355,7 +355,7 @@ function DispositionModal({ visit, onClose, onSaved }) {
   const [f, setF] = useState({
     advice: "", dispositionNotes: "",
     referredToHospital: "", referralReason: "",
-    damaReason: "", damaExplainedBy: "", damaWitness: "",
+    damaReason: "", damaExplainedBy: "", damaWitness: "", damaSignature: "",
     declaredBy: "", immediateCause: "", mannerOfDeath: "Natural",
   });
   const [saving, setSaving] = useState(false);
@@ -365,8 +365,8 @@ function DispositionModal({ visit, onClose, onSaved }) {
     // client-side mirrors of the R7z service attestation
     if (dispo === "Referred" && (!f.referredToHospital.trim() || !f.referralReason.trim()))
       return toast.error("Referral needs hospital + reason");
-    if (dispo === "Left Against Medical Advice" && (!f.damaReason.trim() || !f.damaExplainedBy.trim() || !f.damaWitness.trim()))
-      return toast.error("LAMA needs reason, explained-by and witness");
+    if (dispo === "Left Against Medical Advice" && (!f.damaReason.trim() || !f.damaExplainedBy.trim() || !f.damaWitness.trim() || !f.damaSignature.trim()))
+      return toast.error("LAMA needs reason, explained-by, witness and patient/attendant signature");
     if (dispo === "Expired" && (!f.declaredBy.trim() || !f.immediateCause.trim()))
       return toast.error("Death declaration needs certifying doctor + immediate cause");
 
@@ -377,10 +377,10 @@ function DispositionModal({ visit, onClose, onSaved }) {
         dispositionNotes: f.dispositionNotes || f.advice || "",
         ...(dispo === "Referred" ? { referredTo: { hospital: f.referredToHospital.trim(), reason: f.referralReason.trim() } } : {}),
         ...(dispo === "Left Against Medical Advice" ? {
-          damaDetails: { reason: f.damaReason.trim(), risksExplained: true, explainedBy: f.damaExplainedBy.trim(), witnessName: f.damaWitness.trim() },
+          damaDetails: { reason: f.damaReason.trim(), risksExplained: true, explainedBy: f.damaExplainedBy.trim(), patientSignature: f.damaSignature.trim(), witnessName: f.damaWitness.trim() },
         } : {}),
         ...(dispo === "Expired" ? {
-          deathDetails: { declaredBy: f.declaredBy.trim(), immediateCause: f.immediateCause.trim(), mannerOfDeath: f.mannerOfDeath },
+          deathDetails: { declaredBy: f.declaredBy.trim(), causeOfDeath: { immediate: f.immediateCause.trim() }, mannerOfDeath: f.mannerOfDeath },
         } : {}),
       };
       const res = await axios.put(`${API_ENDPOINTS.EMERGENCY}/${encodeURIComponent(visit.emergencyNumber)}/disposition`, payload);
@@ -465,6 +465,8 @@ function DispositionModal({ visit, onClose, onSaved }) {
             {inp("damaReason", "patient/attendant's stated reason")}
             <label style={{ fontSize: 10.5, fontWeight: 700, color: "#64748b" }}>Risks explained by *</label>
             {inp("damaExplainedBy", "doctor name")}
+            <label style={{ fontSize: 10.5, fontWeight: 700, color: "#64748b" }}>Patient / attendant signature (self or next-of-kin name) *</label>
+            {inp("damaSignature", "name of person signing — self / NoK")}
             <label style={{ fontSize: 10.5, fontWeight: 700, color: "#64748b" }}>Witness *</label>
             {inp("damaWitness", "witness name")}
           </>
