@@ -415,7 +415,11 @@ export default function PainAssessmentPage() {
   const [patient, setPatient] = useState(null);
   return (
     <ClinicalLayout onPatientSelect={setPatient} selectedId={patient?._id} pageType="pain-assessment">
-      <PainContent patient={patient} />
+      {/* R9-FIX(R9-109): key on patient id so the form REMOUNTS (all useState
+          reset) on patient switch — the #47 fix, applied to this twin.
+          ClinicalLayout renders children keyless, so without this the prior
+          patient's pain score/site/analgesic bled into the next patient. */}
+      <PainContent key={patient?._id || "no-patient"} patient={patient} />
     </ClinicalLayout>
   );
 }

@@ -634,7 +634,7 @@ export default function DailyNursingAssessmentPage() {
           refreshTrigger={ordersRefresh}
         />
       )}
-      <DailyNursingContent patient={patient} />
+      <DailyNursingContent key={patient?._id || "no-patient"} patient={patient} />
       <FingerprintConsentModal
         open={consentModal.open}
         onClose={() => setConsentModal({ open: false, order: null })}
