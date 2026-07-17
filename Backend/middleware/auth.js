@@ -939,10 +939,18 @@ const enforceActivePatientForClinicalWrites = async (req, res, next) => {
   }
 };
 
+// R9-FIX(R9-081): drop the cached user-status row after a tokenVersion bump
+// (password change / logout-all) so the freshly-issued token isn't rejected as
+// TOKEN_STALE for up to the 60s LRU TTL (the cache still held the OLD version).
+function invalidateUserStatus(userId) {
+  try { _userStatusCache?.invalidate(String(userId)); } catch (_) { /* best-effort */ }
+}
+
 module.exports = {
   authenticate,
   authorize,
   adminOnly,
+  invalidateUserStatus,
   requireAction,
   requireAnyAction,
   attemptAuth,

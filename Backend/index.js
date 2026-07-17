@@ -761,22 +761,27 @@ const _cancelAuditArchive = scheduleDaily("billing-audit-archive", 3, 30, async 
     weekday: "short", timeZone: process.env.HOSPITAL_TZ || "Asia/Kolkata",
   }).format(now);
   if (dow !== "Sun") return { skipped: "non-Sunday", moved: 0 };
-  // Pull a batch of expired rows. 1000-row cap so we don't blow memory.
-  const expired = await BillingAudit.find({ retainUntil: { $lt: now } })
-    .sort({ createdAt: 1 }).limit(1000).lean();
-  if (expired.length === 0) return { moved: 0 };
-  // Bulk-insert into archive, then bulk-delete from hot. If insert fails
-  // we DO NOT delete — duplicates next week are harmless (archive _id
-  // matches and the insert is ignored).
+  // R9-FIX(R9-101): the TTL index on retainUntil reaps expired rows within
+  // ~60s of expiry, so an archiver that only pulled `retainUntil < now` always
+  // found them already deleted → cold storage stayed permanently EMPTY. Instead
+  // we COPY rows APPROACHING expiry (within a 30-day look-ahead) to cold storage
+  // and let the TTL own the hot-collection deletion at retainUntil. The weekly
+  // cadence (<=7-day gap) comfortably beats the 30-day window, so every row is
+  // archived well before the TTL reaps it. Idempotent — re-copying a row next
+  // week is a no-op (archive _id matches → 11000 ignored).
+  const horizon = new Date(now.getTime() + 30 * 86400000);
+  const nearing = await BillingAudit.find({ retainUntil: { $lt: horizon } })
+    .sort({ retainUntil: 1 }).limit(5000).lean();
+  if (nearing.length === 0) return { moved: 0 };
   try {
-    await ArchiveColl.insertMany(expired, { ordered: false });
+    await ArchiveColl.insertMany(nearing, { ordered: false });
   } catch (e) {
     // Tolerate duplicate-key spam from prior partial runs.
     if (e.code !== 11000) throw e;
   }
-  const ids = expired.map((r) => r._id);
-  const del = await BillingAudit.deleteMany({ _id: { $in: ids } });
-  return { moved: expired.length, deleted: del.deletedCount };
+  // Do NOT delete here — the TTL index removes each row from the hot
+  // collection at its own retainUntil, after it is safely in cold storage.
+  return { moved: nearing.length, archivedAheadOfTTL: true };
 });
 
 // R7bd-E-3 / A2-MED-17: low-stock reorder notifier. Runs at 08:00 IST
