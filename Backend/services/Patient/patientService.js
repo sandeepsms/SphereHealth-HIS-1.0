@@ -363,6 +363,23 @@ class PatientService {
     delete updateData.UHID;
     delete updateData.patientId;
 
+    // R9-FIX(R9-001): patient archival goes through the Admin-only delete
+    // endpoint (which runs the dependency guard against active admissions /
+    // open bills). A generic PUT must NOT flip isActive, or a Receptionist
+    // could soft-archive any patient — including one with an open IPD bill —
+    // bypassing both the role gate and the guard.
+    delete updateData.isActive;
+    // R9-FIX(R9-002): ABHA identity is written only by the Admin-only
+    // abdm.write link flow (kyc-verified). Strip it from the generic patch so
+    // a Receptionist can't set/forge a patient's ABHA number/address or the
+    // KYC-verified flag.
+    delete updateData.abhaNumber;
+    delete updateData.abhaAddress;
+    delete updateData.abhaId;
+    delete updateData.abhaLinked;
+    delete updateData.abhaKycVerified;
+    delete updateData.abhaLinkedAt;
+
     // ⭐ Handle visit counter increment
     const incrementField = updateData._incrementVisit;
     delete updateData._incrementVisit;

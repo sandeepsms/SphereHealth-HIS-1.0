@@ -47,7 +47,17 @@ class OPDController {
       // bridging admission AND the consultation charge). The controller-level
       // auto-billing block here used to fire the SAME event a second time,
       // double-charging every visit. Removed.
-      const visit = await opdService.createOPDVisit(req.body);
+      // R9-FIX(R9-007): mirror updateOPDVisit's non-Admin clinical-field strip
+      // on the CREATE path too — otherwise a Receptionist registering the visit
+      // could fabricate exam/diagnosis/prescription (bypassing the D9 allergy
+      // gate) and pre-fill the assessment, locking the doctor out. Reception's
+      // own fields (chief complaint, vitals, status, doctor assignment) stay.
+      let createPayload = req.body;
+      if (req.user?.role !== "Admin") {
+        createPayload = { ...req.body };
+        for (const k of OPD_CLINICAL_FIELDS) delete createPayload[k];
+      }
+      const visit = await opdService.createOPDVisit(createPayload);
       res.status(201).json({ success: true, message: "OPD visit created successfully", data: visit });
     } catch (error) {
       // R7hr-47 / R7hr-51: surface structured rule errors so the reception

@@ -1569,6 +1569,24 @@ class AdmissionService {
     delete safe.attendingDoctorId;
     delete safe.treatmentTeam;
     delete safe.dischargeWorkflow;
+    // R9-FIX(R9-018): these are compliance locks / gates owned by dedicated,
+    // gated flows — the generic admission patch must never clear them. legalHold
+    // (retention exclusion, its own setter), mustCosign (NABH COP.7 senior-
+    // cosign requirement derived from the attending doctor's designation),
+    // initialAssessment / nurseInitialAssessment (the IA-complete gate), and the
+    // MLC flags (owned by the MLC flow). Without this a Doctor/Receptionist could
+    // clear mustCosign to self-finalize discharge or drop a legal hold.
+    delete safe.legalHold;
+    delete safe.legalHoldReason;
+    delete safe.legalHoldBy;
+    delete safe.legalHoldByName;
+    delete safe.legalHoldAt;
+    delete safe.mustCosign;
+    delete safe.initialAssessment;
+    delete safe.nurseInitialAssessment;
+    delete safe.isMLC;
+    delete safe.mlcNumber;
+    delete safe.actualDischargeDate;
     const admission = await Admission.findByIdAndUpdate(
       id,
       { $set: safe },
