@@ -143,6 +143,12 @@ class AdmissionService {
     const useTx = !!session && (session.client?.s?.options?.replicaSet ||
                                 session.client?.options?.replicaSet);
 
+    // R9-FIX(R9-091): only the non-tx rollback that frees the bed must know
+    // whether THIS attempt actually occupied it. If the bed-CAS below FAILED
+    // (we lost the race to another patient), the unconditional rollback used to
+    // free that other patient's bed. This flag gates the rollback on our own
+    // successful occupancy.
+    let _bedCasSucceeded = false;
     const run = async (s) => {
       let bedData = {};
       if (data.bedId) {
@@ -163,6 +169,7 @@ class AdmissionService {
             `Bed ${bedCheck.bedNumber} is not available (current status: ${bedCheck.status}).`,
           );
         }
+        _bedCasSucceeded = true; // R9-FIX(R9-091): we won the bed — rollback may now free it
 
         bedData = {
           bedId: bed._id,
@@ -303,10 +310,12 @@ class AdmissionService {
         try {
           admission = await run(null);
         } catch (err) {
-          // No-transaction fallback: revert the bed allocation if it
-          // succeeded before the failure. Best-effort — the catch swallows
-          // rollback errors so the original cause still surfaces.
-          if (data.bedId) {
+          // No-transaction fallback: revert the bed allocation ONLY if THIS
+          // attempt actually occupied it (R9-FIX(R9-091)). Without the flag, a
+          // failure that was the bed-CAS itself losing the race would free the
+          // WINNER's bed. Best-effort — the catch swallows rollback errors so
+          // the original cause still surfaces.
+          if (data.bedId && _bedCasSucceeded) {
             await Bed.findByIdAndUpdate(data.bedId, {
               $set: { status: "Available", currentAdmission: null },
             }).catch(logErr("admission", `rollback bed ${data.bedId} on create failure`));
@@ -800,8 +809,15 @@ class AdmissionService {
 
     // ── DOCTOR ORDERS → Cancelled ──────────────────────────────────
     try {
+      // R9-FIX(R9-019): DoctorOrders link to an admission via admissionId
+      // (ObjectId) / ipdNo / admissionNumber — NOT via `visitId` set to the
+      // admission _id string (that field never carries it), so the old query
+      // matched nothing and open orders survived a cancelled admission.
       const openOrders = await DoctorOrder.find({
-        visitId: String(admission._id),
+        $or: [
+          { admissionId: admission._id },
+          ...(admission.admissionNumber ? [{ ipdNo: admission.admissionNumber }, { admissionNumber: admission.admissionNumber }] : []),
+        ],
         status:  { $in: ["Pending", "Acknowledged", "Active", "InProgress"] },
       });
       for (const o of openOrders) {
@@ -1808,7 +1824,13 @@ class AdmissionService {
           billStatus: { $nin: ["DRAFT", "CANCELLED", "REFUNDED"] },
         }),
         DoctorOrder.exists({
-          visitId: String(admission._id),
+          // R9-FIX(R9-019): link via admissionId/ipdNo, not visitId=_id string
+          // (which never matched → the "active doctor order" delete-blocker
+          // never fired, letting an admission with open orders be deleted).
+          $or: [
+            { admissionId: admission._id },
+            ...(admission.admissionNumber ? [{ ipdNo: admission.admissionNumber }, { admissionNumber: admission.admissionNumber }] : []),
+          ],
           status:  { $in: ["Pending", "Acknowledged", "Active", "InProgress"] },
         }),
         MAR.exists({ admissionId: admission._id, status: "ACTIVE" }),

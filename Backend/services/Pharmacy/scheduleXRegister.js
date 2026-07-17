@@ -97,8 +97,12 @@ async function recordDispense({
   const today = _istMidnight(new Date());
   // Refuse if the day has already been verified — append after verify is
   // a back-date attempt which would invalidate the signed daily total.
+  // R9-FIX(R9-041): verify is per-DRUG per-DAY (verifyBalance writes one VERIFY
+  // row per drug with NO batchId). The old check matched on batchId, so a
+  // batch-based dispense never found the batch-less VERIFY row and post-verify
+  // narcotic dispenses slipped through the day-lock. Match drug + day only.
   const verified = await ScheduleXEntry.findOne({
-    drugId, batchId: batchId || null, date: today, rowType: "VERIFY",
+    drugId, date: today, rowType: "VERIFY",
   }).lean();
   if (verified) {
     const e = new Error(`Day ${today.toISOString().slice(0,10)} already verified — cannot append new dispense`);
