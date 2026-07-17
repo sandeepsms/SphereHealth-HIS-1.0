@@ -758,7 +758,12 @@ router.post("/", requireAction("doctor-orders.write"), credentialExpiryBlocker("
         // Atomic $push of this med onto today's MAR.
         if (mar) {
           const medRow = {
-            drugName:   order.orderDetails?.medicineName || order.orderDetails?.displayName || "",
+            // R9-FIX(R9-057): the MARMedicationSchema field is `medicineName`
+            // (required), NOT `drugName` — strict mode silently DROPPED the old
+            // `drugName`, leaving a nameless med row whose allergy probe
+            // (_drugProbe reads medicineName) returned "" → SAFE unconditionally,
+            // so a drug could be charted GIVEN against a documented allergy.
+            medicineName: order.orderDetails?.medicineName || order.orderDetails?.displayName || "",
             dose:       order.orderDetails?.dose || order.orderDetails?.dosage || "",
             route:      order.orderDetails?.route || "",
             frequency:  order.orderDetails?.frequency || "",

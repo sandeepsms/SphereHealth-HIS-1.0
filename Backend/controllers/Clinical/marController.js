@@ -389,7 +389,7 @@ class MARController {
         targetType: "MAR.administration",
         targetId: pushResult._id,
         after: {
-          drug: refreshedMed?.drugName,
+          drug: refreshedMed?.medicineName, // R9-FIX(R9-062): schema field is medicineName, not drugName
           dose: refreshedMed?.dose,
           status: finalStatus,
           scheduledTime,

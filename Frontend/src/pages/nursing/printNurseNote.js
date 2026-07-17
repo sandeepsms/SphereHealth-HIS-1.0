@@ -396,7 +396,7 @@ const buildBuilder = (note) => {
             : totalDisplay >= 45 ? "HIGH risk (≥45)"
             : totalDisplay >= 25 ? "MODERATE risk (25–44)"
             : "LOW risk (0–24)");
-      const tbl = `<table class="nfx-tbl"><tr><th>Morse Fall Scale Item</th><th style="width:30%">Score</th></tr>${rows.map(r => `<tr><td>${escapeHtml(r[0])}</td><td>${fmtVal(r[1]) || "—"}</td></tr>`).join("")}<tr style="background:#fef2f2"><td><strong>Total</strong></td><td><strong>${totalDisplay != null ? totalDisplay : "—"}</strong></td></tr></table>`;
+      const tbl = `<table class="nfx-tbl"><tr><th>Morse Fall Scale Item</th><th style="width:30%">Score</th></tr>${rows.map(r => `<tr><td>${escapeHtml(r[0])}</td><td>${escapeHtml(fmtVal(r[1])) || "—"}</td></tr>`).join("")}<tr style="background:#fef2f2"><td><strong>Total</strong></td><td><strong>${totalDisplay != null ? escapeHtml(String(totalDisplay)) : "—"}</strong></td></tr></table>`; // R9-FIX(R9-107): escape nurse-supplied score values (dangerouslySetInnerHTML sink)
       // Precaution chips from intervention booleans (live form).
       const precautionChips = [
         f.intBedLowest    && "Bed in lowest position",
@@ -431,7 +431,7 @@ const buildBuilder = (note) => {
       const totalCalc = Number(eye || 0) + Number(verbal || 0) + Number(motor || 0);
       const gcsTotal = n.gcsTotal ?? (totalCalc > 0 ? totalCalc : null);
       const gcs = [["Eye", eye], ["Verbal", verbal], ["Motor", motor]];
-      const gcsTbl = `<table class="nfx-tbl"><tr><th>GCS</th>${gcs.map(g => `<th>${g[0]}</th>`).join("")}<th>Total</th></tr><tr><td>Score</td>${gcs.map(g => `<td>${fmtVal(g[1]) || "—"}</td>`).join("")}<td><strong>${gcsTotal ?? "—"}</strong></td></tr></table>`;
+      const gcsTbl = `<table class="nfx-tbl"><tr><th>GCS</th>${gcs.map(g => `<th>${escapeHtml(g[0])}</th>`).join("")}<th>Total</th></tr><tr><td>Score</td>${gcs.map(g => `<td>${escapeHtml(fmtVal(g[1])) || "—"}</td>`).join("")}<td><strong>${gcsTotal != null ? escapeHtml(String(gcsTotal)) : "—"}</strong></td></tr></table>`; // R9-FIX(R9-107): escape nurse-supplied GCS values (dangerouslySetInnerHTML sink)
       // Pupils: legacy n.pupilsLeft/Right OR live form's pupils + sizeL/sizeR
       const pupilsLeft  = n.pupilsLeft  || (n.pupils && n.pupilSizeL ? `${n.pupils} · ${n.pupilSizeL} mm` : n.pupils);
       const pupilsRight = n.pupilsRight || (n.pupils && n.pupilSizeR ? `${n.pupils} · ${n.pupilSizeR} mm` : n.pupils);
@@ -470,7 +470,7 @@ const buildBuilder = (note) => {
         ["Temperature", m.temperature ?? m.temp],
         ["Consciousness", m.consciousness ?? m.avpu],
       ];
-      const tbl = `<table class="nfx-tbl"><tr><th>MEWS Parameter</th><th style="width:30%">Score</th></tr>${rows.map(r => `<tr><td>${escapeHtml(r[0])}</td><td>${fmtVal(r[1]) || "—"}</td></tr>`).join("")}<tr style="background:#fffbeb"><td><strong>Total</strong></td><td><strong>${m.total ?? "—"}</strong></td></tr></table>`;
+      const tbl = `<table class="nfx-tbl"><tr><th>MEWS Parameter</th><th style="width:30%">Score</th></tr>${rows.map(r => `<tr><td>${escapeHtml(r[0])}</td><td>${escapeHtml(fmtVal(r[1])) || "—"}</td></tr>`).join("")}<tr style="background:#fffbeb"><td><strong>Total</strong></td><td><strong>${m.total != null ? escapeHtml(String(m.total)) : "—"}</strong></td></tr></table>`; // R9-FIX(R9-107): escape nurse-supplied MEWS values (dangerouslySetInnerHTML sink)
       return _section("MEWS Score (Modified Early Warning)", "#d97706", tbl + _grid([
         _kv("Band / Interpretation", m.band, true),
       ]));

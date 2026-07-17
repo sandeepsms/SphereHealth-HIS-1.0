@@ -662,16 +662,19 @@ async function emitFallRisk(args = {}) {
         // PRIMARY key: the client-minted per-incident id (data.fallEventId).
         // It is generated ONCE when the nurse marks the fall and reused across
         // saves, so it survives the nurse CORRECTING the fall time or any
-        // admission/UHID scope change — and being an opaque UUID it can never
-        // collide across patients or tenants. A genuinely new fall gets a new
-        // id (checkbox re-armed). FALLBACK for non-UI producers that omit it:
+        // admission/UHID scope change. A genuinely new fall gets a new id
+        // (checkbox re-armed). FALLBACK for non-UI producers that omit it:
         // {admission||UHID}:{fall timestamp||date} — best-effort, coarser.
+        // R9-FIX(R9-072): the client-supplied fallEventId is ALWAYS prefixed
+        // with the patient scope, so a replayed/forged fallEventId can only
+        // dedup against the SAME patient's own falls — never swallow another
+        // patient's sentinel via a colliding UUID.
         const _fallScope = String(canonicalAdmissionId || assessment.UHID || "").trim();
         const _fallStamp = String(data.fallDateTime || data.fallDate || "").trim() ||
           new Date(assessment.recordedAt || Date.now()).toISOString().slice(0, 10);
         const _incidentId = String(data.fallEventId || "").trim();
         const _sentinelSourceRef = _incidentId
-          ? `FallRisk:${_incidentId}`
+          ? `FallRisk:${_fallScope}:${_incidentId}`
           : `FallRisk:${_fallScope}:${_fallStamp}`;
         await emitSentinelEvent({
           UHID: assessment.UHID,
@@ -786,6 +789,15 @@ async function emitPressureUlcer(args = {}) {
     // even if the sentinel emit fails.
     if (sentinel) {
       try {
+        // R9-FIX(R9-070): STABLE per-incident sourceRef (the #47 fix, applied
+        // to this twin). Previously keyed on the fresh PressureUlcerRegister
+        // row _id, so EVERY re-assessment of the SAME HAPU minted a new
+        // sentinel. One pressure ulcer = one (admission|UHID, site) — re-
+        // assessments and stage progression at that site coalesce onto one
+        // row via emitSentinelEvent's find-or-create; a distinct ulcer at a
+        // different site still raises its own.
+        const _puScope = String(canonicalAdmissionId || assessment.UHID || "").trim();
+        const _puSite = String(data.ulcerSite || "").trim().toLowerCase() || "unspecified";
         await emitSentinelEvent({
           UHID: assessment.UHID,
           patientId: assessment.patientId || null,
@@ -797,7 +809,7 @@ async function emitPressureUlcer(args = {}) {
           severity: "Critical",
           immediateAction: `HAPU detected stage ${ulcerStage} at ${data.ulcerSite || "site unknown"}; repositioning bundle activated; wound care + nutrition consult triggered`,
           rcaInitiated: false,
-          sourceRef: `PressureUlcer:${row._id}`,
+          sourceRef: `PressureUlcer:${_puScope}:${_puSite}`,
           autoTriggeredFrom: "emitPressureUlcer",
           actor: actor || {},
         });
@@ -2216,11 +2228,13 @@ const SentinelEventRegister = require("../../models/Compliance/SentinelEventRegi
 const _crypto = require("crypto");
 
 async function emitSentinelEvent(payload = {}) {
+  // R9-FIX(R9-071): declared OUTSIDE the try so the E11000 catch below can
+  // reference it — previously block-scoped inside the try, so the catch's
+  // `findOne({ sourceRef })` threw a ReferenceError (swallowed → dead code).
+  const sourceRef = payload.sourceRef || _crypto.randomUUID();
   try {
     if (!payload.UHID) return null;
     if (!payload.eventType) return null;
-
-    const sourceRef = payload.sourceRef || _crypto.randomUUID();
 
     // Idempotency by sourceRef
     try {
