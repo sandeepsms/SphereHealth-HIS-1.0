@@ -3,11 +3,20 @@
 > **Ye file kya hai:** Har session ka running task log. Naya session shuru karo toh **sirf ye file padho** — 2 minute me pata chal jayega kya chal raha tha, kaha se pick karna hai, aage kya karna hai.
 > **Rule:** Har work-session ke END pe ye file update karke commit karni hai.
 
-**Last updated:** 2026-07-15 · **Branch:** `claude/multi-hospital-deploy` · **Tree:** clean ✅ · **Build:** green ✅ (E2E 136/136 + FE vite) · **Head:** `cd11ca73` · **AUDIT-R8 remediation ✅ COMPLETE — 50/50 findings fixed. Both deferrals now closed: #28 Schedule-X NDPS register reversal (`1584ba8b`) + #47 fall-with-major-injury sentinel chain (`cd11ca73`). Plan `AUDIT-R8-REMEDIATION-PLAN.md`.**
+**Last updated:** 2026-07-17 · **Branch:** `claude/multi-hospital-deploy` · **Tree:** clean ✅ · **Build:** green ✅ (E2E 136/136 + FE vite) · **Head:** `24028f6d` · **AUDIT-R8 remediation ✅ COMPLETE (50/50).** · **⚠️ AUDIT-R9 DONE — 110 NEW findings (11 critical / 39 high / 38 medium / 22 low), report `AUDIT-R9-20DIM.md` + `AUDIT-R9-FINDINGS.json`. NOTHING FIXED YET — remediation waves proposed, awaiting owner go-ahead. Wave 0 = R9-080 case-insensitive-routing authZ bypass (LIVE), R9-107 stored XSS, R9-057 MAR allergy-gate bypass, R9-098 boot OOM.**
 
 ---
 
 ## 🎯 ABHI YAHA HAI (resume point)
+
+### ⚠️ AUDIT-R9 — 20-DIM RE-AUDIT DONE 2026-07-17 (`24028f6d`) — 110 findings, ZERO fixed yet
+Owner: "do a 20 dim audit for a full scale working modules and there functionality and security". **131-agent fan-out** (`audit-r9-20dim`): 20 dimension auditors (functionality **AND** security each) → adversarial per-finding verify → synthesis. ~7.8M subagent tokens, 2034 tool calls. Report **`AUDIT-R9-20DIM.md`**, raw data **`AUDIT-R9-FINDINGS.json`**.
+- **110 findings: 11 critical / 39 high / 38 medium / 22 low** (37 security, 73 functionality). 81 CONFIRMED, 29 downgraded, **0 refuted**.
+- **⚠️ Calibration caveat:** 0% refutation (R8 refuted 3/56) → verifiers ran confirmatory, not adversarial. **Medium/low = filed, NOT final — re-read code at fix time.**
+- **Defining theme:** the worst findings are **controls that exist, are documented as enforced, and never execute** — SoD reading fields Mongoose drops (`payments[].receivedById`), `pre("save")` guards vs `findOneAndUpdate` writers, URL-regex authZ walls beaten by Express case-insensitive routing, allergy gate fed a non-existent field, credit-note maker-checker both GST exporters ignore. **2nd theme: sibling drift** — R7*/R8 fixes landed on one twin only (create-vs-update, GSTR-1 vs 3B, FallRisk vs other nursing pages).
+- **Lead hand-verified the 2 Wave-0 criticals:** **R9-080** (case-insensitive routing authZ bypass) = **CONFIRMED LIVE** (`case sensitive routing` never set + regexes lack `/i` → `POST /billing/<id>/PAYMENT` skips the Doctor/Nurse money-write block). **R9-085** (ABDM unauth callback) = real in code but **LATENT** — `ABDM_ENABLED` unset → router unmounted → 503; **fix before enabling ABDM for NHA certification**, not before next deploy. (Auditors framed it as live; corrected.)
+- **Proposed waves:** W0 emergency (R9-080 routing, R9-107 XSS, R9-057 MAR allergy, R9-098 `limit(0)`=unlimited boot OOM) · W0b before-ABDM-enable (R9-085) · W1 write-path integrity (mass-assignment allow-lists, guards off `pre("save")`, actor from `req.user`) · W2 money+statutory books · W3 clinical safety/registers · W4 ABDM/consent · W5 ops/retention/reports.
+- **NEXT:** owner decides remediation order. Nothing fixed yet.
 
 ### 🔧 AUDIT-R8 REMEDIATION (2026-07-15) — 8-wave recommended fix-order, IN PROGRESS
 Plan: **`AUDIT-R8-REMEDIATION-PLAN.md`** (50 open findings → 8 sequenced waves). Har wave: design→adversarial-review workflow → apply → **E2E 136/136 + build** → commit.
