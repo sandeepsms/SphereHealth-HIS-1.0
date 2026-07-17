@@ -208,7 +208,11 @@ class PatientService {
       ];
     }
 
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    // R9-FIX(R9-088): hard-cap the page size so a client can't dump the entire
+    // patient PHI collection with ?limit=999999 (the `search` sibling already
+    // caps at 50). 200 comfortably covers any real reception list page.
+    const _limit = Math.min(Math.max(parseInt(limit) || 50, 1), 200);
+    const skip = (parseInt(page) - 1) * _limit;
     // ── Sort order: today-first ──────────────────────────────────
     // Receptionist needs the people who walked in today at the top,
     // even if they registered months ago. So we sort by lastVisitDate
@@ -223,13 +227,13 @@ class PatientService {
       .populate("doctor", "personalInfo")
       .populate("tpa", "tpaName tpaCode")
       .sort({ lastVisitDate: -1, createdAt: -1 })
-      .limit(parseInt(limit))
+      .limit(_limit)
       .skip(skip);
 
     const count = await Patient.countDocuments(query);
     return {
       patients,
-      totalPages: Math.ceil(count / parseInt(limit)),
+      totalPages: Math.ceil(count / _limit),
       currentPage: parseInt(page),
       totalPatients: count,
     };

@@ -89,10 +89,14 @@ exports.collectSample = async (req, res) => {
 };
 
 // NABL 7.2.6 — reject a pre-analytical sample with a structured reason.
+// R9-FIX(R9-048): the NABL authorising-signatory identity (who rejected /
+// entered / verified / amended) MUST be the authenticated actor, never a
+// client-supplied string in the body. Override it here on every result path.
+const _labActor = (req) => req.user?.fullName || req.user?.employeeId || req.user?.name || "Lab Staff";
 exports.rejectSample = async (req, res) => {
   const { sendOk, sendErr } = env();
   try {
-    const data = await svc.rejectSample(req.params.id, req.body);
+    const data = await svc.rejectSample(req.params.id, { ...req.body, rejectedBy: _labActor(req) });
     return sendOk(res, data);
   } catch (e) {
     return sendErr(res, e, e.code || "VALIDATION", e.status || 400);
@@ -103,7 +107,7 @@ exports.rejectSample = async (req, res) => {
 exports.amendResult = async (req, res) => {
   const { sendOk, sendErr } = env();
   try {
-    const data = await svc.amendResult(req.params.id, req.body);
+    const data = await svc.amendResult(req.params.id, { ...req.body, amendedBy: _labActor(req) }); // R9-FIX(R9-048)
     return sendOk(res, data);
   } catch (e) {
     return sendErr(res, e, e.code || "VALIDATION", e.status || 400);
@@ -113,7 +117,7 @@ exports.amendResult = async (req, res) => {
 exports.enterResults = async (req, res) => {
   const { sendOk, sendErr } = env();
   try {
-    const data = await svc.enterResults(req.params.id, req.body);
+    const data = await svc.enterResults(req.params.id, { ...req.body, enteredBy: _labActor(req) }); // R9-FIX(R9-048)
     // ── Auto-billing hook ──────────────────────────────────────
     try {
       const autoBilling = require("../../services/Billing/autoBillingService");
@@ -131,7 +135,7 @@ exports.enterResults = async (req, res) => {
 exports.enterExternalResult = async (req, res) => {
   const { sendOk, sendErr } = env();
   try {
-    const data = await svc.enterExternalResult(req.params.id, req.body);
+    const data = await svc.enterExternalResult(req.params.id, { ...req.body, enteredBy: _labActor(req) }); // R9-FIX(R9-048)
     return sendOk(res, data);
   } catch (e) {
     return sendErr(res, e, "VALIDATION", 400);
@@ -141,7 +145,7 @@ exports.enterExternalResult = async (req, res) => {
 exports.verify = async (req, res) => {
   const { sendOk, sendErr } = env();
   try {
-    const data = await svc.verifyResults(req.params.id, req.body);
+    const data = await svc.verifyResults(req.params.id, { ...req.body, verifiedBy: _labActor(req) }); // R9-FIX(R9-048)
     // ── Auto-billing hook ──────────────────────────────────────
     try {
       const autoBilling = require("../../services/Billing/autoBillingService");

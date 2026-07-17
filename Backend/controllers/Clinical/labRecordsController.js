@@ -204,7 +204,14 @@ exports.trendCreate = async (req, res) => {
     body.createdByName = name;
     body.updatedBy     = req.user?.id;
     body.updatedByName = name;
-    body.status        = body.status || "draft";
+    // R9-FIX(R9-052): a fresh sheet is ALWAYS draft — verification is the gated
+    // lab.records.verify transition, never settable at create. Previously
+    // `status || "draft"` let a Lab Tech POST status:"verified" with a forged
+    // verifiedByName, releasing a NABL report under a radiologist's signature.
+    body.status = "draft";
+    delete body.verifiedBy;
+    delete body.verifiedByName;
+    delete body.verifiedAt;
     const row = await LabTrend.create(body);
     res.status(201).json({ success: true, data: row });
   } catch (e) { res.status(400).json({ success: false, message: e.message }); }
@@ -296,7 +303,14 @@ exports.reportCreate = async (req, res) => {
     body.reportedBy     = req.user?.id;
     body.reportedByName = await resolveUserName(req);
     body.reportDate     = body.reportDate ? new Date(body.reportDate) : new Date();
-    body.status         = body.status || "reported";
+    // R9-FIX(R9-052): verification is the gated lab.records.verify transition —
+    // a create must never mint an already-"verified" report or forge the
+    // verifying signatory (mirrors reportUpdate's strip).
+    if (body.status === "verified") delete body.status;
+    body.status = body.status || "reported";
+    delete body.verifiedBy;
+    delete body.verifiedByName;
+    delete body.verifiedAt;
     const row = await LabReport.create(body);
     res.status(201).json({ success: true, data: row });
   } catch (e) { res.status(400).json({ success: false, message: e.message }); }
@@ -427,6 +441,11 @@ exports.qcCreate = async (req, res) => {
     body.performedById = req.user?.id || req.user?._id || null;
     body.performedByRole = req.user?.role || "";
     body.performedAt = body.performedAt ? new Date(body.performedAt) : new Date();
+    // R9-FIX(R9-049): retainUntil drives a TTL index (expireAfterSeconds:0), so
+    // a client-supplied past date would make MongoDB auto-delete the QC row —
+    // erasing the NABL quality-control evidence. It is server-owned (model
+    // default / retention floor), never accepted from the body.
+    delete body.retainUntil;
     const row = await LabQCLog.create(body);
     res.status(201).json({ success: true, data: row });
   } catch (e) { res.status(400).json({ success: false, message: e.message }); }

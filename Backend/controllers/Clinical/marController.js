@@ -140,9 +140,24 @@ class MARController {
     // gates on recordAdministration.
     if (((req.body && req.body.administrations) || []).some((a) => normalizeStatus(a?.status) === "GIVEN"))
       return res.status(422).json({ success: false, code: "EMBEDDED_GIVEN_FORBIDDEN", message: "Cannot embed a GIVEN administration when adding a MAR medication — chart doses via the administer endpoint." });
+    // R9-FIX(R9-061): isHighAlert (HAM) drives the dual-witness gate at
+    // administration — derive it from the drug master, never trust the client
+    // body (a nurse could add insulin/heparin with isHighAlert:false and skip
+    // the two-nurse witness). A known HAM drug is force-flagged; a freetext med
+    // not in the master keeps the caller's value.
+    const med = { ...(req.body || {}) };
+    try {
+      const name = String(med.medicineName || med.drugName || "").trim();
+      if (name) {
+        const Drug = require("../../models/Pharmacy/DrugModel");
+        const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const d = await Drug.findOne({ name: new RegExp(`^${esc}$`, "i") }).select("isHighAlert").lean();
+        if (d && d.isHighAlert === true) med.isHighAlert = true;
+      }
+    } catch (_) { /* best-effort — freetext med keeps the caller's value */ }
     const mar = await MAR.findByIdAndUpdate(
       req.params.id,
-      { $push: { medications: req.body } },
+      { $push: { medications: med } },
       { new: true, runValidators: true }
     );
     if (!mar) return res.status(404).json({ success: false, message: "MAR not found" });

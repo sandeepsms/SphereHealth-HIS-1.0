@@ -1640,6 +1640,20 @@ exports.tpaApprove = async (req, res, next) => {
         message: "SAME_ACTOR — TPA approval must be done by a different user than the preauth submitter",
       });
     }
+    // R9-FIX(R9-038): validate the approved amount — a finite, non-negative
+    // number that cannot exceed the bill total. Previously any value (negative,
+    // NaN silently falling back, or far above the bill) was accepted, over-
+    // crediting the insurer against the claim with no relation to what was billed.
+    if (req.body.approvedAmount !== undefined && req.body.approvedAmount !== null && req.body.approvedAmount !== "") {
+      const appr = Number(req.body.approvedAmount);
+      const billTotal = Number(bill.netAmount || bill.grandTotal || 0);
+      if (!Number.isFinite(appr) || appr < 0) {
+        return res.status(400).json({ success: false, code: "INVALID_APPROVED_AMOUNT", message: "approvedAmount must be a non-negative number." });
+      }
+      if (billTotal > 0 && appr > billTotal + 0.5) {
+        return res.status(400).json({ success: false, code: "APPROVED_EXCEEDS_BILL", message: `Approved amount (${appr}) cannot exceed the bill total (${billTotal}).` });
+      }
+    }
     const _priorTpa     = bill.tpaClaimStatus;
     const _priorApprAmt = Number(bill.tpaApprovedAmount || 0);
     // R7ap-F26/D7-10: VersionError retry — concurrent cashier-payment vs
