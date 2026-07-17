@@ -189,6 +189,13 @@ const PaymentSchema = new mongoose.Schema(
     transactionId: { type: String, trim: true },
     paidAt: { type: Date, default: Date.now },
     receivedBy: { type: String, trim: true },
+    // R9-FIX(R9-024): billingService / cashierSessionController / the shift
+    // reconciler all WRITE these, but the schema never declared them → strict
+    // mode silently dropped every value, killing the refund segregation-of-
+    // duties gate (nothing to compare the refunder against) and per-cashier
+    // shift reconciliation (matched on receivedById → zero bills).
+    receivedById:   { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    receivedByRole: { type: String, trim: true },
     remarks: { type: String, trim: true },
     // 15-min reversal audit (cashier-typo undo). When a payment is
     // voided, the original row stays in place (audit immutability)
@@ -197,6 +204,7 @@ const PaymentSchema = new mongoose.Schema(
     // a receipt re-print or audit replay reads cleanly.
     voidedAt:     { type: Date },
     voidedBy:     { type: String, trim: true },
+    voidedById:   { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null }, // R9-FIX(R9-024): written by voidPayment but was schema-less → dropped
     voidedByRole: { type: String, trim: true },
     voidReason:   { type: String, trim: true },
     // R7ap-F28/D6-17: TDS deducted at source on TPA / corporate remittances.
@@ -594,7 +602,11 @@ PatientBillSchema.methods.recalcTotals = function () {
 
       let tpaShare = 0;
       let ptShare = lineTotal;
-      if (this.paymentType === "TPA") {
+      // R9-FIX(R9-034): CORPORATE bills split payer/patient exactly like TPA
+      // (the employer/insurer share uses the same tpaPercent / tpaPayableAmount
+      // fields). Previously only paymentType==="TPA" split, so a CORPORATE bill
+      // fell through to the else and the PATIENT was billed the employer's share.
+      if (this.paymentType === "TPA" || this.paymentType === "CORPORATE") {
         if (toNum(item.tpaPercent) > 0) {
           // Percentage-based: recompute fresh from the (possibly-changed) lineTotal.
           tpaShare = (lineTotal * toNum(item.tpaPercent)) / 100;

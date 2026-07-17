@@ -238,7 +238,11 @@ async function _bucketPatientBills(periodStart, periodEnd) {
       posRaw,
       { invoiceRef: b.billNumber || String(b._id) },
     );
-    const taxable = netAmount; // netAmount is post-discount + pre-tax in this model
+    // R9-FIX(R9-029): bill-level netAmount is TAX-INCLUSIVE
+    // (PatientBillModel.recalcTotals: netAmount = gross - disc + tax - extra +
+    // roundOff), so the taxable base is netAmount MINUS the tax — the old
+    // `taxable = netAmount` overstated GSTR-1 B2C turnover by the full tax.
+    const taxable = netAmount - taxAmount;
     // R7bh-F6: invoice-level rate derived from the dominant taxPercent in
     // billItems (or 0 if no taxable items). Simpler than GSTN's per-line
     // schedule, but the HSN section below carries the per-rate granular
@@ -283,7 +287,7 @@ async function _bucketPatientBills(periodStart, periodEnd) {
     const invoice = {
       invoiceNumber: b.billNumber || `BILL-${b._id}`,
       invoiceDate: (b.billGeneratedAt || b.billDate || new Date()).toISOString().slice(0, 10),
-      invoiceValue: Number((netAmount + taxAmount).toFixed(2)),
+      invoiceValue: Number(netAmount.toFixed(2)), // R9-FIX(R9-029): netAmount is already tax-inclusive — adding taxAmount double-counted the tax
       placeOfSupply,
       reverseCharge: "N",
       invoiceType: "Regular",
@@ -492,8 +496,13 @@ async function _bucketPharmacySales(periodStart, periodEnd, hsnMap) {
  * originalBillNumber + originalBillDate.
  */
 async function _bucketCreditNotes(periodStart, periodEnd) {
+  // R9-FIX(R9-030): only an APPROVED credit note reverses output tax. The
+  // maker-checker (a CN is born PENDING_APPROVAL and an Accountant approves it)
+  // was cosmetic here — PENDING_APPROVAL and even REJECTED CNs still reduced
+  // GSTR-1 output tax, so a cashier could suppress GST liability at will.
   const cns = await CreditNote.find({
     creditNoteDate: { $gte: periodStart, $lt: periodEnd },
+    status: "APPROVED",
   }).lean();
 
   // R8-FIX(#2): a CANCELLED numbered invoice is already reversed by EXCLUSION
@@ -504,38 +513,12 @@ async function _bucketCreditNotes(periodStart, periodEnd) {
   // exclusion is the single, complete reversal). Keep them when the period is
   // LOCKED/filed — the frozen outward can only be reversed via a current-month
   // CDNR. Refund/write-off CNs (original bill NOT cancelled) are never dropped.
-  const skip = new Set();
-  const cancelCnBillIds = cns
-    .filter((c) => String(c.reasonCode) === "07" && c.billId)
-    .map((c) => c.billId);
-  if (cancelCnBillIds.length) {
-    const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
-    const GstMonthlySnapshot = require("../../models/Billing/GstMonthlySnapshot");
-    const cancelledBills = await PatientBill.find({
-      _id: { $in: cancelCnBillIds }, billStatus: "CANCELLED",
-    }).select("_id billGeneratedAt billDate createdAt").lean();
-    const byId = new Map(cancelledBills.map((b) => [String(b._id), b]));
-    const TZ = process.env.HOSPITAL_TZ || "Asia/Kolkata";
-    const lockByPeriod = new Map();
-    for (const c of cns) {
-      if (String(c.reasonCode) !== "07" || !c.billId) continue;
-      const b = byId.get(String(c.billId));
-      if (!b) continue; // original bill not CANCELLED → genuine refund/writeoff CN, keep
-      const d = b.billGeneratedAt || b.billDate || b.createdAt;
-      if (!d) continue;
-      const parts = new Intl.DateTimeFormat("en-CA", {
-        timeZone: TZ, year: "numeric", month: "2-digit",
-      }).formatToParts(new Date(d));
-      const period = `${parts.find((x) => x.type === "year")?.value}-${parts.find((x) => x.type === "month")?.value}`;
-      let locked = lockByPeriod.get(period);
-      if (locked === undefined) {
-        const snap = await GstMonthlySnapshot.findOne({ period, lockedAt: { $ne: null } }).select("_id").lean();
-        locked = !!snap;
-        lockByPeriod.set(period, locked);
-      }
-      if (!locked) skip.add(String(c._id)); // open period → drop the double reversal
-    }
-  }
+  // R9-FIX(R9-031): the open-period cancel-CN skip is now a shared helper
+  // (./_creditNoteSkip), used by BOTH GSTR-1 and GSTR-3B so the two returns
+  // can never drift on cancel-CN handling again (the original R8-FIX(#2) lived
+  // only here).
+  const { openPeriodCancelCnSkipSet } = require("./_creditNoteSkip");
+  const skip = await openPeriodCancelCnSkipSet(cns);
 
   return cns.filter((c) => !skip.has(String(c._id))).map((c) => ({
     creditNoteNumber: c.creditNoteNumber || c.cnNumber || `CN-${c._id}`,

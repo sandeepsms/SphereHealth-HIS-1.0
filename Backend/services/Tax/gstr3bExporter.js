@@ -61,23 +61,23 @@ async function buildGSTR3BJSON(period) {
   const igstOut = toNum(gross.igst);
 
   // Credit notes within period — subtract from outward.
-  const cnAgg = await CreditNote.aggregate([
-    { $match: { creditNoteDate: { $gte: periodStart, $lt: periodEnd } } },
-    {
-      $group: {
-        _id: null,
-        taxableValue: { $sum: "$taxableValue" },
-        cgst: { $sum: "$cgstAmount" },
-        sgst: { $sum: "$sgstAmount" },
-        igst: { $sum: "$igstAmount" },
-      },
-    },
-  ]);
-  const cn = cnAgg[0] || { taxableValue: 0, cgst: 0, sgst: 0, igst: 0 };
-  const cnTaxable = toNum(cn.taxableValue);
-  const cnCgst = toNum(cn.cgst);
-  const cnSgst = toNum(cn.sgst);
-  const cnIgst = toNum(cn.igst);
+  // R9-FIX(R9-030): only APPROVED CNs reverse output tax (maker-checker).
+  // R9-FIX(R9-031): apply the SAME open-period cancel-CN skip GSTR-1 uses
+  // (shared helper), so a cancelled bill — already reversed by exclusion from
+  // outward — isn't double-reversed here. Previously the aggregate summed all
+  // CNs, so GSTR-3B double-reversed cancelled invoices and disagreed with
+  // GSTR-1 for the month.
+  const { openPeriodCancelCnSkipSet } = require("./_creditNoteSkip");
+  const cnsRaw = await CreditNote.find({
+    creditNoteDate: { $gte: periodStart, $lt: periodEnd },
+    status: "APPROVED",
+  }).select("reasonCode billId taxableValue cgstAmount sgstAmount igstAmount").lean();
+  const cnSkip = await openPeriodCancelCnSkipSet(cnsRaw);
+  const cnKept = cnsRaw.filter((c) => !cnSkip.has(String(c._id)));
+  const cnTaxable = cnKept.reduce((s, c) => s + toNum(c.taxableValue), 0);
+  const cnCgst = cnKept.reduce((s, c) => s + toNum(c.cgstAmount), 0);
+  const cnSgst = cnKept.reduce((s, c) => s + toNum(c.sgstAmount), 0);
+  const cnIgst = cnKept.reduce((s, c) => s + toNum(c.igstAmount), 0);
 
   // R7hr-12 (D2-04): pharmacy refunds (credit notes) and supplements
   // (debit notes) used to be silently dropped from GSTR-3B because they

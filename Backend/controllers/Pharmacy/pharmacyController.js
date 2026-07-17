@@ -2975,12 +2975,26 @@ exports.applyAdvanceToSale = async (req, res) => {
         advanceSlices.push({ advId: adv._id, slice });
       }
 
+      // R9-FIX(R9-040): credit the sale by what was ACTUALLY debited from the
+      // advance pool this call, NOT the requested `toApply`. The idempotency
+      // skip above prevents re-debiting an advance that already carries an
+      // appliedTo[] row for this sale — but the sale credit here was
+      // unconditional, so a second (legitimately-distinct) apply booked revenue
+      // as collected while the same rupees stayed spendable/refundable. If
+      // nothing new was debited, this is an idempotent no-op — leave the sale
+      // untouched rather than double-crediting it.
+      const actuallyDebited = debitedAdvanceIds.reduce((acc, d) => acc + d.slice, 0);
+      if (actuallyDebited <= 0) {
+        return { sale: sale.toObject(), applied: 0, advanceRemaining: totalAvailable, slices: advanceSlices, idempotentNoop: true };
+      }
+      const finalPaid = Number(sale.amountPaid?.toString?.() ?? sale.amountPaid ?? 0) + actuallyDebited;
+      const finalBal  = round2(bal - actuallyDebited);
       // Now apply the sale-side mutation atomically with the advance saves.
-      sale.amountPaid = toDec(newPaid);
-      sale.balanceDue = toDec(newBal);
+      sale.amountPaid = toDec(finalPaid);
+      sale.balanceDue = toDec(finalBal);
       sale.collectionLog = sale.collectionLog || [];
       sale.collectionLog.push({
-        amount: toDec(toApply),
+        amount: toDec(actuallyDebited),
         mode: "Advance",
         txnRef: "",
         receiptNumber,
@@ -2990,7 +3004,7 @@ exports.applyAdvanceToSale = async (req, res) => {
         sourceAdvanceId: lastAdvId,
         notes: "Auto-applied from patient advance pool",
       });
-      if (newBal === 0) {
+      if (finalBal === 0) {
         const modes = new Set(sale.collectionLog.map(c => c.mode));
         sale.paymentMode = modes.size > 1 ? "Mixed" : "Advance";
       }
@@ -3038,8 +3052,8 @@ exports.applyAdvanceToSale = async (req, res) => {
 
       return {
         sale: sale.toObject(),
-        applied: toApply,
-        advanceRemaining: totalAvailable - toApply,
+        applied: actuallyDebited, // R9-FIX(R9-040): what was actually debited, not the request
+        advanceRemaining: totalAvailable - actuallyDebited,
         slices: advanceSlices,
       };
     };

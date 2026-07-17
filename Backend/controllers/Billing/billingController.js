@@ -2313,14 +2313,23 @@ exports.tpaSettle = async (req, res, next) => {
       // Unwrap Decimal128 to plain number for arithmetic.
       const toN = (v) => v == null ? 0 : (typeof v === "object" && v.toString ? Number(v.toString()) : Number(v));
       const approved = toN(bill.tpaApprovedAmount) || toN(bill.tpaPayableAmount);
-      const shortfall = Math.max(0, approved - settledAmount);
-      const overpay   = Math.max(0, settledAmount - approved);
+      // R9-FIX(R9-035): cap against the CUMULATIVE settled total, not this
+      // remittance alone. The old per-call check (settledAmount vs approved)
+      // let a claim approved ₹1L be settled ₹1L repeatedly, each with a distinct
+      // UTR — double-crediting the bill. Sum prior TPA_CLAIM payments (excluding
+      // voided) and reject if the running total would exceed the approved amount.
+      const priorSettled = (bill.payments || [])
+        .filter((p) => p.paymentMode === "TPA_CLAIM" && !p.voidedAt)
+        .reduce((acc, p) => acc + toN(p.amount), 0);
+      const cumulative = priorSettled + settledAmount;
+      const shortfall = Math.max(0, approved - cumulative);
+      const overpay   = Math.max(0, cumulative - approved);
 
       // Reject suspiciously large overpayments — likely a typo. Tiny
       // overpayments (≤ ₹10 rounding) we accept silently.
       if (overpay > 10) {
         const err = new Error(
-          `Settled amount ₹${settledAmount} exceeds approved ₹${approved} by ₹${overpay}. ` +
+          `Cumulative TPA settlement ₹${cumulative} (prior ₹${priorSettled} + this ₹${settledAmount}) exceeds approved ₹${approved} by ₹${overpay}. ` +
           `Re-approve the higher amount via /tpa-approve first, then settle.`,
         );
         err.status = 400; throw err;
@@ -3329,7 +3338,10 @@ exports.getHospitalGstRegister = async (req, res, next) => {
     // GSTR-1 net (outward − CDNR) was hand-computed by the accountant
     // every month. Now the API returns gross + reversed + net.
     const cnAggP = CreditNote.aggregate([
-      { $match: { creditNoteDate: { $gte: from, $lte: to } } },
+      // R9-FIX(R9-025): only APPROVED CNs reverse output tax in the register —
+      // PENDING_APPROVAL / REJECTED must not (maker-checker parity with the
+      // GSTR-1/3B exporters).
+      { $match: { creditNoteDate: { $gte: from, $lte: to }, status: "APPROVED" } },
       { $group: {
           _id: null,
           count:        { $sum: 1 },

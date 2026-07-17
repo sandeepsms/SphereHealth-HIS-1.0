@@ -835,16 +835,16 @@ class BillingService {
       item.netAmount = netAmount;
       item.taxAmount = taxAmount;
 
-      if (bill.paymentType === "TPA") {
-        const tpaLimit = item.tpaApprovedLimitPerUnit
-          ? toNum(item.tpaApprovedLimitPerUnit) * quantity
-          : lineTotal;
-        item.tpaPayableAmount = Math.min(tpaLimit, lineTotal);
-        item.patientPayableAmount = lineTotal - item.tpaPayableAmount;
-      } else {
-        item.tpaPayableAmount = 0;
-        item.patientPayableAmount = lineTotal;
-      }
+      // R9-FIX(R9-026): do NOT recompute the TPA split here. The old code read
+      // a NON-EXISTENT field (item.tpaApprovedLimitPerUnit), so tpaLimit always
+      // fell back to lineTotal → item.tpaPayableAmount = lineTotal and the
+      // patient co-pay was wiped to 0, billing the insurer the whole line above
+      // the approved cap. The bill pre-save hook (recalcTotals) is the single
+      // source of truth for the payer/patient split — it re-derives it from
+      // item.tpaPercent (percentage plans) or the preserved item.tpaPayableAmount
+      // (absolute approved cap, which must NOT change on a quantity edit).
+      // `lineTotal` above is now only used for the amount fields.
+      void lineTotal;
 
       await bill.save();
       return bill;
