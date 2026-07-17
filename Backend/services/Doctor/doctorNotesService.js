@@ -869,8 +869,32 @@ const updateDiagnosis = async (id, data, actor = {}) => {
   const diagFields = ["provisionalDiagnosis", "workingDiagnosis", "finalDiagnosis", "icd10Code", "icd10Description"];
   diagFields.forEach((f) => { if (data[f] !== undefined) $set[f] = data[f]; });
 
-  if (before.status === "signed") {
+  // R9-FIX(R9-065): amending a SIGNED (or already-amended) note is a legal-
+  // record change — it MUST carry a documented reason and leave an
+  // amendments[] trail entry (old→new). Previously this /diagnosis path
+  // rewrote a signed note silently: no reason, no trail, defeating the
+  // discipline the /amend route enforces.
+  let amendmentEntry = null;
+  if (before.status === "signed" || before.status === "amended") {
+    const reason = String(data.amendmentReason || data.reason || "").trim();
+    if (!reason) {
+      const error = new Error("An amendment reason is required to change a signed note's diagnosis (NABH IMS/HIC amendment rules).");
+      error.statusCode = 400;
+      error.code = "AMENDMENT_REASON_REQUIRED";
+      throw error;
+    }
+    const changes = diagFields
+      .filter((f) => data[f] !== undefined && String(data[f] ?? "") !== String(before[f] ?? ""))
+      .map((f) => ({ field: f, oldValue: before[f] ?? null, newValue: data[f] }));
     $set.status = "amended";
+    amendmentEntry = {
+      amendedAt:     new Date(),
+      amendedById:   (actor?.id || actor?._id) ? String(actor.id || actor._id) : undefined,
+      amendedByName: actor?.name || "",
+      amendedByRole: actor?.role || "",
+      reason,
+      changes,
+    };
   }
 
   const actorId = actor?.id || actor?._id;
@@ -888,6 +912,8 @@ const updateDiagnosis = async (id, data, actor = {}) => {
   }
 
   const updateOp = Object.keys($unset).length ? { $set, $unset } : { $set };
+  // R9-FIX(R9-065): append the amendment-trail entry for a signed-note change.
+  if (amendmentEntry) updateOp.$push = { amendments: amendmentEntry };
   // R7bo-LIVE-fix-v4: bypass Mongoose's cast pipeline entirely by
   // going to the raw collection. Mongoose's findOneAndUpdate ALWAYS
   // casts every field in $set against the schema and ALSO validates
