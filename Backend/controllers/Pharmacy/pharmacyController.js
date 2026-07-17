@@ -2782,18 +2782,13 @@ exports.applyAdvanceToSale = async (req, res) => {
     // and abort it immediately. If it throws "Transaction numbers are only
     // allowed on a replica set member or mongos", we're on standalone.
     const session = await mongoose.startSession().catch(() => null);
-    let useTx = false;
-    if (session) {
-      try {
-        session.startTransaction();
-        await session.abortTransaction();
-        useTx = true;
-      } catch (_) {
-        // standalone Mongo — transactions unsupported; fall back to the
-        // OCC + retryVersionError path below.
-        useTx = false;
-      }
-    }
+    // R9-FIX(R9-042): detect replica-set from the connection topology, NOT by
+    // probing with an empty start/abort transaction. On standalone Mongo the
+    // empty probe does NOT throw (no command is sent for a transaction with no
+    // operations), so useTx was set true and the REAL session.withTransaction
+    // (doApply) below then 500'd on EVERY apply. Transactions require a replica
+    // set / mongos — mirror the admissionService topology check.
+    const useTx = !!session && !!(session.client?.s?.options?.replicaSet || session.client?.options?.replicaSet);
 
     // R7hr-12-S3 (D4-08): hoisted receipt-number cache so retries don't burn
     // PHM-COLL counter sequences. Shared via closure with doApply() below.

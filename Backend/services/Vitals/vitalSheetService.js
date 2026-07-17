@@ -76,6 +76,18 @@ exports.saveVitalSheet = async (data) => {
     }),
   );
 
+  // R9-FIX(R9-059): merge-preserve instead of wholesale-replacing tableData.
+  // The old `$set: { tableData: resolvedTableData }` let a single POST overwrite
+  // (or blank out) a whole day's recorded vitals with the request payload — no
+  // append-only guarantee. Merge the incoming rows into the existing ones by
+  // `time` slot: a POST can ADD a new hour or UPDATE its own hour, but can no
+  // longer silently DROP hours it didn't send.
+  const existingSheet = await VitalSheet.findOne({ uhid, date: formattedDate }).select("tableData").lean();
+  const _byTime = new Map();
+  for (const row of (existingSheet?.tableData || [])) _byTime.set(String(row.time), row);
+  for (const row of resolvedTableData) _byTime.set(String(row.time), row);
+  const mergedTableData = Array.from(_byTime.values());
+
   const record = await VitalSheet.findOneAndUpdate(
     { uhid, date: formattedDate },
     {
@@ -91,7 +103,7 @@ exports.saveVitalSheet = async (data) => {
         departmentName: patient.department?.departmentName || "",
         admission: admissionId || null,
         activeVitals: activeVitals || [],
-        tableData: resolvedTableData,
+        tableData: mergedTableData,
       },
     },
     { new: true, upsert: true, setDefaultsOnInsert: true },
@@ -206,6 +218,17 @@ exports.deleteVitalSheet = async ({ uhid, date }) => {
   if (!uhid || !date) throw new Error("uhid and date are required");
 
   const formattedDate = formatDate(date);
+
+  // R9-FIX(R9-059): a vital sheet with recorded readings is a clinical record —
+  // refuse to hard-delete it (NABH record-retention). A row is "recorded" once a
+  // nurse is attributed (recordedBy). An empty/mistaken sheet may still be removed.
+  const existing = await VitalSheet.findOne({ uhid, date: formattedDate }).select("tableData").lean();
+  if (!existing) throw new Error("Record not found");
+  if ((existing.tableData || []).some((r) => r && r.recordedBy)) {
+    const e = new Error("Cannot delete a vital sheet that has recorded readings — it is a clinical record.");
+    e.status = 409; e.code = "VITAL_SHEET_HAS_DATA";
+    throw e;
+  }
 
   const deleted = await VitalSheet.findOneAndDelete({
     uhid,
