@@ -324,23 +324,35 @@ async function _bucketPatientBills(periodStart, periodEnd) {
     } else {
       // B2C aggregation by state + rate (GSTN allows one row per
       // place-of-supply/rate combo).
-      const k = `${placeOfSupply}-${dominantRate}`;
-      const cur = b2cMap.get(k) || {
-        placeOfSupply,
-        rate: dominantRate,
-        taxableValue: 0,
-        cgstAmount: 0,
-        sgstAmount: 0,
-        igstAmount: 0,
-        cessAmount: 0,
-        invoiceCount: 0,
-      };
-      cur.taxableValue += taxable;
-      cur.cgstAmount += cgst;
-      cur.sgstAmount += sgst;
-      cur.igstAmount += igst;
-      cur.invoiceCount += 1;
-      b2cMap.set(k, cur);
+      // R9-FIX(R9-032): split by the ACTUAL per-rate taxable (ratesByItem),
+      // not a single dominantRate. A mixed-rate hospital bill previously
+      // dumped its whole taxable under the dominant rate, misreporting GST per
+      // slab (R8 fixed this for pharmacy only, leaving hospital bills wrong).
+      const rateEntries = Object.entries(ratesByItem).filter(([, v]) => v > 0);
+      // Fallback: a bill with no per-item rate detail still books one row.
+      const entries = rateEntries.length ? rateEntries : [[String(dominantRate), taxable]];
+      for (const [rateStr, rateTaxable] of entries) {
+        const r = Number(rateStr);
+        const k = `${placeOfSupply}-${r}`;
+        const cur = b2cMap.get(k) || {
+          placeOfSupply, rate: r,
+          taxableValue: 0, cgstAmount: 0, sgstAmount: 0, igstAmount: 0, cessAmount: 0,
+          invoiceCount: 0,
+        };
+        cur.taxableValue += rateTaxable;
+        if (intraState) {
+          cur.cgstAmount += (rateTaxable * r) / 200;
+          cur.sgstAmount += (rateTaxable * r) / 200;
+        } else {
+          cur.igstAmount += (rateTaxable * r) / 100;
+        }
+        b2cMap.set(k, cur);
+      }
+      // Count the invoice once (against its dominant-rate bucket) so the b2c
+      // invoiceCount reflects invoices, not per-rate sub-rows.
+      const domKey = `${placeOfSupply}-${dominantRate}`;
+      if (b2cMap.has(domKey)) b2cMap.get(domKey).invoiceCount += 1;
+      else if (entries.length) { const [r0] = entries; const kk = `${placeOfSupply}-${Number(r0[0])}`; if (b2cMap.has(kk)) b2cMap.get(kk).invoiceCount += 1; }
     }
   }
   return { b2b, b2cl, b2c: [...b2cMap.values()], hsn: [...hsnMap.values()] };

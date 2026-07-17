@@ -638,9 +638,12 @@ PatientBillSchema.methods.recalcTotals = function () {
         tax    += tAmt;
         tpaPay += tpaShare;
         ptPay  += ptShare;
-      } else if (item.orderStatus !== "Cancelled") {
-        // Cancelled items contribute to NOTHING — pending bucket captures
-        // only Ordered + InProgress (the "coming soon" charges).
+      } else if (item.orderStatus !== "Cancelled" && !item.excludedByPackage) {
+        // R9-FIX(R9-028): a package-superseded per-line charge (bed/nursing/
+        // doctor-visit rolled into an ANH package) is NOT a "coming soon"
+        // order — it must not inflate pendingOrdersAmount. Previously such
+        // items fell into the pending bucket, so a package bill advertised
+        // phantom pending charges that were already absorbed by the package.
         pendingNet += lineTotal;
       }
     });
