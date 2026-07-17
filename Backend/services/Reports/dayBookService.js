@@ -99,9 +99,13 @@ async function computeDayBook(dayOrStart) {
     { $facet: {
         collections: [
           // Positive non-voided non-ADVANCE_ADJUSTMENT rows paid in window.
+          // R9-FIX(R9-095): exclude the synthetic VOID- reversal rows. The
+          // +X reversal of a rolled-back refund is already counted by the
+          // reversedRefunds leg — counting it here too double-booked cash-in.
           { $match: {
               _paidInWindow: true,
               "payments.voidedAt": { $exists: false },
+              "payments.transactionId": { $not: /^VOID-/ },
               _mode: { $ne: "ADVANCE_ADJUSTMENT" },
           } },
           { $match: { _amt: { $gt: 0 } } },
@@ -118,9 +122,14 @@ async function computeDayBook(dayOrStart) {
         ],
         billRefundsOut: [
           // Negative non-voided rows paid in window (real refunds STANDING).
+          // R9-FIX(R9-095): exclude the synthetic VOID- reversal rows. The
+          // -X reversal of a voided payment is already counted by the
+          // reversedPayments leg — counting it here too double-booked a
+          // single void as cash-out TWICE (netCashFlow off by 2x).
           { $match: {
               _paidInWindow: true,
               "payments.voidedAt": { $exists: false },
+              "payments.transactionId": { $not: /^VOID-/ },
               _amt: { $lt: 0 },
           } },
           { $group: {

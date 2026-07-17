@@ -762,12 +762,17 @@ exports.getTpaMis = async (req, res, next) => {
             null,
           ] },
           _approved: { $toDouble: { $ifNull: ["$tpaApprovedAmount", 0] } },
+          // R9-FIX(R9-097): sum ALL TPA_CLAIM rows (both signs), not just the
+          // positive ones. A voided remittance keeps its +X original (voidedAt
+          // set) AND a -X VOID- reversal; summing only amount>0 counted the
+          // voided receipt but not its reversal, overstating settledAmt so
+          // realizationPct could exceed 100%. Netting both signs cancels a void.
           _tpaPaid: { $reduce: {
             input: { $ifNull: ["$payments", []] },
             initialValue: 0,
             in: { $add: ["$$value", { $cond: [
-              { $and: [{ $eq: ["$$this.paymentMode", "TPA_CLAIM"] }, { $gt: [{ $toDouble: "$$this.amount" }, 0] }] },
-              { $toDouble: "$$this.amount" }, 0,
+              { $eq: ["$$this.paymentMode", "TPA_CLAIM"] },
+              { $toDouble: { $ifNull: ["$$this.amount", 0] } }, 0,
             ] }] },
           } },
       } },
@@ -932,6 +937,13 @@ exports.getArAging = async (req, res, next) => {
                       as: "p",
                       cond: { $and: [
                         { $not: ["$$p.voidedAt"] },
+                        // R9-FIX(R9-096): also exclude the synthetic VOID-
+                        // reversal rows. The old filter dropped the voided
+                        // +X original but KEPT its -X reversal, so _paid was
+                        // understated by the voided amount and a fully-paid
+                        // bill (payment voided then re-collected) resurfaced
+                        // as outstanding in AR aging.
+                        { $not: [{ $regexMatch: { input: { $ifNull: ["$$p.transactionId", ""] }, regex: "^VOID-" } }] },
                         { $lte: ["$$p.paidAt", asOf] },
                       ] },
                     },
