@@ -230,7 +230,13 @@ async function startupSelfTest() {
   for (const name of KNOWN_MODELS) {
     const Model = mongoose.modelNames().includes(name) ? mongoose.model(name) : null;
     if (!Model) { results.push({ name, ok: false, reason: 'model-not-registered' }); continue; }
-    try { await Model.find({}).limit(0).lean(); results.push({ name, ok: true }); }
+    // R9-FIX(R9-102): `.limit(1)`, NOT `.limit(0)`. In MongoDB a limit of 0
+    // means NO LIMIT — the old probe streamed all 12 collections in full into
+    // heap on every boot (a mature site: ~400k PatientBill + ~1.2M MAR rows),
+    // and index.js awaits this before serving, so it directly added minutes to
+    // startup and spiked memory. We only need to prove the model is registered
+    // and its collection is queryable — one document does that in O(1).
+    try { await Model.find({}).limit(1).lean(); results.push({ name, ok: true }); }
     catch (e) { results.push({ name, ok: false, reason: e.message }); }
   }
   return results;
