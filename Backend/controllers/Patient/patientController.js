@@ -47,8 +47,16 @@ exports.createPatient = async (req, res) => {
         conflictField,
       });
     }
-    const statusCode = error.message.includes("not found") ? 404 : 400;
-    res.status(statusCode).json({ success: false, message: error.message });
+    // R9-FIX(R9-005): honour an explicit error.status (e.g. the 409 duplicate
+    // guard) and surface its code + candidate matches so the desk can reuse the
+    // existing record.
+    const statusCode = error.status || (error.message.includes("not found") ? 404 : 400);
+    res.status(statusCode).json({
+      success: false,
+      message: error.message,
+      ...(error.code ? { code: error.code } : {}),
+      ...(error.candidates ? { candidates: error.candidates } : {}),
+    });
   }
 };
 

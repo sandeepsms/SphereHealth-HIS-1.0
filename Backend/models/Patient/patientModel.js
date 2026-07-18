@@ -268,17 +268,36 @@ PatientSchema.pre("save", async function (next) {
                 : "IPD";
       if (!this.patientId) {
         const idKey = `patientId:${prefix}:${year}`;
-        const seed  = await ensureSeed(idKey, async () =>
-          Patient.countDocuments({ registrationType: this.registrationType }),
-        );
+        // R9-FIX(R9-094): seed the counter from the NUMERIC high-water mark of
+        // existing ids, NOT countDocuments(). A count under-reports the moment
+        // any patient is deleted (or across gaps), so a reseed after a delete
+        // landed BELOW an already-issued number and the next id COLLIDED
+        // (E11000 on the unique index). Scan the same-prefix/year ids and reduce
+        // to the max parsed tail.
+        const seed  = await ensureSeed(idKey, async () => {
+          const rows = await Patient.find({ patientId: { $regex: `^${prefix}-${year}-` } })
+            .select({ patientId: 1 }).lean();
+          return rows.reduce((max, r) => {
+            const n = parseInt(String(r.patientId || "").split("-").pop(), 10);
+            return Number.isFinite(n) && n > max ? n : max;
+          }, 0);
+        });
         const seq = await nextSeqPatient(idKey, seed);
         this.patientId = `${prefix}-${year}-${String(seq).padStart(6, "0")}`;
       }
       if (!this.UHID) {
         const uhidKey = "uhid:global";
-        const seed    = await ensureSeed(uhidKey, async () =>
-          Patient.countDocuments(),
-        );
+        // R9-FIX(R9-094): same high-water-mark seed for the global UHID counter
+        // — countDocuments() under-counts after any delete and reseeded into a
+        // collision with a still-live UHID.
+        const seed    = await ensureSeed(uhidKey, async () => {
+          const rows = await Patient.find({ UHID: { $regex: "^UH\\d" } })
+            .select({ UHID: 1 }).lean();
+          return rows.reduce((max, r) => {
+            const n = parseInt(String(r.UHID || "").replace(/^UH/i, ""), 10);
+            return Number.isFinite(n) && n > max ? n : max;
+          }, 0);
+        });
         const seq = await nextSeqPatient(uhidKey, seed);
         // R7ha — UHID format: UH01, UH02, ..., UH99, UH100, UH101 (auto-grows).
         // Previously zero-padded to 8 digits (UH00000001) — admin readability

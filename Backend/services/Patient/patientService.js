@@ -30,6 +30,40 @@ class PatientService {
     delete patientData.UHID;
     delete patientData.patientId;
     delete patientData._id;
+
+    // R9-FIX(R9-005): demographic duplicate guard. Same phone AND same
+    // normalised name is very likely the SAME human — creating a fresh record
+    // fragments their clinical history across two UHIDs (and every downstream
+    // bill/order/note). Block with a 409 that carries the existing candidate(s)
+    // so the desk reuses that record. Deliberately STRICT (phone + name, not
+    // phone alone) so a genuine namesake on a shared household mobile still
+    // registers. Bypass with forceCreate:true for a real re-registration.
+    const forceCreate = patientData.forceCreate === true || patientData.forceCreate === "true";
+    delete patientData.forceCreate;
+    if (!forceCreate && patientData.contactNumber && patientData.fullName) {
+      const _normName = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+      const wantName = _normName(patientData.fullName);
+      if (wantName) {
+        const samePhone = await Patient.find({
+          contactNumber: String(patientData.contactNumber).trim(),
+          isActive: true,
+        }).select("UHID fullName contactNumber registrationType createdAt").lean();
+        const dupes = samePhone.filter((c) => _normName(c.fullName) === wantName);
+        if (dupes.length) {
+          const err = new Error(
+            `A patient with this name and phone already exists (UHID ${dupes.map((d) => d.UHID).join(", ")}). ` +
+            `Reuse the existing record, or resubmit with forceCreate:true to register a distinct new patient.`);
+          err.status = 409;
+          err.code = "DUPLICATE_PATIENT";
+          err.candidates = dupes.map((d) => ({
+            UHID: d.UHID, fullName: d.fullName, contactNumber: d.contactNumber,
+            registrationType: d.registrationType, registeredAt: d.createdAt,
+          }));
+          throw err;
+        }
+      }
+    }
+
     // Department/doctor are now optional at registration (Emergency walk-ins
     // and Services bills don't always have them pre-selected). Validate them
     // only when supplied.
@@ -68,15 +102,22 @@ class PatientService {
     const counterField = visitCounterField(patientData.registrationType);
     // R8-FIX(#49): do NOT pre-set the counter for types whose visit/admission
     // record $inc's it downstream (else it lands at 2): OPD(+doctor) →
-    // OPDService.createOPDVisit; Emergency → emergencyService; IPD/Daycare/
-    // Services → admissionService.createAdmission (now increments). Only
-    // OPD-without-doctor (no downstream incrementer) keeps the pre-set.
+    // OPDService.createOPDVisit; Emergency → emergencyService; IPD/Daycare →
+    // admissionService.createAdmission (increments). Only types with no
+    // downstream incrementer keep the pre-set.
+    // R9-FIX(R9-003): "Services" was wrongly included here — a Services
+    // registration is a pure walk-in (injection/dressing) that creates NO
+    // admission (confirmed: services flow has no admission), so
+    // createAdmission's Services increment NEVER fires for it. With the pre-set
+    // ALSO skipped, totalServicesVisits was stuck at 0 forever, under-reporting
+    // every services patient. Dropped it so the = 1 pre-set applies; a later
+    // explicit Services admission (a genuinely separate visit) still increments
+    // correctly to 2 via updateVisitCount.
     const counterSetDownstream =
       (patientData.registrationType === "OPD" && patientData.doctor) ||
       patientData.registrationType === "Emergency" ||
       patientData.registrationType === "IPD" ||
-      patientData.registrationType === "Daycare" ||
-      patientData.registrationType === "Services";
+      patientData.registrationType === "Daycare";
     if (counterField && !counterSetDownstream) {
       patientData[counterField] = 1;
     }
