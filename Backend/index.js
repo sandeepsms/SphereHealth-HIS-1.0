@@ -1335,6 +1335,22 @@ const _cancelNightlyMongoBackup = scheduleDaily("nightly-mongo-backup", 2, 30, a
   return await run({ mode: "nightly" });
 });
 
+// R9-FIX(R9-104): the nightly backup runs every day, but Docker/Linux deploys
+// had NO monthly (long-retention) tier — only the ~14-day nightly rotation on
+// the same host as the DB. runBackup already supports mode:"monthly" (separate
+// "monthly" subdir, BACKUP_MONTHLY_KEEP=24-month retention, same verified-
+// off-site push). Register a second in-process job that fires on the 1st IST:
+// scheduleDaily runs daily, so the fn early-returns on days 2-31 (mirrors
+// antibiogram-monthly-rollup). Staggered at 03:15 IST between the nightly
+// (02:30) and antibiogram (03:45) jobs to avoid contention.
+const _cancelMonthlyMongoBackup = scheduleDaily("monthly-mongo-backup", 3, 15, async () => {
+  const TZ = process.env.HOSPITAL_TZ || "Asia/Kolkata";
+  const D = Number(new Intl.DateTimeFormat("en-CA", { timeZone: TZ, day: "2-digit" }).format(new Date()));
+  if (D !== 1) return { skipped: "not 1st of month (IST)" };
+  const { run } = require("./scripts/backup/runBackup");
+  return await run({ mode: "monthly" });
+});
+
 // D16-fix — cron-failure retry sweeper. scheduleDaily records every failed
 // daily tick into the CronFailure queue (30/60/120-min backoff ladder) but
 // pre-D16 nothing replayed them. This drains the due rows every 5 min and
@@ -1366,6 +1382,7 @@ const _autoBillingInterval = {
     _cancelInfusionIntakeCron();            // R7bq-4
     _cancelMissedDoseCron();                // R7bq-J1
     _cancelNightlyMongoBackup();            // R7bx-2
+    _cancelMonthlyMongoBackup();            // R9-104
     _cancelRetrySweeper();                 // D16-fix — cron retry sweeper
   },
 };

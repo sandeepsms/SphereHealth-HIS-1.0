@@ -96,14 +96,27 @@ const HOUR_FMT = new Intl.DateTimeFormat("en-GB", {
   timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false,
 });
 
+// R9-FIX(R9-106): derive the UTC offset for TZ at a given instant instead of
+// hardcoding +05:30. The day-key already honours HOSPITAL_TZ, but the parse
+// offset did not — so a hospital deployed OUTSIDE India (HOSPITAL_TZ set to,
+// say, "Asia/Dubai" or "America/New_York") computed the right calendar day but
+// fired the cron at the wrong wall-clock time. `longOffset` yields "GMT+05:30" /
+// "GMT-05:00" / "GMT" for the zone at that date (so DST is honoured too).
+function tzOffsetAt(date) {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: TZ, timeZoneName: "longOffset" }).formatToParts(date);
+  const raw = parts.find((p) => p.type === "timeZoneName")?.value || "GMT+00:00";
+  const m = raw.match(/GMT([+-]\d{2}:\d{2})/);
+  return m ? m[1] : "+00:00"; // bare "GMT" → UTC
+}
+
 function nextRunAt(hourIST, minuteIST) {
-  // Compute the next UTC instant at which IST = HH:MM today or tomorrow.
+  // Compute the next UTC instant at which local (HOSPITAL_TZ) = HH:MM today or
+  // tomorrow. Anchors on the TZ calendar day-key + the TZ's own offset, so it
+  // works regardless of host TZ and for non-India deployments.
   const now = new Date();
-  // Build today's IST date-key, parse it with explicit +05:30 offset, then
-  // adjust hour/minute. Works regardless of host TZ because we anchor on
-  // the IST calendar.
   const istKey = DAY_KEY_FMT.format(now);                    // "2026-05-20"
-  const todayIST = new Date(`${istKey}T${String(hourIST).padStart(2,"0")}:${String(minuteIST).padStart(2,"0")}:00+05:30`);
+  const offset = tzOffsetAt(now);                            // TZ offset today, e.g. "+05:30"
+  const todayIST = new Date(`${istKey}T${String(hourIST).padStart(2,"0")}:${String(minuteIST).padStart(2,"0")}:00${offset}`);
   if (todayIST > now) return todayIST;
   // Already past today's slot — schedule for tomorrow.
   return new Date(todayIST.getTime() + 24 * 60 * 60 * 1000);

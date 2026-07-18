@@ -1150,12 +1150,27 @@ exports.getErRegister = async (req, res) => {
     // register rows are locked at disposition and carry the statutory
     // fields (mode/broughtBy/complaint/TAT minutes) the print needs.
     const EmergencyRegister = require("../../models/Compliance/EmergencyRegisterModel");
-    const rows = await EmergencyRegister.find({ arrivalAt: { $gte: from, $lte: to } })
-      .select("erNumber emergencyNumber arrivalAt modeOfArrival broughtBy patientName UHID age sex triageCategory presentingComplaint consultantIncharge isMLC mlcNumber disposition dispositionAt doorToDispositionMinutes")
-      .sort({ arrivalAt: 1 })
-      .limit(2000)
-      .lean();
-    res.json({ success: true, from, to, count: rows.length, data: rows });
+    // R9-FIX(R9-100): the register used a bare .limit(2000) with no total and no
+    // pagination — a busy ER with >2000 attendances in the window SILENTLY
+    // dropped the overflow, so the printed statutory (NABH) register was
+    // incomplete and no one could tell. Now page/limit are honoured and the TRUE
+    // total is returned, so the caller knows when to page (and the default still
+    // returns up to 2000 for backward-compat, but with `total` exposing any
+    // truncation instead of hiding it).
+    const filter = { arrivalAt: { $gte: from, $lte: to } };
+    const page  = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(2000, Math.max(1, parseInt(req.query.limit, 10) || 2000));
+    const skip  = (page - 1) * limit;
+    const [rows, total] = await Promise.all([
+      EmergencyRegister.find(filter)
+        .select("erNumber emergencyNumber arrivalAt modeOfArrival broughtBy patientName UHID age sex triageCategory presentingComplaint consultantIncharge isMLC mlcNumber disposition dispositionAt doorToDispositionMinutes")
+        .sort({ arrivalAt: 1 }).skip(skip).limit(limit).lean(),
+      EmergencyRegister.countDocuments(filter),
+    ]);
+    res.json({
+      success: true, from, to, count: rows.length, total, data: rows,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit), hasMore: skip + rows.length < total },
+    });
   } catch (e) { return sendErr(res, e); }
 };
 
@@ -1166,11 +1181,21 @@ exports.getDcRegister = async (req, res) => {
       ({ from, to } = parseHospitalDateRange(req.query.from, req.query.to, { defaultDays: 31, maxDays: 366 }));
     } catch (e) { return sendErr(res, e, "VALIDATION", e.status || 400); }
     const DayCareRegister = require("../../models/Compliance/DayCareRegisterModel");
-    const rows = await DayCareRegister.find({ createdAt: { $gte: from, $lte: to } })
-      .select("dcNumber UHID patientName age sex admissionNumber procedure doctor admittedAt dischargedAt checklistComplete readinessScore outcome remarks")
-      .sort({ createdAt: 1 })
-      .limit(2000)
-      .lean();
-    res.json({ success: true, from, to, count: rows.length, data: rows });
+    // R9-FIX(R9-100): same fix as getErRegister — expose the true total + honour
+    // page/limit so the Day-Care statutory register can't silently truncate.
+    const filter = { createdAt: { $gte: from, $lte: to } };
+    const page  = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(2000, Math.max(1, parseInt(req.query.limit, 10) || 2000));
+    const skip  = (page - 1) * limit;
+    const [rows, total] = await Promise.all([
+      DayCareRegister.find(filter)
+        .select("dcNumber UHID patientName age sex admissionNumber procedure doctor admittedAt dischargedAt checklistComplete readinessScore outcome remarks")
+        .sort({ createdAt: 1 }).skip(skip).limit(limit).lean(),
+      DayCareRegister.countDocuments(filter),
+    ]);
+    res.json({
+      success: true, from, to, count: rows.length, total, data: rows,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit), hasMore: skip + rows.length < total },
+    });
   } catch (e) { return sendErr(res, e); }
 };
