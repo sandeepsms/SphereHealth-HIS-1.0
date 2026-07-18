@@ -5018,6 +5018,9 @@ module.exports = {
   // Daily accrual + on-demand flush (admission discharge calls flushDailyChargesForAdmission)
   flushDailyChargesForAdmission,
   runDailyBedChargeAccrual,
+  // R9-FIX(R9-021): IST day-key helper — transferBed needs it to void the
+  // matching same-day BillingTrigger so re-accrual re-fires at the new tier.
+  getDateKey,
   // Retroactive backfill (bill creation calls this for active admissions)
   backfillAdmissionCharges,
   // ANH package matching (used by admin endpoints + admissionController)

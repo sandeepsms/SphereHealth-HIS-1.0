@@ -107,7 +107,35 @@ class EmergencyController {
 
   async getAllEmergencyVisits(req, res) {
     try {
-      const { page = 1, limit = 10, ...filters } = req.query;
+      const { page = 1, limit = 10 } = req.query;
+      // R9-FIX(R9-016): build the ER list filter from an explicit allowlist and
+      // coerce every value to a scalar. Previously `...filters` spread the raw
+      // req.query straight into Emergency.find(), so `?status[$ne]=x` or
+      // `?UHID[$regex]=.*` arrived as live Mongo operators — query-operator
+      // injection that bypasses the intended filter and can dump the full ER
+      // register. An object-typed value now collapses to undefined and is dropped.
+      const q = req.query || {};
+      const scalar = (v) => (v == null || typeof v === "object" ? undefined : String(v));
+      const filters = {};
+      for (const k of ["status", "triageCategory", "disposition", "UHID", "emergencyNumber", "mlcNumber"]) {
+        const v = scalar(q[k]);
+        if (v !== undefined && v !== "") filters[k] = v;
+      }
+      if (q.isMLC !== undefined) {
+        const v = scalar(q.isMLC);
+        if (v === "true" || v === "false") filters.isMLC = v === "true";
+      }
+      if (q.from || q.to) {
+        try {
+          const { parseHospitalDate } = require("../../utils/queryGuards");
+          const from = q.from ? parseHospitalDate(String(q.from)) : null;
+          const to = q.to ? parseHospitalDate(String(q.to), { endOfDay: true }) : null;
+          const range = {};
+          if (from) range.$gte = from;
+          if (to) range.$lte = to;
+          if (Object.keys(range).length) filters.arrivalDate = range;
+        } catch (_) { /* malformed date → no date filter (never a wide-open operator) */ }
+      }
       // R7az-D3-HIGH-3: push Doctor-scope into the DB query so the
       // count + pagination reflect ONLY the doctor's slice. Pre-R7az we
       // post-filtered the page in memory — pagination totals were the

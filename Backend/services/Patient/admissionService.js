@@ -740,6 +740,15 @@ class AdmissionService {
       if (admission.status === "Cancelled") return admission;
       throw new Error(`Cannot cancel — admission status is "${admission.status}"`);
     }
+    // R9-FIX(R9-023): a legal hold is a preservation obligation. The retention
+    // sweep honoured it, but cancel/soft-delete did not — so a hold could be
+    // quietly undone by cancelling the admission (which cascades bed release,
+    // order cancellation, bill voiding). Refuse hard, and NOT force-overridable:
+    // "force" is for operational cleanup, a legal hold outranks it.
+    if (admission.legalHold) {
+      const err = new Error(`Admission is under legal hold${admission.legalHoldReason ? ` (${admission.legalHoldReason})` : ""} and cannot be cancelled`);
+      err.status = 423; throw err;
+    }
 
     // Lazy loads to dodge circular requires (autoBilling/billing both
     // import this service in some code paths).
@@ -975,7 +984,12 @@ class AdmissionService {
 
     const run = async (s) => {
       const newBed = await Bed.findOneAndUpdate(
-        { _id: newBedId, status: "Available" },
+        // R9-FIX(R9-022): the dirty-bed guard was enforced on admit (L160) but
+        // MISSING from every transfer path — a patient could be moved onto a
+        // bed that was freed but not yet cleaned (housekeeping.state
+        // CleaningPending/InProgress), an infection-control breach the admit
+        // guard specifically prevents. Mirror the admit predicate here.
+        { _id: newBedId, status: "Available", "housekeeping.state": { $nin: ["CleaningPending", "CleaningInProgress"] } },
         { $set: { status: "Occupied", currentAdmission: admissionId } },
         { new: true, session: s || undefined },
       );
@@ -983,6 +997,9 @@ class AdmissionService {
       if (!newBed) {
         const check = await Bed.findById(newBedId).lean();
         if (!check) throw new Error("New bed not found");
+        const hk = check.housekeeping?.state;
+        if (check.status === "Available" && ["CleaningPending", "CleaningInProgress"].includes(hk))
+          throw new Error(`New bed ${check.bedNumber} is awaiting housekeeping (${hk}) — cannot transfer until cleaned`);
         throw new Error(
           `New bed ${check.bedNumber} is not available (status: ${check.status})`,
         );
@@ -1030,13 +1047,18 @@ class AdmissionService {
         let oldBedFreed = false;
         try {
           const newBed = await Bed.findOneAndUpdate(
-            { _id: newBedId, status: "Available" },
+            // R9-FIX(R9-022): mirror the admit-path dirty-bed guard on the
+            // no-transaction path too.
+            { _id: newBedId, status: "Available", "housekeeping.state": { $nin: ["CleaningPending", "CleaningInProgress"] } },
             { $set: { status: "Occupied", currentAdmission: admissionId } },
             { new: true },
           );
           if (!newBed) {
             const check = await Bed.findById(newBedId).lean();
             if (!check) throw new Error("New bed not found");
+            const hk = check.housekeeping?.state;
+            if (check.status === "Available" && ["CleaningPending", "CleaningInProgress"].includes(hk))
+              throw new Error(`New bed ${check.bedNumber} is awaiting housekeeping (${hk}) — cannot transfer until cleaned`);
             throw new Error(
               `New bed ${check.bedNumber} is not available (status: ${check.status})`,
             );
@@ -1089,6 +1111,19 @@ class AdmissionService {
       session?.endSession();
     }
 
+    // R9-FIX(R9-020): the billing re-tier (future-day bed-item re-stamp +
+    // same-day trigger void + package tier sync) is now a reusable method, so
+    // the handover-based transfer path (bedTransferController.completeHandover)
+    // gets it too. Previously a bed change performed via handover kept billing
+    // the OLD tariff/package tier — only this direct transferBed path re-tiered.
+    await this.reTierBillingAfterTransfer(admission, reason);
+    return admission;
+  }
+
+  // Re-tier billing after a bed move — shared by transferBed AND the handover
+  // completion path. `admission` must already be persisted with its new
+  // bedId/roomId/wardId; `reason` is stamped onto any voided triggers.
+  async reTierBillingAfterTransfer(admission, reason) {
     // ── R7bd-A-9 / A1-HIGH-10 — re-stamp future bed-day items ─────
     // After a bed transfer, if any Draft/Generated bill carries
     // bed-charge line items, the per-day price should change from the
@@ -1108,6 +1143,17 @@ class AdmissionService {
       const PatientBillM   = require("../../models/PatientBillModel/PatientBillModel");
       const today = new Date(); today.setHours(0, 0, 0, 0);
       const BED_PREFIXES = /^(BED-|IPD-RM-|IPD-ICU-|IPD-NUR-)/;
+      // R9-FIX(R9-021): getDateKey lets us void the SAME-DAY BillingTrigger that
+      // would otherwise block re-accrual. Bed-day charges keep a stable
+      // serviceCode across tiers (price comes from a per-category lookup), so
+      // the daily dedup — keyed on (admissionId, serviceCode, dateKey) — treats
+      // the OLD-tier trigger as "already charged today" and NEVER re-fires the
+      // new tier. Zeroing the bill item alone therefore lost that day's charge
+      // permanently. Collect each zeroed (serviceCode, dateKey) and void its
+      // matching trigger so the next accrual/flush re-charges at the new rate.
+      let getDateKey = null;
+      try { ({ getDateKey } = require("../../services/Billing/autoBillingService")); } catch (_) { /* voiding is best-effort */ }
+      const voidPairs = []; // [{ serviceCode, dateKey }]
       const bills = await PatientBillM.find({
         admission: admission._id,
         billStatus: { $in: ["DRAFT", "GENERATED"] },
@@ -1127,10 +1173,39 @@ class AdmissionService {
           item.quantity = 0;
           item.markModified?.("quantity");
           changed = true;
+          if (getDateKey && code) voidPairs.push({ serviceCode: code, dateKey: getDateKey(itemDate) });
         }
         if (changed) {
           try { await bill.save(); }
           catch (e) { console.warn("[transferBed] re-stamp save failed:", bill._id, e.message); }
+        }
+      }
+      // Void the exact (serviceCode, dateKey) triggers we just zeroed so the
+      // dedup no longer suppresses re-accrual. Match only triggers still in a
+      // dedup-blocking status; leave already-billed history untouched.
+      if (voidPairs.length) {
+        try {
+          const BillingTrigger = require("../../models/Billing/BillingTrigger");
+          const seen = new Set();
+          const or = [];
+          for (const p of voidPairs) {
+            const k = `${p.serviceCode}|${p.dateKey}`;
+            if (seen.has(k) || !p.dateKey) continue;
+            seen.add(k);
+            or.push({ serviceCode: p.serviceCode, dateKey: p.dateKey });
+          }
+          if (or.length) {
+            await BillingTrigger.updateMany(
+              {
+                admissionId: admission._id,
+                status: { $in: ["completed", "billed", "pending", "pending-review", "queued", "applied"] },
+                $or: or,
+              },
+              { $set: { status: "voided", voidReason: `Bed transfer re-tier (${reason || "transfer"})`, voidedAt: new Date() } },
+            );
+          }
+        } catch (e) {
+          console.warn("[transferBed] trigger void for re-accrual skipped:", e.message);
         }
       }
     } catch (e) {
@@ -1811,6 +1886,14 @@ class AdmissionService {
     if (admission.status === "Deleted") {
       // Idempotent — already soft-deleted.
       return { message: "Admission already deleted (soft)", admission };
+    }
+    // R9-FIX(R9-023): legal hold blocks soft-delete outright — even with
+    // force=true. A hold means the admission (and every artefact hanging off
+    // it) must be preserved and unaltered for litigation/audit; the retention
+    // sweep already skips held rows, so delete must too or the two disagree.
+    if (admission.legalHold) {
+      const err = new Error(`Admission is under legal hold${admission.legalHoldReason ? ` (${admission.legalHoldReason})` : ""} and cannot be deleted`);
+      err.status = 423; throw err;
     }
 
     // Probe blocking conditions if !force.

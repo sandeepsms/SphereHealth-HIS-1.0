@@ -350,6 +350,20 @@ class EmergencyService {
       // create a minimal Admission stub so the IPD bed-view + billing
       // ledger immediately see the patient under the new bed.
       if (dispositionData.admissionId) {
+        // R9-FIX(R9-017): never trust a caller-supplied admissionId blindly.
+        // Assigning it unchecked let this ER visit (and its downstream IPD
+        // billing/bed occupancy) be stapled onto ANOTHER patient's admission —
+        // a cross-patient linkage. Load it, assert it exists, is still active,
+        // and belongs to THIS patient before linking.
+        const Admission = require("../../models/Patient/admissionModel");
+        const adm = await Admission.findById(dispositionData.admissionId).select("patientId status").lean();
+        if (!adm) { const e = new Error("Linked admissionId does not exist"); e.status = 404; throw e; }
+        if (["Discharged", "Cancelled"].includes(adm.status)) {
+          const e = new Error(`Cannot link a ${adm.status} admission to this ER disposition`); e.status = 409; throw e;
+        }
+        if (String(adm.patientId) !== String(visit.patientId)) {
+          const e = new Error("Linked admission belongs to a different patient"); e.status = 403; throw e;
+        }
         visit.admission = dispositionData.admissionId;
       } else if (!visit.admission) {
         try {
@@ -718,10 +732,22 @@ class EmergencyService {
   // PUT /api/emergency/:emergencyNumber/triage — used by ER doctors / nurses
   // to upgrade or downgrade triage as the patient's condition evolves.
   async updateTriageCategory(emergencyNumber, triageCategory) {
+    // R9-FIX(R9-015): validate against the schema enum BEFORE writing. A bare
+    // findOneAndUpdate skips the required/enum validators unless runValidators
+    // is set, so an off-enum value (typo, tampered payload) silently persisted
+    // — corrupting the triage priority the whole ER board sorts and colour-codes
+    // on. Reject unknown categories with a 400 and enable runValidators as a
+    // defence-in-depth backstop.
+    const ALLOWED = ["Critical", "Emergency", "Urgent", "Semi-urgent", "Non-urgent"];
+    if (!ALLOWED.includes(String(triageCategory))) {
+      const err = new Error(`Invalid triageCategory "${triageCategory}" — expected one of: ${ALLOWED.join(", ")}`);
+      err.status = 400;
+      throw err;
+    }
     return Emergency.findOneAndUpdate(
       { emergencyNumber },
       { triageCategory, triageTime: new Date() },
-      { new: true },
+      { new: true, runValidators: true },
     );
   }
 }

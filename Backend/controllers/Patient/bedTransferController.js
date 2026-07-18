@@ -303,6 +303,24 @@ exports.completeHandover = async (req, res) => {
       });
     }
 
+    // R9-FIX(R9-020): re-tier billing for the new bed — future-day bed-item
+    // re-stamp + same-day trigger void + package tier sync. Previously this
+    // handover path mutated the bed/admission itself but never ran the billing
+    // follow-ups transferBed does, so a handover into a different-tier bed kept
+    // billing the OLD tariff/package tier indefinitely. Best-effort: the
+    // handover has already committed, so a re-tier hiccup must not 500 it.
+    try {
+      if (admission) {
+        const admissionService = require("../../services/Patient/admissionService");
+        await admissionService.reTierBillingAfterTransfer(
+          admission,
+          transfer.reason || "Bed Transfer with Handover",
+        );
+      }
+    } catch (e) {
+      console.warn("[BedTransfer] post-handover billing re-tier skipped:", e.message);
+    }
+
     res.json({
       success: true,
       message: "Handover complete — patient bed updated successfully.",
