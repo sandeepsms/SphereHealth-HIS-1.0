@@ -1302,7 +1302,10 @@ export function DischargeSummaryPageContent({ selectedPatient }) {
           // latest-per-panel narrative built above if it is empty / unavailable.
           let adminParagraph = "";
           try {
-            const ai = await axios.get(`${API_ENDPOINTS.BASE}/admission-investigations`, { params: { uhid: found.UHID, admissionId: found._id }, headers });
+            // R9-FIX(R9-056): a discharge summary is a finalized document — only
+            // released (VERIFIED) results belong in it; verifiedOnly drops draft
+            // labs / unverified imaging that the live panel may still preview.
+            const ai = await axios.get(`${API_ENDPOINTS.BASE}/admission-investigations`, { params: { uhid: found.UHID, admissionId: found._id, verifiedOnly: 1 }, headers });
             adminParagraph = (ai?.data?.data?.paragraph || "").trim();
           } catch (_) { /* fall back to narrLines */ }
           // R7hr(LAB-FU) — chronological range-aware paragraph leads; the

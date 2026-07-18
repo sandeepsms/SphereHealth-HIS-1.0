@@ -44,7 +44,11 @@ const REPORT_TYPE_LABEL = {
  * @param {{ uhid?:string, admissionId?:string }} q
  * @returns {{ paragraph:string, days:Array, trends:Array, counts:object, window:object }}
  */
-async function getAdmissionInvestigations({ uhid, admissionId } = {}) {
+async function getAdmissionInvestigations({ uhid, admissionId, verifiedOnly = false } = {}) {
+  // R9-FIX(R9-056): when verifiedOnly (the discharge-summary path passes this),
+  // include ONLY released/VERIFIED results — a finalized discharge summary must
+  // not bake in draft (unverified) lab values or draft imaging reports. The live
+  // patient panel keeps its default (COMPLETED shown) for preliminary review.
   const empty = { paragraph: "", days: [], trends: [], counts: { orders: 0, panels: 0, reports: 0, days: 0 }, window: null };
   let UHID = String(uhid || "").toUpperCase();
   if (!UHID && !admissionId) return empty;
@@ -91,7 +95,8 @@ async function getAdmissionInvestigations({ uhid, admissionId } = {}) {
   // InvestigationOrder — only completed / verified items
   for (const o of orders) {
     for (const it of (o.items || [])) {
-      if (!["COMPLETED", "VERIFIED"].includes(it.resultStatus)) continue;
+      const _ok = verifiedOnly ? it.resultStatus === "VERIFIED" : ["COMPLETED", "VERIFIED"].includes(it.resultStatus);
+      if (!_ok) continue;
       const date = it.resultEnteredAt || it.verifiedAt || o.createdAt;
       const vals = (it.results || [])
         .map((r) => `${r.parameterName} ${r.value}${r.unit ? " " + r.unit : ""}${r.isAbnormal ? " (abn)" : ""}`)
@@ -102,6 +107,7 @@ async function getAdmissionInvestigations({ uhid, admissionId } = {}) {
 
   // LabReport — narrative imaging / micro / histopath
   for (const r of labReports) {
+    if (verifiedOnly && r.status !== "verified") continue; // R9-FIX(R9-056)
     const label = REPORT_TYPE_LABEL[r.reportType] || (r.reportType || "Report");
     const finding = (r.impression || r.findings || r.organism || "reported").toString().replace(/\s+/g, " ").trim();
     pushEvent(r.reportDate, `${r.testName} (${label})`, finding.slice(0, 200), "report");
@@ -110,6 +116,7 @@ async function getAdmissionInvestigations({ uhid, admissionId } = {}) {
   // LabTrend — per-reading data points (the multi-day source) + trend feed
   const trendMap = new Map(); // "Hb (g/dL)" -> [{date,value}]
   for (const t of labTrends) {
+    if (verifiedOnly && t.status !== "verified") continue; // R9-FIX(R9-056)
     const panel = (t.panelName || t.panelType || "Lab panel").toString();
     const byDay = new Map(); // dayKey -> { date, parts:[] }
     for (const test of (t.tests || [])) {

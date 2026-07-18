@@ -57,10 +57,14 @@ class InvestigationOrderService {
       throw new Error("At least one investigation is required");
 
     const orderItems = [];
+    const skipped = []; // R9-FIX(R9-053): surface, don't silently drop
 
     for (const item of items) {
-      const inv = await InvestigationMaster.findById(item.investigationId);
-      if (!inv || !inv.isActive) continue;
+      const inv = await InvestigationMaster.findById(item.investigationId).catch(() => null);
+      if (!inv || !inv.isActive) {
+        skipped.push({ investigationId: String(item.investigationId || ""), reason: !inv ? "not found" : "inactive" });
+        continue;
+      }
 
       // Determine where test will be performed
       let performedAt = item.performedAt || "INTERNAL";
@@ -92,6 +96,14 @@ class InvestigationOrderService {
       });
     }
 
+    // R9-FIX(R9-053): reject the whole order if ANY requested test was invalid,
+    // rather than silently creating a partial order. A dropped test the
+    // clinician believes was ordered is a patient-safety gap.
+    if (skipped.length) {
+      const e = new Error(`Some investigations could not be ordered (inactive or unknown): ${skipped.map((s) => s.investigationId).join(", ")}. Remove them and retry.`);
+      e.code = "INVALID_INVESTIGATIONS"; e.status = 400; e.skipped = skipped;
+      throw e;
+    }
     if (!orderItems.length) throw new Error("No valid investigations found");
 
     const order = await InvestigationOrder.create({
@@ -260,6 +272,13 @@ class InvestigationOrderService {
     if (!n) { const err = new Error("No eligible sample items to reject"); err.status = 400; throw err; }
 
     order.actionLog.push({ action: "SAMPLE_REJECTED", performedBy: rejectedBy || "Lab Staff", performedAt: now, remarks: `${n} item(s): ${rejectionReason}` });
+    // R9-FIX(R9-050): a reject that reopened items (resultStatus → PENDING) means
+    // the order is no longer COMPLETED — pull the header back so the reopened
+    // test shows as outstanding work, not a released order with a pending item.
+    if (order.orderStatus === "COMPLETED" && order.items.some((it) => it.resultStatus === "PENDING")) {
+      order.orderStatus = "IN_PROGRESS";
+      order.completedAt = null;
+    }
     // R8-FIX(#23): NABL/ISO 15189 7.2.6 — rejecting a compromised specimen AFTER
     // results were drafted must re-open the item for recollection (resultStatus
     // COMPLETED/IN_PROGRESS → PENDING). That reopen is not in the strict LabResult
@@ -454,15 +473,20 @@ class InvestigationOrderService {
   ) {
     const order = await InvestigationOrder.findById(orderId);
     if (!order) throw new Error("Order not found");
+    if (order.orderStatus === "CANCELLED") { const e = new Error("Cannot enter results for a cancelled order"); e.status = 409; throw e; } // R9-FIX(R9-055)
 
     const item = order.items.id(itemId);
     if (!item) throw new Error("Test item not found");
     if (item.performedAt !== "EXTERNAL")
       throw new Error("This test is not external");
+    if (item.resultStatus === "VERIFIED") { const e = new Error("This result is verified (released) — correct it via the amendment path, not a re-entry"); e.code = "NOT_VERIFIED"; e.status = 409; throw e; } // R9-FIX(R9-055)
 
-    item.externalLabName = externalLabName || item.externalLabName;
-    item.externalReportRef = externalReportRef || "";
-    item.interpretation = interpretation || "";
+    // R9-FIX(R9-055): only overwrite fields that were actually supplied. A
+    // partial update (e.g. only externalLabName) must not BLANK a previously
+    // recorded externalReportRef / interpretation.
+    if (externalLabName !== undefined)   item.externalLabName   = externalLabName || item.externalLabName;
+    if (externalReportRef !== undefined) item.externalReportRef = externalReportRef;
+    if (interpretation !== undefined)    item.interpretation    = interpretation;
     item.resultStatus = "COMPLETED";
     item.resultEnteredBy = enteredBy || "Staff";
     item.resultEnteredAt = new Date();
@@ -471,8 +495,16 @@ class InvestigationOrderService {
       action: "EXTERNAL_RESULT_ATTACHED",
       performedBy: enteredBy || "Staff",
       performedAt: new Date(),
-      remarks: `From ${externalLabName}`,
+      remarks: `From ${externalLabName || item.externalLabName || "external lab"}`,
     });
+
+    // R9-FIX(R9-051): advance the header so an all-EXTERNAL order can be
+    // verified. Previously the header stayed PENDING and verifyResults' direct
+    // PENDING→COMPLETED flip 409'd ILLEGAL_TRANSITION — outside-lab orders
+    // could never be released. Mirror enterResults.
+    if (["PENDING", "SAMPLE_COLLECTED"].includes(order.orderStatus)) {
+      order.orderStatus = "IN_PROGRESS";
+    }
 
     await order.save();
     return this._populate(order._id);
@@ -539,23 +571,23 @@ class InvestigationOrderService {
 
   // ── MARK PRINTED ──────────────────────────────────────────────
   async markReportPrinted(orderId, { printedBy }) {
-    const order = await InvestigationOrder.findByIdAndUpdate(
-      orderId,
-      {
-        reportPrintedAt: new Date(),
-        reportPrintedBy: printedBy || "Staff",
-        $push: {
-          actionLog: {
-            action: "REPORT_PRINTED",
-            performedBy: printedBy || "Staff",
-            performedAt: new Date(),
-          },
-        },
-      },
-      { new: true },
-    );
+    const order = await InvestigationOrder.findById(orderId);
     if (!order) throw new Error("Order not found");
-    return order;
+    // R9-FIX(R9-054): a lab report may only be released/printed once EVERY item
+    // is VERIFIED (pathologist sign-off). Previously findByIdAndUpdate stamped
+    // reportPrinted with no gate, so a Lab Tech could release a draft report
+    // with unverified/unsigned results (NABL / ISO 15189 release control).
+    const unverified = (order.items || []).filter((i) => i.resultStatus !== "VERIFIED");
+    if (unverified.length) {
+      const e = new Error(`Cannot release the report — ${unverified.length} result(s) not yet VERIFIED by a pathologist.`);
+      e.code = "NOT_VERIFIED"; e.status = 409;
+      throw e;
+    }
+    order.reportPrintedAt = new Date();
+    order.reportPrintedBy = printedBy || "Staff";
+    order.actionLog.push({ action: "REPORT_PRINTED", performedBy: printedBy || "Staff", performedAt: new Date() });
+    await order.save();
+    return this._populate(order._id);
   }
 
   // ── CANCEL ────────────────────────────────────────────────────
