@@ -32,7 +32,10 @@ const { toNum } = require("../../utils/money");
 // — the netting happens inside aggregateGSTForMonth.)
 
 const HOSPITAL_GSTIN = process.env.HOSPITAL_GSTIN || "";
-const HOSPITAL_STATE_CODE = process.env.HOSPITAL_STATE_CODE || "29";
+// R9-FIX(R9-033): normalise via the shared canonicaliser so GSTR-3B agrees with
+// GSTR-1 on the hospital's 2-digit code ("29-Karnataka" → "29").
+const { normalizeGstStateCode } = require("../../utils/gstState");
+const HOSPITAL_STATE_CODE = normalizeGstStateCode(process.env.HOSPITAL_STATE_CODE || "") || "29";
 
 function _parsePeriodToRange(period) {
   if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)) {

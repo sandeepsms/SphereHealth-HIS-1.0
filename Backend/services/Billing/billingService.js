@@ -426,12 +426,19 @@ class BillingService {
   // encounter's own in-progress bill.
   async getPreviousPendingDues(UHID, { excludeVisitId, excludeAdmissionId } = {}) {
     const { toNum } = require("../../utils/money");
+    // R9-FIX(R9-006): push the balance filter INTO the query. Previously the
+    // .limit(200) capped the 200 NEWEST DRAFT/GENERATED/PARTIAL bills and only
+    // THEN filtered for balance > 0 in memory — so a patient with >200 bills in
+    // those statuses could have genuinely-pending OLD dues silently dropped off
+    // the bottom (registration/billing would under-warn the biller). Filtering
+    // on balanceAmount first means the cap now applies to actually-pending rows.
     const bills = await PatientBill.find({
       UHID,
       billStatus: { $in: ["DRAFT", "GENERATED", "PARTIAL"] },
+      balanceAmount: { $gt: 0.5 },
     }).sort({ createdAt: -1 }).limit(200).lean();
     const pending = bills.filter((b) => {
-      if (toNum(b.balanceAmount) <= 0.5) return false;
+      if (toNum(b.balanceAmount) <= 0.5) return false; // belt-and-suspenders (Decimal128 rounding)
       if (excludeVisitId && b.visitId && String(b.visitId) === String(excludeVisitId)) return false;
       if (excludeAdmissionId && b.admission && String(b.admission) === String(excludeAdmissionId)) return false;
       return true;

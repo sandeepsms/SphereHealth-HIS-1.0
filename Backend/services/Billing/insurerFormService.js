@@ -232,10 +232,18 @@ async function generateStandardClaimPdf(claim) {
   // ── bill breakup ──
   b.sectionTitle("Bill Break-up (as per final hospital bill)");
   const rows = (claim.billBreakup || []).map((x) => [x.name, String(x.items || ""), inr(x.amount)]);
+  // R9-FIX(R9-039): the footer used to print t.gross, but each row's Amount is
+  // the head's per-item netAmount (net-of-discount, pre-tax), so the column
+  // summed to gross-minus-discount and NEVER matched the printed "TOTAL (Gross)"
+  // — an insurer reconciling the claim form would flag the mismatch. Print the
+  // actual arithmetic sum of the shown column (reconciles by construction) and
+  // label it for what it is; the Discount / Tax / Net Payable fields just below
+  // let the reader bridge to the gross and final payable.
+  const breakupSum = (claim.billBreakup || []).reduce((s, x) => s + (Number(x.amount) || 0), 0);
   b.table(
     [{ header: "Head", width: 300 }, { header: "Items", width: 80, align: "right" }, { header: "Amount", width: 135, align: "right" }],
     rows.length ? rows : [["No billable items", "", inr(0)]],
-    { footer: ["TOTAL (Gross)", "", inr(t.gross || t.net)] }
+    { footer: ["TOTAL (Net of Discount, pre-tax)", "", inr(breakupSum)] }
   );
   b.gap(2);
   b.field2("Discount", inr(t.discount), "Tax (GST)", inr(t.tax), { labelW: 95 });

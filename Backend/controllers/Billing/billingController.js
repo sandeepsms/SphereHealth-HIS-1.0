@@ -2199,6 +2199,20 @@ exports.tpaDeny = async (req, res, next) => {
         const err = new Error(`Cannot deny — claim is in '${b.tpaClaimStatus}' state`);
         err.status = 409; throw err;
       }
+      // R9-FIX(R9-036): the status guard alone is ineffective for the very case
+      // its comment claims to fix. Settlement doesn't change tpaClaimStatus — an
+      // APPROVED claim stays "APPROVED" after the insurer remits — so an already
+      // SETTLED claim (a positive TPA_CLAIM payment on the bill) still passed the
+      // guard and deny wiped tpaApprovedAmount, orphaning real money received.
+      // Block deny outright once any TPA remittance has landed.
+      const { toNum: _toNumDeny } = require("../../utils/money");
+      const _tpaSettled = (b.payments || []).some(
+        (p) => p.paymentMode === "TPA_CLAIM" && _toNumDeny(p.amount) > 0,
+      );
+      if (_tpaSettled) {
+        const err = new Error("Cannot deny — the TPA has already remitted against this claim (settled). Reverse the TPA payment first.");
+        err.status = 409; throw err;
+      }
       _priorTpa     = b.tpaClaimStatus;
       _priorApprAmt = Number(b.tpaApprovedAmount || 0);
       b.tpaClaimStatus = "REJECTED";
@@ -2472,10 +2486,20 @@ exports.tpaSettle = async (req, res, next) => {
             }
             bill.markModified("billItems");
           } else {
-            bill.extraDiscount = priorExtra + shortfall;
-            bill.extraDiscountReason = (bill.extraDiscountReason || "") +
-              ` | TPA short-pay ₹${shortfall.toFixed(2)} (no per-line split — collected from patient at desk)`;
-            bill.extraDiscountBy = settledBy;
+            // R9-FIX(R9-037): shortfallTo=PATIENT with NO per-line TPA share to
+            // move used to add the shortfall to extraDiscount — but
+            // extraDiscount REDUCES the patient's payable (recalcTotals: net =
+            // gross - disc + tax - extra), so "route to patient" silently became
+            // a WRITE-OFF (revenue quietly lost) despite the remark claiming it
+            // was "collected from patient at desk". There is no bill-level
+            // surcharge lever (recalcTotals re-derives patientPayable from the
+            // line items, so a direct bump would revert on next save), so we
+            // cannot honestly raise the patient share here. Reject and make the
+            // operator choose the correct route.
+            const err = new Error(
+              "Bill has no per-line TPA split — the shortfall cannot be routed to the patient. " +
+              "Re-settle with shortfallTo=WRITEOFF to absorb it, or correct the bill's per-line TPA split first.");
+            err.status = 400; throw err;
           }
           bill.tpaClaimStatus = "PARTIAL_APPROVED";
           bill.remarks = (bill.remarks || "") +

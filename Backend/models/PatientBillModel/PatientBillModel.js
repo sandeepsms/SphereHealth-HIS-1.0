@@ -1,5 +1,9 @@
 const mongoose = require("mongoose");
 const { toNum, toDec, decimalToNumber } = require("../../utils/money");
+// R9-FIX(R9-033): shared GST state-code canonicaliser so recalcTotals decides
+// CGST/SGST-vs-IGST with the SAME normalisation gstr1Exporter uses (was raw
+// string compare here → "29-Karnataka" mis-classified as inter-state).
+const { sameGstState } = require("../../utils/gstState");
 const Dec = mongoose.Schema.Types.Decimal128;
 
 // ═══════════════════════════════════════════════════════════════
@@ -587,8 +591,10 @@ PatientBillSchema.methods.recalcTotals = function () {
       // IGST — register/snapshot under-reports inter-state IGST.
       const _hosp = (this.constructor?.HOSPITAL_STATE_CODE || process.env.HOSPITAL_STATE_CODE || "").trim();
       const _legacyIgst = this.igstAmount != null && Number(this.igstAmount.toString ? this.igstAmount.toString() : this.igstAmount) > 0;
+      // R9-FIX(R9-033): normalise both sides (was a raw `!==` compare, so
+      // "29" vs "29-KA" vs "Karnataka" all read as inter-state).
       const _isInterState =
-        (_hosp && this.placeOfSupply && String(this.placeOfSupply).trim() !== _hosp) ||
+        (_hosp && this.placeOfSupply && !sameGstState(this.placeOfSupply, _hosp, { defaultIntra: true })) ||
         _legacyIgst;
       if (_isInterState) {
         item.cgstAmount = toDec(0);
@@ -680,7 +686,9 @@ PatientBillSchema.methods.recalcTotals = function () {
     // R7ap-F35: aggregate item-level CGST/SGST/IGST into bill-level fields.
     // Driven by placeOfSupply (set above per-item). Used by GSTR-1 export.
     const _hosp = process.env.HOSPITAL_STATE_CODE || "";
-    const _isInter = _hosp && this.placeOfSupply && String(this.placeOfSupply).trim() !== _hosp;
+    // R9-FIX(R9-033): normalise both sides (bill-level GST split — mirrors the
+    // per-item decision above).
+    const _isInter = _hosp && this.placeOfSupply && !sameGstState(this.placeOfSupply, _hosp, { defaultIntra: true });
     if (_isInter) {
       this.cgstAmount = toDec(0);
       this.sgstAmount = toDec(0);
@@ -690,6 +698,24 @@ PatientBillSchema.methods.recalcTotals = function () {
       this.sgstAmount = toDec(tax / 2);
       this.igstAmount = toDec(0);
     }
+  } else {
+    // R9-FIX(R9-027): when the bill has NO items, the aggregation block above
+    // is skipped and every total (gross/discount/tax/tpa/net/patientPayable/
+    // roundOff/pendingOrders/GST split) kept its STALE pre-emptying value. A
+    // bill whose items were all removed therefore still advertised a phantom
+    // balance due (the balance calc below reads patientPayableAmount). Zero the
+    // whole totals block so an itemless bill reads ₹0 across the board.
+    this.grossAmount          = toDec(0);
+    this.totalDiscount        = toDec(0);
+    this.taxAmount            = toDec(0);
+    this.tpaPayableAmount     = toDec(0);
+    this.patientPayableAmount = toDec(0);
+    this.roundOffAmount       = toDec(0);
+    this.netAmount            = toDec(0);
+    this.pendingOrdersAmount  = toDec(0);
+    this.cgstAmount           = toDec(0);
+    this.sgstAmount           = toDec(0);
+    this.igstAmount           = toDec(0);
   }
 
   // Recalculate balance. Payment rows can be negative (refunds), so totalPaid
