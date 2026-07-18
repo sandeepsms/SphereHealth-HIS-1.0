@@ -107,8 +107,12 @@ async function discoverForDemographics(identifiers = {}) {
   const all = [...(identifiers.verifiedIdentifiers || []), ...(identifiers.unverifiedIdentifiers || [])];
   const byType = (t) => all.find((i) => String(i.type || "").toUpperCase() === t)?.value;
 
-  const abhaAddr = byType("ABHA_ADDRESS") || identifiers.id || "";
-  const mobile = byType("MOBILE") || byType("MR") || "";
+  // R9-FIX(R9-079): coerce every identifier to a string before it reaches a
+  // query. The callback body is attacker-controlled, so a value like
+  // {"$ne": null} would otherwise become a Mongo operator (match any patient →
+  // demographic disclosure). String() renders an object harmlessly.
+  const abhaAddr = String(byType("ABHA_ADDRESS") || identifiers.id || "");
+  const mobile = String(byType("MOBILE") || byType("MR") || "");
 
   let patient = null;
   if (abhaAddr) patient = await Patient.findOne({ abhaAddress: abhaAddr }).lean();

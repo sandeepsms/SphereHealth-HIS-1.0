@@ -61,7 +61,11 @@ AbdmConsentArtefactSchema.index({ status: 1, expiry: 1 });
 
 /** True when this artefact currently authorises a data pull. */
 AbdmConsentArtefactSchema.methods.isActive = function (now = new Date()) {
-  return this.status === "GRANTED" && (!this.expiry || this.expiry > now);
+  // R9-FIX(R9-077): fail CLOSED when no expiry is set. Previously `!this.expiry`
+  // made a consent that omitted dataEraseAt authorise pulls FOREVER. A granted
+  // consent must carry an explicit expiry (the controller now derives it from
+  // permission.dataEraseAt || permission.dateRange.to at grant time).
+  return this.status === "GRANTED" && !!this.expiry && this.expiry > now;
 };
 
 module.exports =

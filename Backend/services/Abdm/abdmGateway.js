@@ -93,9 +93,40 @@ const onConsentNotify   = (p) => gwPost("/v0.5/consents/hip/on-notify", p, { kin
 const onHiRequest       = (p) => gwPost("/v0.5/health-information/hip/on-request", p, { kind: "HI_REQUEST" });
 const hiNotify          = (p) => gwPost("/v0.5/health-information/notify", p, { kind: "HI_TRANSFER" });
 
+// R9-FIX(R9-078/R9-086): SSRF guard for the HIU-supplied absolute dataPushUrl.
+// The URL comes straight off the ABDM callback body and is fetched — without
+// validation an attacker (esp. combined with the R9-085 unauth callback) could
+// point it at an internal service or the cloud metadata endpoint. Require https
+// (http only in sandbox), block loopback/private/link-local hosts, and honour
+// an optional strict host allowlist.
+function _assertSafePushUrl(rawUrl) {
+  let u;
+  try { u = new URL(String(rawUrl)); }
+  catch { const e = new Error("dataPushUrl is not a valid absolute URL"); e.status = 400; throw e; }
+  const allowHttp = ABDM.env !== "prod";
+  if (!(u.protocol === "https:" || (allowHttp && u.protocol === "http:"))) {
+    const e = new Error(`dataPushUrl scheme '${u.protocol}' not allowed`); e.status = 400; throw e;
+  }
+  const host = u.hostname.toLowerCase();
+  const allow = String(process.env.ABDM_HIU_PUSH_HOST_ALLOWLIST || "")
+    .split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  if (allow.length && !allow.includes(host)) {
+    const e = new Error(`dataPushUrl host '${host}' not in ABDM_HIU_PUSH_HOST_ALLOWLIST`); e.status = 400; throw e;
+  }
+  const blocked =
+    host === "localhost" || host === "0.0.0.0" || host === "::1" ||
+    /^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(host) || /^169\.254\./.test(host) ||
+    /^::ffff:127\./.test(host) || /^fe80:/i.test(host) || /^fc00:/i.test(host) || /^fd[0-9a-f]{2}:/i.test(host);
+  if (blocked) {
+    const e = new Error(`dataPushUrl host '${host}' is a private/loopback address (SSRF blocked)`); e.status = 400; throw e;
+  }
+}
+
 // ── health-information data push (to the HIU's absolute dataPushUrl) ─
 async function hiDataPush(dataPushUrl, payload) {
   _assertEnabled();
+  _assertSafePushUrl(dataPushUrl);
   const res = await _fetch(dataPushUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

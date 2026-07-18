@@ -35,12 +35,15 @@ function abdmSignature(req, res, next) {
     return res.status(503).json({ error: { code: "ABDM_DISABLED", message: "ABDM integration disabled" } });
   }
 
+  // R9-FIX(R9-085): fail CLOSED whenever ABDM is enabled but the callback HMAC
+  // secret is unset — regardless of env. The old sandbox bypass (env !== "prod"
+  // → next()) meant that the moment ABDM was switched on for the NHA sandbox /
+  // M1–M4 certification without ABDM_CALLBACK_HMAC_SECRET, an anonymous internet
+  // caller could forge a GRANTED consent artefact and have the HIS encrypt a
+  // patient's full FHIR chart to the attacker's key + URL. Enabled-without-secret
+  // is a misconfiguration, not a "sandbox convenience" — 503 until it is set.
   if (!ABDM.callbackHmacSecret) {
-    if (ABDM.env === "prod") {
-      return res.status(503).json({ error: { code: "ABDM_HMAC_NOT_CONFIGURED", message: "Callback HMAC secret required in production" } });
-    }
-    console.warn("[abdmSignature] no ABDM_CALLBACK_HMAC_SECRET set — allowing callback (sandbox only).");
-    return next();
+    return res.status(503).json({ error: { code: "ABDM_HMAC_NOT_CONFIGURED", message: "ABDM_CALLBACK_HMAC_SECRET is required to accept signed callbacks (set it before enabling ABDM)." } });
   }
 
   const provided = req.get("X-HMAC") || req.get("x-hmac") || "";

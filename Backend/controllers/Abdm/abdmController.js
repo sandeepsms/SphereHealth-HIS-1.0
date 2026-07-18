@@ -94,6 +94,14 @@ exports.consentHipNotify = async (req, res) => {
   try {
     const d = n.consentDetail || {};
     if (n.consentId && n.status === "GRANTED") {
+      // R9-FIX(R9-077): a granted consent MUST carry an expiry (isActive now
+      // fails closed without one). Derive it from dataEraseAt, falling back to
+      // the permission window's `to`; reject a grant that binds neither.
+      const _expiry = d.permission?.dataEraseAt || d.permission?.dateRange?.to || null;
+      if (!_expiry) {
+        await _journal({ kind: "CONSENT_NOTIFY", direction: "INBOUND", status: "ERROR", requestId: b.requestId, endpoint: "consents/hip/notify", error: "consent has no dataEraseAt or dateRange.to — cannot bound expiry" });
+        return res.status(400).json({ status: "error", error: { code: "CONSENT_NO_EXPIRY", message: "GRANTED consent must specify permission.dataEraseAt or permission.dateRange.to." } });
+      }
       await AbdmConsentArtefact().findOneAndUpdate(
         { consentId: n.consentId },
         { $set: {
@@ -109,7 +117,7 @@ exports.consentHipNotify = async (req, res) => {
               frequency: d.permission?.frequency || {},
             },
             signature: n.signature || "", status: "GRANTED", grantedAt: new Date(),
-            expiry: d.permission?.dataEraseAt || null, raw: b,
+            expiry: _expiry, raw: b, // R9-FIX(R9-077): dataEraseAt || dateRange.to
           } },
         { upsert: true, setDefaultsOnInsert: true },
       );

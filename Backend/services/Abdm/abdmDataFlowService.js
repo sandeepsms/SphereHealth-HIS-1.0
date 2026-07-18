@@ -46,13 +46,18 @@ async function assembleFile(uhid, admissionId, dateRange = null) {
     admissionId ? Admission.findById(admissionId).lean() : Admission.findOne({ UHID: UH }).sort({ admissionDate: -1 }).lean(),
   ]);
   const notesFilter = { ...(currentAdmission ? { admissionId: currentAdmission._id } : { patientUHID: UH }), ...dateClause("visitDate") };
+  // R9-FIX(R9-075): scope doctor orders + investigations to the consented care
+  // context's admission, exactly like notes/discharge above. Previously they
+  // queried by UHID only, disclosing the patient's ENTIRE order/lab history for
+  // a consent that named a single (e.g. years-old) care context.
+  const _admScope = currentAdmission ? { admissionId: currentAdmission._id } : {};
   const [doctorNotes, doctorOrders, investigations, dischargeSummary] = await Promise.all([
     DoctorNotes.find(notesFilter).limit(500).lean().catch(() => []),
-    DoctorOrder.find({ UHID: UH, ...dateClause("orderedAt") }).limit(500).lean().catch(() => []),
+    DoctorOrder.find({ UHID: UH, ..._admScope, ...dateClause("orderedAt") }).limit(500).lean().catch(() => []),
     (async () => {
       try {
         const InvestigationOrder = require("../../models/Investigation/InvestigationOrderModel");
-        return await InvestigationOrder.find({ UHID: UH, ...dateClause("createdAt") }).limit(500).lean();
+        return await InvestigationOrder.find({ UHID: UH, ..._admScope, ...dateClause("createdAt") }).limit(500).lean();
       } catch { return []; }
     })(),
     (async () => {
@@ -93,8 +98,16 @@ async function buildEncryptedTransfer({ consentArtefact, hiRequest, careContexts
   const hip = abdmCrypto.generateKeyMaterial();
 
   const AbdmCareContext = require("../../models/Abdm/AbdmCareContextModel");
+  // R9-FIX(R9-076): bind the served care contexts to the CONSENT's patient
+  // (abhaAddress/abhaNumber). Without the patient predicate, a consent that
+  // named patient A but listed care-context references belonging to patient B
+  // would have the HIP serve B's records under A's consent.
+  const _ccScope = {};
+  if (consentArtefact.abhaAddress) _ccScope.abhaAddress = consentArtefact.abhaAddress;
+  else if (consentArtefact.abhaNumber) _ccScope.abhaNumber = consentArtefact.abhaNumber;
   const ccRows = careContexts || await AbdmCareContext.find({
     careContextReference: { $in: (consentArtefact.careContexts || []).map((c) => c.careContextReference) },
+    ..._ccScope,
   }).lean();
 
   const hiTypes = consentArtefact.hiTypes && consentArtefact.hiTypes.length ? consentArtefact.hiTypes : ["OPConsultation"];

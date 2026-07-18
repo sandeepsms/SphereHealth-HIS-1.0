@@ -51,8 +51,8 @@ const PatientSchema = new mongoose.Schema(
     // Populated when the patient links their ABHA (health ID). `abhaId`
     // is the exact field the FHIR exporter already reads to stamp the
     // https://abdm.gov.in/abha identifier on the Patient resource.
-    abhaNumber:   { type: String, default: "", trim: true, index: true },  // 14-digit ABHA no. (xx-xxxx-xxxx-xxxx)
-    abhaAddress:  { type: String, default: "", trim: true, index: true },  // ABHA address (username@cm, e.g. ram@sbx)
+    abhaNumber:   { type: String, default: "", trim: true },  // 14-digit ABHA no.; unique partial index below (R9-004)
+    abhaAddress:  { type: String, default: "", trim: true },  // ABHA address; unique partial index below (R9-004)
     abhaId:       { type: String, default: "", trim: true },               // canonical id emitted in FHIR (= abhaNumber)
     abhaLinked:   { type: Boolean, default: false },
     abhaKycVerified: { type: Boolean, default: false },                    // KYC/eKYC done via ABDM
@@ -200,6 +200,12 @@ const PatientSchema = new mongoose.Schema(
 PatientSchema.index({ contactNumber: 1 });
 PatientSchema.index({ paymentType: 1 });
 PatientSchema.index({ tpa: 1 });
+// R9-FIX(R9-004): enforce uniqueness of ABHA number / address so two patients
+// can't share one linked ABHA (which would make ABDM demographic discovery
+// resolve to the wrong UHID). Partial filter excludes the "" default so
+// non-ABDM patients (the vast majority) are not forced unique.
+PatientSchema.index({ abhaNumber: 1 }, { unique: true, partialFilterExpression: { abhaNumber: { $type: "string", $gt: "" } } });
+PatientSchema.index({ abhaAddress: 1 }, { unique: true, partialFilterExpression: { abhaAddress: { $type: "string", $gt: "" } } });
 
 // R7bf-J/A8-CRIT-1: Mongo text index for the patient-search bar. Pre-R7bf,
 // `searchPatients` ran an OR of five regex queries against `fullName`,
