@@ -151,9 +151,15 @@ const EVENT_SERVICE_MAP = {
   "NurseNote:general":   { serviceCode: null,      autoCharge: false  },
 
   // Doctor notes
-  "DoctorNote:progress":    { serviceCode: "CON-001", autoCharge: true,  dailyDedup: true  }, // doctor visit/day
-  "DoctorNote:assessment":  { serviceCode: "CON-001", autoCharge: true,  dailyDedup: true  },
-  "DoctorNote:admission":   { serviceCode: "CON-001", autoCharge: true,  dailyDedup: false },
+  // BUG-2 note: these keys use LEGACY note-type names ("progress"/"assessment"/
+  // "admission") that are NOT in the current DoctorNotes noteType enum
+  // ([...daily, initial, consultation...]). They are vestigial — the live
+  // doctor-round mapper is resolveDoctorVisitCode(noteType, shift) below, and
+  // doctor-note billing is gated OFF by DOCTOR_NOTE_BILLING_ENABLED anyway
+  // (room-matrix billing). Kept for reference; do NOT wire new lookups to them.
+  "DoctorNote:progress":    { serviceCode: "CON-001", autoCharge: true,  dailyDedup: true  }, // legacy → maps to daily/general rounds
+  "DoctorNote:assessment":  { serviceCode: "CON-001", autoCharge: true,  dailyDedup: true  }, // legacy
+  "DoctorNote:admission":   { serviceCode: "CON-001", autoCharge: true,  dailyDedup: false }, // legacy → "initial"
 
   // MAR drug administration — charge the drug/injection fee if service exists
   "MAR:administered":       { serviceCode: null, dynamicLookup: true, autoCharge: true, dailyDedup: false },
@@ -1113,7 +1119,12 @@ async function onDoctorNoteSaved(noteDoc) {
   if (!DOCTOR_NOTE_BILLING_ENABLED) {
     return; // R7hr-190 — doctor attendance bills via the room matrix only
   }
-  const noteType = noteDoc.noteType || "progress";
+  // BUG-2 cleanup: default to a VALID DoctorNotes noteType. The schema enum is
+  // [general, initial, emergency, daily, icu, procedure, consultation, death,
+  // amendment, preop, postop] — "progress" is NOT in it (the schema default is
+  // "general"), so the old `|| "progress"` fallback referenced a note type that
+  // can never exist. resolveDoctorVisitCode() below is the authoritative mapper.
+  const noteType = noteDoc.noteType || "general";
 
   const admissionId = noteDoc.admissionId || await resolveAdmissionId(noteDoc);
   if (!admissionId) return;

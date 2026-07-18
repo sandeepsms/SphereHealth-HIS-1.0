@@ -423,7 +423,12 @@ class EmergencyService {
               buildingId: claimedBed.building || null,
             } : {}),
             roomNumber:          claimedBed?.roomNumber || dispositionData.admittedRoom || "",
-            department:          dispositionData.admittedDepartment || visit.consultantIncharge || "",
+            // BUG-1 fix: NEVER fall back to the consultant's NAME for `department`
+            // (a doctor's name is not a department — it corrupted department-wise
+            // census/revenue/occupancy reports for every ER→IPD bridge admit).
+            // Prefer an explicit admittedDepartment, else the admitting ward
+            // (admittedToWard / the claimed bed's wardName), else leave blank.
+            department:          dispositionData.admittedDepartment || dispositionData.admittedToWard || claimedBed?.wardName || "",
             attendingDoctor:     dispositionData.attendingDoctor || visit.consultantIncharge || "",
             attendingDoctorId:   dispositionData.attendingDoctorId || null,
             modeOfArrival:       visit.arrivalMode || "",

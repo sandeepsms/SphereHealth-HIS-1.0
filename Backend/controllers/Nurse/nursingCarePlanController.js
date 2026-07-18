@@ -25,6 +25,27 @@ class NursingCarePlanController {
     delete body.completedAt;
     delete body.updatedBy;
     body.createdBy = req.user?.id || req.user?._id || null;
+
+    // BUG-3 fix: make the required-field contract consistent with sibling
+    // nursing endpoints. /nurse-notes and /nursing-assessments accept
+    // {UHID, admissionId} and resolve the rest server-side, but the care-plan
+    // model requires patient(ObjectId) + ipdNo too — so a client sending the
+    // common {UHID, admissionId} shape hit a 400. Resolve ipdNo + patient (+
+    // UHID/patientName) from the admission when only admissionId was supplied.
+    if (body.admissionId && (!body.ipdNo || !body.patient)) {
+      try {
+        const Admission = require("../../models/Patient/admissionModel");
+        const adm = await Admission.findById(body.admissionId)
+          .select("admissionNumber ipdNo patientId UHID patientName").lean();
+        if (adm) {
+          if (!body.ipdNo)       body.ipdNo       = adm.admissionNumber || adm.ipdNo || "";
+          if (!body.patient)     body.patient     = adm.patientId || undefined;
+          if (!body.UHID)        body.UHID        = adm.UHID;
+          if (!body.patientName) body.patientName = adm.patientName;
+        }
+      } catch (_) { /* fall through — model validation will surface a clear error */ }
+    }
+
     const plan = await NursingCarePlan.create(body);
     return res.status(201).json({ success: true, data: plan });
   });
