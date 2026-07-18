@@ -177,8 +177,15 @@ InvestigationMasterSchema.pre("save", async function (next) {
 InvestigationMasterSchema.statics.resolveReferenceRange = function (master, parameterName, ageYears, sex) {
   const params = (master && Array.isArray(master.parameters)) ? master.parameters : [];
   if (!params.length || !parameterName) return null;
-  const pname = String(parameterName).trim().toLowerCase();
-  const param = params.find((p) => String(p.name || "").trim().toLowerCase() === pname);
+  // R9-FIX(R9-045): match parameter names normalisation- AND spelling-variant-
+  // aware, not by strict equality. A tech typing "Hemoglobin" must still resolve
+  // against a seeded "Haemoglobin" (and "Total WBC Count" vs "total wbc count",
+  // "Leukocyte" vs "Leucocyte"), otherwise the seeded critical ranges — and thus
+  // the panic-value auto-alert — silently never bind. Fold British→American
+  // "ae"→"e" and strip non-alphanumerics.
+  const fold = (s) => String(s || "").trim().toLowerCase().replace(/ae/g, "e").replace(/[^a-z0-9]+/g, "");
+  const pkey = fold(parameterName);
+  const param = params.find((p) => fold(p.name) === pkey);
   if (!param || !Array.isArray(param.referenceRanges) || !param.referenceRanges.length) return null;
 
   const age = Number.isFinite(Number(ageYears)) ? Number(ageYears) : null;

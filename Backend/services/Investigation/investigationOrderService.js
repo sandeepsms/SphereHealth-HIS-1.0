@@ -359,6 +359,18 @@ class InvestigationOrderService {
     for (const { itemId, results, interpretation, analyser, analyserCalibratedOn } of itemResults) {
       const item = order.items.id(itemId);
       if (!item) continue;
+      // R9-FIX(R9-047): the QC-release gate at verify only inspects items that
+      // carry an `analyser`, but the field was OPTIONAL and the UI never sent
+      // one — so the gate was UNREACHABLE (no internal result recorded which
+      // instrument ran it, so a result off a QC-FAILED analyser could always be
+      // released). Make the analyser MANDATORY for INTERNAL result entry so the
+      // gate always has an instrument to check. Externally-performed items are
+      // exempt (no in-house instrument / QC). Re-entry of an item that already
+      // carries an analyser doesn't need to resend it.
+      if (item.performedAt === "INTERNAL" && !String(analyser || item.analyser || "").trim()) {
+        const err = new Error(`Analyser / equipment is required for internal result entry of "${item.investigationName}" (NABL QC traceability)`);
+        err.code = "ANALYSER_REQUIRED"; err.status = 400; throw err;
+      }
       // Load this test's parameter master once (for age/sex ref-range fallback).
       let _master = null;
       try {

@@ -105,7 +105,7 @@ const fs = require("fs");
     R.t("Sample collected", coll.status === 200 && D(coll)?.orderStatus === "SAMPLE_COLLECTED", `status=${D(coll)?.orderStatus}`);
 
     // 18. enter results
-    const res = await call("lab", "POST", `/investigation-orders/${ctx.orderId}/enter-results`, { enteredBy: "Lab Tech", itemResults: [{ itemId: ctx.orderItemId, results: [{ parameterName: "Hemoglobin", value: "13.5", unit: "g/dL", normalRange: "13-17", isAbnormal: false }], interpretation: "Within normal limits" }] });
+    const res = await call("lab", "POST", `/investigation-orders/${ctx.orderId}/enter-results`, { enteredBy: "Lab Tech", itemResults: [{ itemId: ctx.orderItemId, analyser: "Sysmex XN-1000", results: [{ parameterName: "Hemoglobin", value: "13.5", unit: "g/dL", normalRange: "13-17", isAbnormal: false }], interpretation: "Within normal limits" }] });
     R.t("Lab results entered → order COMPLETED", res.status === 200 && D(res)?.orderStatus === "COMPLETED", `status=${D(res)?.orderStatus}`);
 
     // 19. verify
