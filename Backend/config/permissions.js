@@ -559,8 +559,13 @@ const ACTIONS = {
   "hr.credential.write":           ["Admin"],
   "hr.credential.read":            ["Admin", "Doctor"],
   // NABH HRM.4/5 — staff competency + in-service training records.
-  "hr.training.write":             ["Admin", "HR"],
-  "hr.training.read":              ["Admin", "HR", "Doctor", "Nurse"],
+  // R9-FIX(R9-084): "HR" is NOT a value in the User.role enum (see the note at
+  // ~L522), so granting it here was dead — no user can ever hold it, and a
+  // grant list referencing a phantom role is a silent misconfiguration. Admin
+  // already covers write; Admin/Doctor/Nurse cover read. Stripped "HR"; re-add
+  // it here AND to the userModel enum + frontend ROLES if a real HR role ships.
+  "hr.training.write":             ["Admin"],
+  "hr.training.read":              ["Admin", "Doctor", "Nurse"],
   // ABDM (Ayushman Bharat Digital Mission) admin/ops — status, ABHA link,
   // care-context management, FHIR preview. Admin-only (integration ops).
   "abdm.read":                     ["Admin"],
@@ -586,9 +591,10 @@ const ACTIONS = {
   "print.audit.write":             ["Admin", "Doctor", "Nurse", "Pharmacist", "Lab Technician", "Receptionist", "MRD"],
 
   // NABH HRM.1 — dated staff duty roster. Read open to clinical leads; write
-  // to HR/Admin (roster is an HR-owned document). (Frontend mirror below.)
-  "hr.roster.read":                ["Admin", "HR", "Doctor", "Nurse"],
-  "hr.roster.write":               ["Admin", "HR"],
+  // to Admin (roster is an HR-owned document, but no HR role exists yet).
+  // R9-FIX(R9-084): stripped the phantom "HR" role (not in the User.role enum).
+  "hr.roster.read":                ["Admin", "Doctor", "Nurse"],
+  "hr.roster.write":               ["Admin"],
   // NABH PRE.1/PRE.4 + DPDP — patient acknowledgements (rights handout,
   // DPDP/biometric consent) + second-opinion tracking. Front-office + bedside.
   "patient.consent.read":          ["Admin", "Receptionist", "Doctor", "Nurse", "MRD"],

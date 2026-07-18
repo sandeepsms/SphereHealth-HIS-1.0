@@ -380,8 +380,10 @@ export const ACTIONS = {
   "hr.credential.write":           ["Admin"],
   "hr.credential.read":            ["Admin", "Doctor"],
   // Mirror — NABH HRM.4/5 staff competency + in-service training.
-  "hr.training.write":             ["Admin", "HR"],
-  "hr.training.read":              ["Admin", "HR", "Doctor", "Nurse"],
+  // R9-FIX(R9-084): "HR" is not a real role (absent from the User.role enum) —
+  // stripped to match the backend grant (config/permissions.js).
+  "hr.training.write":             ["Admin"],
+  "hr.training.read":              ["Admin", "Doctor", "Nurse"],
   // Mirror — ABDM admin/ops (status, ABHA link, care contexts, FHIR preview).
   "abdm.read":                     ["Admin"],
   "abdm.write":                    ["Admin"],
@@ -399,8 +401,9 @@ export const ACTIONS = {
 
   // Mirror of Backend/config/permissions.js — NABH HRM.1 duty roster +
   // PRE.1/PRE.4/DPDP patient acknowledgements + second-opinion.
-  "hr.roster.read":                ["Admin", "HR", "Doctor", "Nurse"],
-  "hr.roster.write":               ["Admin", "HR"],
+  // R9-FIX(R9-084): stripped phantom "HR" role (not in User.role enum).
+  "hr.roster.read":                ["Admin", "Doctor", "Nurse"],
+  "hr.roster.write":               ["Admin"],
   "patient.consent.read":          ["Admin", "Receptionist", "Doctor", "Nurse", "MRD"],
   "patient.consent.write":         ["Admin", "Receptionist", "Doctor", "Nurse"],
 

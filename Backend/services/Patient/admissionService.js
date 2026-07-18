@@ -1272,6 +1272,12 @@ class AdmissionService {
     if (bedFilter && mongoose.isValidObjectId(String(bedFilter)))
       query.bedId = new mongoose.Types.ObjectId(String(bedFilter));
 
+    // R9-FIX(R9-082): ward scope (used by the nurse ward-restriction — see
+    // admissionController.getAllAdmissions). Filters admissions to a single ward.
+    const wardFilter = filters.wardId;
+    if (wardFilter && mongoose.isValidObjectId(String(wardFilter)))
+      query.wardId = new mongoose.Types.ObjectId(String(wardFilter));
+
     // ✅ patientId filter — handle gracefully (don't throw 400)
     const patFilter = filters.patientId || filters.patient;
     if (patFilter) {

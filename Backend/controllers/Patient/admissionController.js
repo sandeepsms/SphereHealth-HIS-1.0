@@ -70,6 +70,15 @@ class AdmissionController {
     if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
       filters.attendingDoctorId = req.doctorProfile._id;
     }
+    // R9-FIX(R9-082): enforce the nurse ward scope. restrictToOwnNurseWard set
+    // req.nurseWard / req.scopeFilter, but NO admission handler ever consumed
+    // it — so a ward nurse could list EVERY ward's admissions (the scoping was
+    // dead). req.nurseWard is set only for a Nurse WITH a ward configured;
+    // ward-less legacy nurses fall through and still see all (fail-open, as the
+    // middleware documents).
+    if (req.nurseWard) {
+      filters.wardId = req.nurseWard;
+    }
     const result = await AdmissionService.getAllAdmissions(filters);
     return res.json({ success: true, ...result });
   });

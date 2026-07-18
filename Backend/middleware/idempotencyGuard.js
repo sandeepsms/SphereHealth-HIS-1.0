@@ -80,57 +80,97 @@ function idempotencyGuard(scope) {
 
     const requestHash = _hashBody(req.body);
 
-    // Look up first — if cached, replay verbatim and SKIP the handler.
+    // R9-FIX(R9-092): reserve-BEFORE-dispatch. The old guard was check-then-act
+    // — it did findOne() up front and only cached the response on the way OUT
+    // (res.json, fire-and-forget). Two concurrent same-key POSTs therefore BOTH
+    // missed the cache, BOTH ran the handler, and BOTH executed the side effect
+    // (e.g. created a payment) — so it only ever deduped SEQUENTIAL retries,
+    // never a concurrent double-submit (double-click / client retry storm). We
+    // now atomically CLAIM the key via the unique index before next(): a
+    // statusCode:0 row = "reserved, in progress"; a statusCode>0 row = completed
+    // and replayable. The loser of the race replays the cached reply or gets 409.
+    const isCompleted = (row) => !!row && Number(row.statusCode) > 0;
+
+    // Fast path: a completed row → replay verbatim.
+    let existing = null;
     try {
-      const existing = await IdempotencyLog.findOne({ key: trimmedKey }).lean();
-      if (existing) {
-        if (existing.requestHash && requestHash && existing.requestHash !== requestHash) {
-          // Same key + different body → almost certainly a client bug.
-          // Log loudly and serve the cached response so the client at
-          // least observes its first successful state (which is what
-          // an idempotency contract demands).
-          console.warn(
-            `[idempotencyGuard] key=${trimmedKey} body-hash mismatch ` +
-            `(scope=${scope}, cached=${existing.scope}). Serving cached response.`,
-          );
-        }
-        return res
-          .status(existing.statusCode || 200)
-          .set("Idempotent-Replay", "true")
-          .json(existing.responseBody);
-      }
+      existing = await IdempotencyLog.findOne({ key: trimmedKey }).lean();
     } catch (e) {
-      // Cache lookup failure must NOT block the request. Log and continue
-      // — the controller-level duplicate-transactionId guard is the
-      // second line of defense.
+      // Lookup failure must NOT block the request (controller-level dup-txn
+      // guard is the second line of defense). Fall through to the claim.
       console.warn(`[idempotencyGuard] lookup failed: ${e.message}`);
     }
-
-    // No cache hit — monkey-patch res.json to capture the response and
-    // cache it on its way out.
-    const origJson = res.json.bind(res);
-    res.json = function _patchedJson(body) {
-      // Fire-and-forget cache insert. We DON'T await — the client must
-      // not block on the cache write. If the insert loses a race
-      // (E11000 on `key` unique), a concurrent retry already cached
-      // the response; we don't care which side wins.
-      const status = res.statusCode || 200;
-      IdempotencyLog.create({
-        key:          trimmedKey,
-        scope,
-        requestHash,
-        responseBody: body,
-        statusCode:   status,
-        actorId:      req.user?._id || req.user?.id || null,
-      }).catch((e) => {
-        if (e?.code === 11000) {
-          // Race — another writer already cached this key. Fine.
-          return;
-        }
-        console.warn(`[idempotencyGuard] cache write failed: ${e.message}`);
+    if (isCompleted(existing)) {
+      if (existing.requestHash && requestHash && existing.requestHash !== requestHash) {
+        console.warn(
+          `[idempotencyGuard] key=${trimmedKey} body-hash mismatch ` +
+          `(scope=${scope}, cached=${existing.scope}). Serving cached response.`,
+        );
+      }
+      return res.status(existing.statusCode || 200).set("Idempotent-Replay", "true").json(existing.responseBody);
+    }
+    if (existing && !isCompleted(existing)) {
+      // Another request holds the reservation but hasn't finished.
+      return res.status(409).json({
+        success: false, code: "IDEMPOTENCY_IN_PROGRESS",
+        message: "A request with this Idempotency-Key is already in progress. Retry shortly.",
       });
-      return origJson(body);
-    };
+    }
+
+    // Atomically claim the key. A SHORT expiry bounds an abandoned reservation
+    // (handler crash before completion) to ~2 min instead of the full 24h TTL,
+    // so a legitimate retry isn't stuck behind a dead claim.
+    let claimed = false;
+    try {
+      await IdempotencyLog.create({
+        key: trimmedKey, scope, requestHash,
+        responseBody: null, statusCode: 0,
+        actorId: req.user?._id || req.user?.id || null,
+        expiresAt: new Date(Date.now() + 2 * 60 * 1000),
+      });
+      claimed = true;
+    } catch (e) {
+      if (e?.code === 11000) {
+        // Lost the claim race — replay if the winner already completed, else 409.
+        let now = null;
+        try { now = await IdempotencyLog.findOne({ key: trimmedKey }).lean(); } catch (_) { /* ignore */ }
+        if (isCompleted(now)) {
+          return res.status(now.statusCode || 200).set("Idempotent-Replay", "true").json(now.responseBody);
+        }
+        return res.status(409).json({
+          success: false, code: "IDEMPOTENCY_IN_PROGRESS",
+          message: "A request with this Idempotency-Key is already in progress. Retry shortly.",
+        });
+      }
+      // Non-conflict insert error → fail open (never block a request on a cache bug).
+      console.warn(`[idempotencyGuard] claim failed: ${e.message}`);
+    }
+
+    if (claimed) {
+      // Complete the reservation on the way out — or RELEASE it on a non-2xx so
+      // a legitimate retry can proceed rather than replaying a failure forever.
+      const origJson = res.json.bind(res);
+      let settled = false;
+      res.json = function _patchedJson(body) {
+        settled = true;
+        const status = res.statusCode || 200;
+        if (status >= 200 && status < 300) {
+          IdempotencyLog.updateOne(
+            { key: trimmedKey },
+            { $set: { responseBody: body, statusCode: status, expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) } },
+          ).catch((err) => console.warn(`[idempotencyGuard] cache finalize failed: ${err.message}`));
+        } else {
+          IdempotencyLog.deleteOne({ key: trimmedKey, statusCode: 0 }).catch(() => {});
+        }
+        return origJson(body);
+      };
+      // Safety net: if the response finishes WITHOUT the patched res.json firing
+      // (an error handler used res.send/res.end), release the pending claim so
+      // the key isn't wedged at 409 until its 2-min expiry.
+      res.on("finish", () => {
+        if (!settled) IdempotencyLog.deleteOne({ key: trimmedKey, statusCode: 0 }).catch(() => {});
+      });
+    }
 
     return next();
   };

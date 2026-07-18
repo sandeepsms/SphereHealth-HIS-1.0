@@ -73,12 +73,18 @@ exports.requestOtp = async (req, res) => {
     if (!phoneToUse) {
       return res.status(400).json({ success: false, message: "No phone on file" });
     }
-    const otp   = String(Math.floor(100_000 + Math.random() * 900_000));
+    // R9-FIX(R9-083): generate the OTP with a CSPRNG. Math.random() is not
+    // cryptographically secure — its output is predictable from a few samples,
+    // so an OTP guarding controlled-Rx / DNR / death / blood-transfusion
+    // sign-off must not depend on it. crypto.randomInt gives a uniform,
+    // unpredictable 6-digit code.
+    const otp   = String(crypto.randomInt(100_000, 1_000_000));
     const token = crypto.randomBytes(16).toString("hex");
     otpStore.set(token, {
       hash:      hash(otp),
       expiresAt: Date.now() + OTP_TTL_MS,
       used:      false,
+      attempts:  0, // R9-FIX(R9-083): bound brute-force on the 6-digit space
       purpose,
       userId:    u._id || u.id || null,
     });
@@ -125,7 +131,18 @@ exports.verifyOtp = async (req, res) => {
     // /auth/login exemption) so user-error here stays inline.
     if (!row || row.used)                      return res.status(401).json({ success: false, code: "OTP_USED", message: "OTP expired or already used" });
     if (row.expiresAt < Date.now())            return res.status(401).json({ success: false, code: "OTP_EXPIRED", message: "OTP expired" });
-    if (row.hash !== hash(String(otp)))        return res.status(401).json({ success: false, code: "OTP_INVALID", message: "Invalid OTP" });
+    if (row.hash !== hash(String(otp))) {
+      // R9-FIX(R9-083): a 6-digit OTP has only 900k possibilities — with no
+      // attempt limit an attacker holding the token could brute-force it well
+      // within the TTL. Count failures per token and burn it after 5, forcing a
+      // fresh OTP request (which re-runs the SMS + rate-limit path).
+      row.attempts = (row.attempts || 0) + 1;
+      if (row.attempts >= 5) {
+        otpStore.delete(token);
+        return res.status(429).json({ success: false, code: "OTP_LOCKED", message: "Too many incorrect attempts — request a new OTP" });
+      }
+      return res.status(401).json({ success: false, code: "OTP_INVALID", message: "Invalid OTP" });
+    }
     row.used = true;
 
     const nonce = crypto.randomBytes(20).toString("hex");
