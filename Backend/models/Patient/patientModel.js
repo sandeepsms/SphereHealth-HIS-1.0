@@ -47,6 +47,17 @@ const PatientSchema = new mongoose.Schema(
       district: String,
     },
 
+    // ── ABDM / ABHA (Ayushman Bharat Health Account) ──────────────
+    // Populated when the patient links their ABHA (health ID). `abhaId`
+    // is the exact field the FHIR exporter already reads to stamp the
+    // https://abdm.gov.in/abha identifier on the Patient resource.
+    abhaNumber:   { type: String, default: "", trim: true },  // 14-digit ABHA no.; unique partial index below (R9-004)
+    abhaAddress:  { type: String, default: "", trim: true },  // ABHA address; unique partial index below (R9-004)
+    abhaId:       { type: String, default: "", trim: true },               // canonical id emitted in FHIR (= abhaNumber)
+    abhaLinked:   { type: Boolean, default: false },
+    abhaKycVerified: { type: Boolean, default: false },                    // KYC/eKYC done via ABDM
+    abhaLinkedAt: { type: Date, default: null },
+
     bloodGroup: {
       type: String,
       enum: ["A+", "A-", "B+", "B-", "AB+", "AB-", "O+", "O-", "Not Known", "Unknown", ""],
@@ -108,9 +119,37 @@ const PatientSchema = new mongoose.Schema(
       default: "Cash",
     },
     tpa: { type: mongoose.Schema.Types.ObjectId, ref: "TPA" },
+    // R7hr(CLAIM-P4.1) — the INSURER that issued the policy (Star Health,
+    // HDFC Ergo…), distinct from the `tpa` administrator above. Drives which
+    // company's claim form the PDF engine fills. Code maps to config/insurers.
+    insurerCode: { type: String, trim: true, uppercase: true, default: "" },
+    insurerName: { type: String, trim: true, default: "" },
     policyNumber: String,
     policyHolderName: String,
     sumInsured: Number,
+
+    // R7hr(CLAIM-P1.1) — payer scheme drives which claim form(s) apply +
+    // which scheme IDs to capture. paymentType above is the coarse cash-vs-
+    // TPA split kept for legacy billing; payerScheme is the finer axis the
+    // claim-form builder keys on (RETAIL_TPA/CORPORATE → IRDAI Part A/B;
+    // CGHS → MRC; ESIC → ESIC claim; PMJAY/STATE → cashless docket).
+    payerScheme: {
+      type: String,
+      enum: ["CASH", "RETAIL_TPA", "CORPORATE", "CGHS", "ESIC", "ECHS", "PMJAY", "STATE", "OTHER"],
+      default: "CASH",
+    },
+    schemeIds: {
+      cghsCardNo:      { type: String, trim: true },
+      cghsWardEntitlement: { type: String, trim: true },   // General / Semi-Private / Private
+      ppoNo:           { type: String, trim: true },        // pension payment order (CGHS/ECHS pensioners)
+      esicIpNo:        { type: String, trim: true },        // ESIC insurance number
+      esicEmployer:    { type: String, trim: true },
+      esicDispensary:  { type: String, trim: true },
+      pmjayId:         { type: String, trim: true },        // Ayushman / PMJAY card no
+      echsCardNo:      { type: String, trim: true },
+      stateSchemeName: { type: String, trim: true },        // e.g. MJPJAY / Aarogyasri
+      stateSchemeId:   { type: String, trim: true },
+    },
 
     isMLC: { type: Boolean, default: false },
     mlcNumber: String,
@@ -161,6 +200,12 @@ const PatientSchema = new mongoose.Schema(
 PatientSchema.index({ contactNumber: 1 });
 PatientSchema.index({ paymentType: 1 });
 PatientSchema.index({ tpa: 1 });
+// R9-FIX(R9-004): enforce uniqueness of ABHA number / address so two patients
+// can't share one linked ABHA (which would make ABDM demographic discovery
+// resolve to the wrong UHID). Partial filter excludes the "" default so
+// non-ABDM patients (the vast majority) are not forced unique.
+PatientSchema.index({ abhaNumber: 1 }, { unique: true, partialFilterExpression: { abhaNumber: { $type: "string", $gt: "" } } });
+PatientSchema.index({ abhaAddress: 1 }, { unique: true, partialFilterExpression: { abhaAddress: { $type: "string", $gt: "" } } });
 
 // R7bf-J/A8-CRIT-1: Mongo text index for the patient-search bar. Pre-R7bf,
 // `searchPatients` ran an OR of five regex queries against `fullName`,
@@ -223,17 +268,36 @@ PatientSchema.pre("save", async function (next) {
                 : "IPD";
       if (!this.patientId) {
         const idKey = `patientId:${prefix}:${year}`;
-        const seed  = await ensureSeed(idKey, async () =>
-          Patient.countDocuments({ registrationType: this.registrationType }),
-        );
+        // R9-FIX(R9-094): seed the counter from the NUMERIC high-water mark of
+        // existing ids, NOT countDocuments(). A count under-reports the moment
+        // any patient is deleted (or across gaps), so a reseed after a delete
+        // landed BELOW an already-issued number and the next id COLLIDED
+        // (E11000 on the unique index). Scan the same-prefix/year ids and reduce
+        // to the max parsed tail.
+        const seed  = await ensureSeed(idKey, async () => {
+          const rows = await Patient.find({ patientId: { $regex: `^${prefix}-${year}-` } })
+            .select({ patientId: 1 }).lean();
+          return rows.reduce((max, r) => {
+            const n = parseInt(String(r.patientId || "").split("-").pop(), 10);
+            return Number.isFinite(n) && n > max ? n : max;
+          }, 0);
+        });
         const seq = await nextSeqPatient(idKey, seed);
         this.patientId = `${prefix}-${year}-${String(seq).padStart(6, "0")}`;
       }
       if (!this.UHID) {
         const uhidKey = "uhid:global";
-        const seed    = await ensureSeed(uhidKey, async () =>
-          Patient.countDocuments(),
-        );
+        // R9-FIX(R9-094): same high-water-mark seed for the global UHID counter
+        // — countDocuments() under-counts after any delete and reseeded into a
+        // collision with a still-live UHID.
+        const seed    = await ensureSeed(uhidKey, async () => {
+          const rows = await Patient.find({ UHID: { $regex: "^UH\\d" } })
+            .select({ UHID: 1 }).lean();
+          return rows.reduce((max, r) => {
+            const n = parseInt(String(r.UHID || "").replace(/^UH/i, ""), 10);
+            return Number.isFinite(n) && n > max ? n : max;
+          }, 0);
+        });
         const seq = await nextSeqPatient(uhidKey, seed);
         // R7ha — UHID format: UH01, UH02, ..., UH99, UH100, UH101 (auto-grows).
         // Previously zero-padded to 8 digits (UH00000001) — admin readability

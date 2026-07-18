@@ -151,9 +151,22 @@ exports.checkIn = handle(async (req, res) => {
     // Patient model. Reusing an existing patient by phone first prevents
     // duplicate UHID issuance for the same person. Defaulting the rest
     // to safe enum values prevents create-time validation 500s.
-    let stub = apt.patientPhone
-      ? await Patient.findOne({ contactNumber: apt.patientPhone, isActive: true })
-      : null;
+    // R9-FIX(R9-010): a phone number alone is NOT identity — households
+    // routinely share one mobile, so binding the walk-in to whoever
+    // registered that number first can drop this visit (and every clinical
+    // note that follows) onto a relative's chart. Bind only when exactly one
+    // active patient on that number ALSO matches the booked name (normalised
+    // compare); on any ambiguity, fall through and mint a fresh stub rather
+    // than mis-attribute the encounter.
+    let stub = null;
+    if (apt.patientPhone) {
+      const _normName = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+      const wantName = _normName(apt.patientName);
+      const candidates = await Patient.find({ contactNumber: apt.patientPhone, isActive: true })
+        .select("fullName").lean();
+      const named = wantName ? candidates.filter((c) => _normName(c.fullName) === wantName) : [];
+      if (named.length === 1) stub = await Patient.findById(named[0]._id);
+    }
     if (!stub) {
       stub = await Patient.create({
         fullName:        apt.patientName,
@@ -188,6 +201,30 @@ exports.checkIn = handle(async (req, res) => {
     }
   } catch (e) { /* fallback to blank labels */ }
 
+  // R9-FIX(R9-008): resolve the consult fee server-side from the doctor's
+  // opdFirst/opdFollowup schedule (mirrors doctorController.getFirstVisitStatus),
+  // rather than trusting req.body or defaulting to 0. A 0/absent fee makes
+  // auto-billing (onOPDRegistered) fall back to the flat ₹500 ServiceMaster
+  // OPD-CON default instead of this doctor's actual rate — so a check-in from
+  // the appointment desk was silently mis-pricing every consultation. An
+  // explicit positive req.body.consultationFee still wins as a manual override.
+  let resolvedFee = Number(req.body.consultationFee);
+  if (!(Number.isFinite(resolvedFee) && resolvedFee > 0) && apt.doctorId) {
+    try {
+      const Doc = require("../../models/Doctor/doctorModel");
+      const OPDRegistration = require("../../models/Patient/OPDModels");
+      const docFee = await Doc.findById(apt.doctorId).select("consultationFee").lean();
+      // "First visit" = no prior OPD visit for THIS patient with THIS doctor.
+      const prior = await OPDRegistration.findOne({ doctorId: apt.doctorId, patientId: apt.patientId })
+        .select("_id").lean();
+      const fees = docFee?.consultationFee || {};
+      resolvedFee = prior
+        ? (Number(fees.opdFollowup) || Number(fees.opd) || 0)
+        : (Number(fees.opdFirst) || Number(fees.opd) || 0);
+    } catch (_) { resolvedFee = 0; }
+  }
+  if (!Number.isFinite(resolvedFee) || resolvedFee < 0) resolvedFee = 0;
+
   // Hand off to OPDService — it generates the visitNumber, creates the
   // bridging Admission, increments patient counters, and fires auto-billing.
   const visit = await OPDService.createOPDVisit({
@@ -198,7 +235,7 @@ exports.checkIn = handle(async (req, res) => {
     consultantName:   doctorName,
     visitDate:        new Date(),
     chiefComplaint:   apt.chiefComplaint || "Follow-up",
-    consultationFee:  req.body.consultationFee || 0,
+    consultationFee:  resolvedFee,
     hasAppointment:   true,
   });
 

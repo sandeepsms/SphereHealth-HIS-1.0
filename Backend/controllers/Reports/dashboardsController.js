@@ -46,14 +46,11 @@
 
 "use strict";
 
-const mongoose       = require("mongoose");
 const PatientBill    = require("../../models/PatientBillModel/PatientBillModel");
 const Admission      = require("../../models/Patient/admissionModel");
 const OPD            = require("../../models/Patient/OPDModels");
 const Bed            = require("../../models/bedMgmt/bedsModel");
 const PharmacySale   = require("../../models/Pharmacy/PharmacySaleModel");
-const DrugBatch      = require("../../models/Pharmacy/DrugBatchModel");
-const Drug           = require("../../models/Pharmacy/DrugModel");
 const Investigation  = require("../../models/Investigation/InvestigationOrderModel");
 const BillingTrigger = require("../../models/Billing/BillingTrigger");
 const Appointment    = require("../../models/Appointment/appointmentModel");
@@ -369,32 +366,71 @@ exports.getLabTat = async (req, res, next) => {
           ] },
           _category: { $ifNull: ["$items.category", "Other"] },
       } },
+      // NABL / ISO 15189 7.4.1 — join each item's TAT TARGET (InvestigationMaster
+      // .tatHours) so we can flag breaches + report % within target, not just
+      // raw averages. Tests with no target are counted but excluded from the
+      // within-target denominator.
+      { $lookup: { from: "investigationmasters", localField: "items.investigationId", foreignField: "_id", as: "_mst" } },
       { $addFields: {
           _tatMins: { $divide: [{ $subtract: ["$items.verifiedAt", "$_startedAt"] }, 1000 * 60] },
+          _targetMins: { $multiply: [{ $ifNull: [{ $arrayElemAt: ["$_mst.tatHours", 0] }, 0] }, 60] },
       } },
       { $match: { _tatMins: { $gt: 0 } } },
+      { $addFields: {
+          _targeted:    { $cond: [{ $gt: ["$_targetMins", 0] }, 1, 0] },
+          _withinTarget: { $cond: [{ $and: [{ $gt: ["$_targetMins", 0] }, { $lte: ["$_tatMins", "$_targetMins"] }] }, 1, 0] },
+      } },
       { $group: {
           _id: "$_category",
           count: { $sum: 1 },
           avgMins: { $avg: "$_tatMins" },
-          medianMins: { $avg: "$_tatMins" },   // approx; full median requires $sortBy
+          // R7hr(DEFER-18): true median — collect the per-item TATs and
+          // compute in Node (the old medianMins was silently just the avg).
+          // Bounded: per-category verified items in a ≤366-day window.
+          mins: { $push: "$_tatMins" },
           maxMins: { $max: "$_tatMins" },
           minMins: { $min: "$_tatMins" },
+          targetedCount: { $sum: "$_targeted" },
+          withinCount:   { $sum: "$_withinTarget" },
       } },
       { $sort: { count: -1 } },
     ]).option({ allowDiskUse: true, maxTimeMS: 20_000 });
+
+    const median = (arr) => {
+      if (!arr || !arr.length) return 0;
+      const s = [...arr].sort((a, b) => a - b);
+      const mid = Math.floor(s.length / 2);
+      return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+    };
     const fromStr = from.toISOString().slice(0, 10);
     const toStr   = to.toISOString().slice(0, 10);
     const items = rows.map((r) => ({
       category:   r._id,
       count:      r.count,
       avgMins:    Math.round(r.avgMins),
-      medianMins: Math.round(r.medianMins),
+      medianMins: Math.round(median(r.mins)),
       maxMins:    Math.round(r.maxMins),
       minMins:    Math.round(r.minMins),
+      // NABL TAT-vs-target
+      targetedCount:   r.targetedCount,
+      breachCount:     r.targetedCount - r.withinCount,
+      pctWithinTarget: r.targetedCount ? Math.round((100 * r.withinCount) / r.targetedCount) : null,
     }));
+    // R7hr(LAB-TAT tile): overall rollup mirroring getErTat so a KPI strip
+    // can consume one block instead of re-weighting the category rows.
+    const totalCount = items.reduce((s, r) => s + r.count, 0);
+    const totTargeted = items.reduce((s, r) => s + r.targetedCount, 0);
+    const totWithin   = totTargeted - items.reduce((s, r) => s + r.breachCount, 0);
+    const overall = totalCount > 0 ? {
+      count:   totalCount,
+      avgMins: Math.round(items.reduce((s, r) => s + r.avgMins * r.count, 0) / totalCount),
+      maxMins: Math.max(...items.map((r) => r.maxMins)),
+      targetedCount:   totTargeted,
+      breachCount:     totTargeted - totWithin,
+      pctWithinTarget: totTargeted ? Math.round((100 * totWithin) / totTargeted) : null,
+    } : { count: 0 };
     return sendOk(res,
-      { from: fromStr, to: toStr, rows: items },
+      { from: fromStr, to: toStr, rows: items, overall },
       { from: fromStr, to: toStr, count: items.length });
   } catch (e) { next(e); }
 };
@@ -524,6 +560,179 @@ exports.getErTat = async (req, res, next) => {
 };
 
 // ════════════════════════════════════════════════════════════════════
+// #134 — HAI rate per 1000 device-days (NABH HIC.5). Numerator = HAI events
+// by type in the window; denominator = device-days from the PatientDevice
+// registry (the true denominator, not summed infected-patient device-days).
+// SSI is expressed per-100-surgeries (OT count denominator) since it has no
+// device-day base. GET /api/reports/hai-rate?from=&to=
+// ════════════════════════════════════════════════════════════════════
+exports.getHaiRate = async (req, res, next) => {
+  try {
+    let from, to;
+    try {
+      ({ from, to } = parseHospitalDateRange(req.query.from, req.query.to, { defaultDays: 30, maxDays: 366 }));
+    } catch (e) {
+      return sendErr(res, e, "VALIDATION", e.status || 400);
+    }
+    const HAISurveillance = require("../../models/Compliance/HAISurveillanceRegisterModel");
+    const PatientDevice   = require("../../models/Clinical/PatientDeviceModel");
+    const OTRegister      = require("../../models/Compliance/OTRegisterModel");
+
+    // Numerators — HAI events by type.
+    const byType = await HAISurveillance.aggregate([
+      { $match: { onsetDate: { $gte: from, $lt: to } } },
+      { $group: { _id: "$HAIType", count: { $sum: 1 } } },
+    ]).option({ allowDiskUse: true, maxTimeMS: 15_000 });
+    const numer = { CAUTI: 0, CLABSI: 0, VAP: 0, SSI: 0, CDI: 0, "MRSA-Bacteremia": 0 };
+    for (const r of byType) if (r._id in numer) numer[r._id] = r.count;
+
+    // Denominator — device-days by bundle category, from the device registry.
+    // bundle: vap ← ET_TUBE/TRACHEOSTOMY, clabsi ← CENTRAL_LINE/PICC_LINE,
+    // cauti ← URINARY_CATHETER. Sum the in-window dwell of each device.
+    const DEV_BUNDLE = {
+      ET_TUBE: "vap", TRACHEOSTOMY: "vap",
+      CENTRAL_LINE: "clabsi", PICC_LINE: "clabsi",
+      URINARY_CATHETER: "cauti",
+    };
+    // D15 — stream the device registry via a cursor instead of a capped
+    // .limit(50000).lean() find(): the old cap silently truncated active
+    // devices on busy/long windows, understating device-days and OVERSTATING
+    // the NABH-reported infection rate per 1000 device-days. A cursor sums
+    // every in-window device with bounded memory (no cap, no truncation).
+    const deviceDays = { vap: 0, clabsi: 0, cauti: 0 };
+    const DAY = 24 * 3600 * 1000;
+    const deviceCursor = PatientDevice.find({
+      deviceType: { $in: Object.keys(DEV_BUNDLE) },
+      placedAt: { $lt: to },
+      $or: [{ removedAt: null }, { removedAt: { $gte: from } }],
+    }).select("deviceType placedAt removedAt").lean().cursor();
+    for await (const d of deviceCursor) {
+      const start = new Date(Math.max(new Date(d.placedAt).getTime(), from.getTime()));
+      const end = new Date(Math.min(d.removedAt ? new Date(d.removedAt).getTime() : to.getTime(), to.getTime()));
+      const days = Math.max(0, (end - start) / DAY);
+      const bundle = DEV_BUNDLE[d.deviceType];
+      if (bundle) deviceDays[bundle] += days;
+    }
+
+    const surgeries = await OTRegister.countDocuments({ occurredAt: { $gte: from, $lt: to }, status: { $ne: "Cancelled" } });
+    const rate1000 = (num, den) => (den > 0 ? Math.round((num / den) * 1000 * 100) / 100 : null);
+
+    const fromStr = from.toISOString().slice(0, 10);
+    const toStr   = to.toISOString().slice(0, 10);
+    return sendOk(res, {
+      from: fromStr, to: toStr,
+      deviceDays: {
+        ventilator: Math.round(deviceDays.vap),
+        centralLine: Math.round(deviceDays.clabsi),
+        urinaryCatheter: Math.round(deviceDays.cauti),
+      },
+      surgeries,
+      indicators: {
+        CAUTI:  { events: numer.CAUTI,  deviceDays: Math.round(deviceDays.cauti),  ratePer1000DeviceDays: rate1000(numer.CAUTI, deviceDays.cauti) },
+        CLABSI: { events: numer.CLABSI, deviceDays: Math.round(deviceDays.clabsi), ratePer1000DeviceDays: rate1000(numer.CLABSI, deviceDays.clabsi) },
+        VAP:    { events: numer.VAP,    deviceDays: Math.round(deviceDays.vap),    ratePer1000DeviceDays: rate1000(numer.VAP, deviceDays.vap) },
+        SSI:    { events: numer.SSI,    surgeries, ratePer100Surgeries: surgeries > 0 ? Math.round((numer.SSI / surgeries) * 100 * 100) / 100 : null },
+      },
+      other: { CDI: numer.CDI, "MRSA-Bacteremia": numer["MRSA-Bacteremia"] },
+    }, { from: fromStr, to: toStr });
+  } catch (e) { next(e); }
+};
+
+// ════════════════════════════════════════════════════════════════════
+// #148 — QPS quality-indicator engine (NABH PSQ). Rate-based clinical
+// indicators with numerator/denominator + a period-over-period trend:
+//   • mortality rate       — deaths / discharges × 100
+//   • readmission rate      — 30-day readmissions / discharges × 100
+//   • HAI rate              — HAI events / device-days × 1000
+//   • medication-error rate — med errors / admissions × 100
+//   • high fall-risk rate   — high-fall-risk assessments / admissions × 100
+// Trend compares the window to the immediately preceding equal window.
+// GET /api/reports/qps-indicators?from=&to=
+// ════════════════════════════════════════════════════════════════════
+exports.getQpsIndicators = async (req, res, next) => {
+  try {
+    let from, to;
+    try {
+      ({ from, to } = parseHospitalDateRange(req.query.from, req.query.to, { defaultDays: 90, maxDays: 366 }));
+    } catch (e) {
+      return sendErr(res, e, "VALIDATION", e.status || 400);
+    }
+    const winMs = to - from;
+    const prevFrom = new Date(from.getTime() - winMs);
+
+    const Admission     = require("../../models/Patient/admissionModel");
+    const Mortality     = require("../../models/Compliance/MortalityRegisterModel");
+    const Readmission   = require("../../models/Compliance/ReadmissionRegisterModel");
+    const HAI           = require("../../models/Compliance/HAISurveillanceRegisterModel");
+    const MedError      = require("../../models/Compliance/MedicationErrorRegisterModel");
+    const FallRisk      = require("../../models/Compliance/FallRiskRegisterModel");
+    const PatientDevice = require("../../models/Clinical/PatientDeviceModel");
+
+    const DEV_BUNDLE = { ET_TUBE: 1, TRACHEOSTOMY: 1, CENTRAL_LINE: 1, PICC_LINE: 1, URINARY_CATHETER: 1 };
+    const DAY = 24 * 3600 * 1000;
+    async function deviceDaysIn(f, t) {
+      // D15 — cursor stream (no .limit cap) so long/busy windows aren't silently
+      // truncated, which would understate device-days and overstate the HAI rate.
+      let total = 0;
+      const cursor = PatientDevice.find({
+        deviceType: { $in: Object.keys(DEV_BUNDLE) },
+        placedAt: { $lt: t },
+        $or: [{ removedAt: null }, { removedAt: { $gte: f } }],
+      }).select("placedAt removedAt").lean().cursor();
+      for await (const d of cursor) {
+        const start = Math.max(new Date(d.placedAt).getTime(), f.getTime());
+        const end = Math.min(d.removedAt ? new Date(d.removedAt).getTime() : t.getTime(), t.getTime());
+        total += Math.max(0, (end - start) / DAY);
+      }
+      return total;
+    }
+
+    const round2 = (v) => Math.round(v * 100) / 100;
+    const per100  = (n, d) => (d > 0 ? round2((n / d) * 100) : null);
+    const per1000 = (n, d) => (d > 0 ? round2((n / d) * 1000) : null);
+
+    async function period(f, t) {
+      const [admissions, discharges, deaths, readmits, hai, medErr, medErrHarm, highFall, dev] = await Promise.all([
+        Admission.countDocuments({ admissionDate: { $gte: f, $lt: t }, status: { $ne: "Deleted" }, admissionType: { $nin: ["OPD", "Services"] } }),
+        Admission.countDocuments({ actualDischargeDate: { $gte: f, $lt: t }, status: "Discharged" }),
+        Mortality.countDocuments({ dateOfDeath: { $gte: f, $lt: t } }),
+        Readmission.countDocuments({ occurredAt: { $gte: f, $lt: t } }),
+        HAI.countDocuments({ onsetDate: { $gte: f, $lt: t } }),
+        MedError.countDocuments({ reportedAt: { $gte: f, $lt: t } }),
+        MedError.countDocuments({ reportedAt: { $gte: f, $lt: t }, patientHarm: { $in: ["Minor", "Major", "Death"] } }),
+        FallRisk.countDocuments({ assessedAt: { $gte: f, $lt: t }, highRiskFlag: true }),
+        deviceDaysIn(f, t),
+      ]);
+      return {
+        denominators: { admissions, discharges, deviceDays: Math.round(dev) },
+        counts: { deaths, readmissions: readmits, haiEvents: hai, medErrors: medErr, medErrorsWithHarm: medErrHarm, highFallRisk: highFall },
+        rates: {
+          mortalityPer100Discharges:   per100(deaths, discharges),
+          readmissionPer100Discharges: per100(readmits, discharges),
+          haiPer1000DeviceDays:        per1000(hai, dev),
+          medErrorPer100Admissions:    per100(medErr, admissions),
+          highFallRiskPer100Admissions:per100(highFall, admissions),
+        },
+      };
+    }
+
+    const [current, previous] = await Promise.all([period(from, to), period(prevFrom, from)]);
+    // For rates, a rise in an adverse indicator is "worse" — expose the raw
+    // direction; the caller colours it.
+    const dir = (c, p) => (c == null || p == null ? "flat" : c > p ? "up" : c < p ? "down" : "flat");
+    const trend = {};
+    for (const k of Object.keys(current.rates)) trend[k] = dir(current.rates[k], previous.rates[k]);
+
+    const fromStr = from.toISOString().slice(0, 10);
+    const toStr   = to.toISOString().slice(0, 10);
+    return sendOk(res, {
+      from: fromStr, to: toStr,
+      current, previous, trend,
+    }, { from: fromStr, to: toStr });
+  } catch (e) { next(e); }
+};
+
+// ════════════════════════════════════════════════════════════════════
 // R7hr(TPA-P1): TPA MIS — claim-desk performance from PatientBill TPA
 // fields: status counts, submit→approve TAT, approval %, approved-vs-
 // settled realization, per-TPA breakdown, and stale SUBMITTED claims
@@ -553,12 +762,17 @@ exports.getTpaMis = async (req, res, next) => {
             null,
           ] },
           _approved: { $toDouble: { $ifNull: ["$tpaApprovedAmount", 0] } },
+          // R9-FIX(R9-097): sum ALL TPA_CLAIM rows (both signs), not just the
+          // positive ones. A voided remittance keeps its +X original (voidedAt
+          // set) AND a -X VOID- reversal; summing only amount>0 counted the
+          // voided receipt but not its reversal, overstating settledAmt so
+          // realizationPct could exceed 100%. Netting both signs cancels a void.
           _tpaPaid: { $reduce: {
             input: { $ifNull: ["$payments", []] },
             initialValue: 0,
             in: { $add: ["$$value", { $cond: [
-              { $and: [{ $eq: ["$$this.paymentMode", "TPA_CLAIM"] }, { $gt: [{ $toDouble: "$$this.amount" }, 0] }] },
-              { $toDouble: "$$this.amount" }, 0,
+              { $eq: ["$$this.paymentMode", "TPA_CLAIM"] },
+              { $toDouble: { $ifNull: ["$$this.amount", 0] } }, 0,
             ] }] },
           } },
       } },
@@ -723,6 +937,13 @@ exports.getArAging = async (req, res, next) => {
                       as: "p",
                       cond: { $and: [
                         { $not: ["$$p.voidedAt"] },
+                        // R9-FIX(R9-096): also exclude the synthetic VOID-
+                        // reversal rows. The old filter dropped the voided
+                        // +X original but KEPT its -X reversal, so _paid was
+                        // understated by the voided amount and a fully-paid
+                        // bill (payment voided then re-collected) resurfaced
+                        // as outstanding in AR aging.
+                        { $not: [{ $regexMatch: { input: { $ifNull: ["$$p.transactionId", ""] }, regex: "^VOID-" } }] },
                         { $lte: ["$$p.paidAt", asOf] },
                       ] },
                     },
@@ -909,4 +1130,72 @@ exports.getDiagnosisFrequency = async (req, res, next) => {
       { from: fromStr, to: toStr, rows: items },
       { from: fromStr, to: toStr, count: items.length });
   } catch (e) { next(e); }
+};
+
+// ═══════════════════════════════════════════════════════════════════
+// R7hr(ER-P3/DC-P3) — statutory attendance registers.
+// ER register: chronological log of every ER attendance (NABH requires a
+// bound ER register — this is its printable source). DC register: the
+// DayCareRegister rows the daycare workflow emits (emit existed since
+// DC-P2 but had NO read surface — this closes that gap).
+// ═══════════════════════════════════════════════════════════════════
+exports.getErRegister = async (req, res) => {
+  try {
+    let from, to;
+    try {
+      ({ from, to } = parseHospitalDateRange(req.query.from, req.query.to, { defaultDays: 31, maxDays: 366 }));
+    } catch (e) { return sendErr(res, e, "VALIDATION", e.status || 400); }
+    // Source is the Compliance EmergencyRegister (same emitter-fed model
+    // getErTat aggregates) — not the live Emergency visit doc — because
+    // register rows are locked at disposition and carry the statutory
+    // fields (mode/broughtBy/complaint/TAT minutes) the print needs.
+    const EmergencyRegister = require("../../models/Compliance/EmergencyRegisterModel");
+    // R9-FIX(R9-100): the register used a bare .limit(2000) with no total and no
+    // pagination — a busy ER with >2000 attendances in the window SILENTLY
+    // dropped the overflow, so the printed statutory (NABH) register was
+    // incomplete and no one could tell. Now page/limit are honoured and the TRUE
+    // total is returned, so the caller knows when to page (and the default still
+    // returns up to 2000 for backward-compat, but with `total` exposing any
+    // truncation instead of hiding it).
+    const filter = { arrivalAt: { $gte: from, $lte: to } };
+    const page  = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(2000, Math.max(1, parseInt(req.query.limit, 10) || 2000));
+    const skip  = (page - 1) * limit;
+    const [rows, total] = await Promise.all([
+      EmergencyRegister.find(filter)
+        .select("erNumber emergencyNumber arrivalAt modeOfArrival broughtBy patientName UHID age sex triageCategory presentingComplaint consultantIncharge isMLC mlcNumber disposition dispositionAt doorToDispositionMinutes")
+        .sort({ arrivalAt: 1 }).skip(skip).limit(limit).lean(),
+      EmergencyRegister.countDocuments(filter),
+    ]);
+    res.json({
+      success: true, from, to, count: rows.length, total, data: rows,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit), hasMore: skip + rows.length < total },
+    });
+  } catch (e) { return sendErr(res, e); }
+};
+
+exports.getDcRegister = async (req, res) => {
+  try {
+    let from, to;
+    try {
+      ({ from, to } = parseHospitalDateRange(req.query.from, req.query.to, { defaultDays: 31, maxDays: 366 }));
+    } catch (e) { return sendErr(res, e, "VALIDATION", e.status || 400); }
+    const DayCareRegister = require("../../models/Compliance/DayCareRegisterModel");
+    // R9-FIX(R9-100): same fix as getErRegister — expose the true total + honour
+    // page/limit so the Day-Care statutory register can't silently truncate.
+    const filter = { createdAt: { $gte: from, $lte: to } };
+    const page  = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(2000, Math.max(1, parseInt(req.query.limit, 10) || 2000));
+    const skip  = (page - 1) * limit;
+    const [rows, total] = await Promise.all([
+      DayCareRegister.find(filter)
+        .select("dcNumber UHID patientName age sex admissionNumber procedure doctor admittedAt dischargedAt checklistComplete readinessScore outcome remarks")
+        .sort({ createdAt: 1 }).skip(skip).limit(limit).lean(),
+      DayCareRegister.countDocuments(filter),
+    ]);
+    res.json({
+      success: true, from, to, count: rows.length, total, data: rows,
+      pagination: { page, limit, total, pages: Math.ceil(total / limit), hasMore: skip + rows.length < total },
+    });
+  } catch (e) { return sendErr(res, e); }
 };

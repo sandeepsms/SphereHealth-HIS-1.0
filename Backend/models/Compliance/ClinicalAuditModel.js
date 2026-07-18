@@ -99,6 +99,11 @@ const ClinicalAuditSchema = new mongoose.Schema(
         "INFUSION_RATE_CHANGED",
         "INFUSION_STARTED",
         "INFUSION_STOPPED",
+        // R8-FIX(#8): generic order-lifecycle transition emitted by moveStatus()
+        // in doctorOrderRoutes.js (Completed/Stopped/OnHold/InProgress/Cancelled)
+        // + the infusion auto-stop completion path. Was missing from the enum →
+        // ClinicalAudit.create rejected → the WHOLE order-lifecycle trail dropped.
+        "STATUS_CHANGE",
         // R7hr-134 — Nurse-initiated infusion lifecycle (NABH MOM.2).
         // Pre-fix: TreatmentChart Pause/Resume PATCHed status field which
         // PATCH_ALLOWED whitelist (R7hr-12-S?) silently dropped — so the
@@ -153,8 +158,18 @@ const ClinicalAuditSchema = new mongoose.Schema(
         // Discharge (NABH AAC.4)
         "DISCHARGE_SUMMARY_CREATED",
         "DISCHARGE_SUMMARY_FINALIZED",
+        // R7bb-FIX-E-4 / D3-CRIT-4 — senior co-sign of a JR self-finalized
+        // summary (POST /discharge-summary/:id/cosign). Signature → 7y floor.
+        "DISCHARGE_SUMMARY_COSIGNED",
         "DISCHARGE_WORKFLOW_ADVANCED",
         "ADMISSION_REACTIVATED",
+        // NABH IMS.3 (#138) — retention legal-hold set/clear on a clinical
+        // record (Admission / DischargeSummary / MLC). Custody → 7y floor.
+        "LEGAL_HOLD_UPDATED",
+
+        // R8-FIX(#39) — NABH PRE.4/PRE.6: PROM/PREM survey signed by staff. Was
+        // missing → every survey-signature ClinicalAudit row silently dropped.
+        "PROM_PREM_SIGNED",
 
         // Vitals / Assessment writes
         "VITALS_RECORDED",

@@ -1,5 +1,9 @@
 const mongoose = require("mongoose");
 const { toNum, toDec, decimalToNumber } = require("../../utils/money");
+// R9-FIX(R9-033): shared GST state-code canonicaliser so recalcTotals decides
+// CGST/SGST-vs-IGST with the SAME normalisation gstr1Exporter uses (was raw
+// string compare here → "29-Karnataka" mis-classified as inter-state).
+const { sameGstState } = require("../../utils/gstState");
 const Dec = mongoose.Schema.Types.Decimal128;
 
 // ═══════════════════════════════════════════════════════════════
@@ -189,6 +193,13 @@ const PaymentSchema = new mongoose.Schema(
     transactionId: { type: String, trim: true },
     paidAt: { type: Date, default: Date.now },
     receivedBy: { type: String, trim: true },
+    // R9-FIX(R9-024): billingService / cashierSessionController / the shift
+    // reconciler all WRITE these, but the schema never declared them → strict
+    // mode silently dropped every value, killing the refund segregation-of-
+    // duties gate (nothing to compare the refunder against) and per-cashier
+    // shift reconciliation (matched on receivedById → zero bills).
+    receivedById:   { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    receivedByRole: { type: String, trim: true },
     remarks: { type: String, trim: true },
     // 15-min reversal audit (cashier-typo undo). When a payment is
     // voided, the original row stays in place (audit immutability)
@@ -197,6 +208,7 @@ const PaymentSchema = new mongoose.Schema(
     // a receipt re-print or audit replay reads cleanly.
     voidedAt:     { type: Date },
     voidedBy:     { type: String, trim: true },
+    voidedById:   { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null }, // R9-FIX(R9-024): written by voidPayment but was schema-less → dropped
     voidedByRole: { type: String, trim: true },
     voidReason:   { type: String, trim: true },
     // R7ap-F28/D6-17: TDS deducted at source on TPA / corporate remittances.
@@ -447,6 +459,34 @@ const PatientBillSchema = new mongoose.Schema(
         status:     { type: String, enum: ["OPEN", "REPLIED"], default: "OPEN" },
       },
     ],
+    // R7hr(TPA-P3) — claim-pack DOCUMENTS: scanned pre-auth request/approval
+    // letters, query-reply proofs, dispatch PODs. Server-derived /uploads
+    // paths only (safeUpload writes them; filterSafeUrls re-validates) —
+    // never client-supplied strings.
+    tpaDocuments: [
+      {
+        url:        { type: String, trim: true },
+        label:      { type: String, trim: true, default: "" },   // "Pre-auth approval", "Query reply", "POD"…
+        uploadedBy: String,
+        uploadedAt: { type: Date, default: Date.now },
+      },
+    ],
+    // R7hr(TPA-P3) — physical/electronic DISPATCH tracking. A claim pack
+    // couriered to the TPA (or emailed / filed on portal / handed over) gets
+    // a row here; the AWB number is what the desk chases when an insurer
+    // says "kuch nahi mila". Multiple rows — initial pack + query-reply
+    // dispatches all log separately.
+    tpaDispatchLog: [
+      {
+        mode:         { type: String, enum: ["COURIER", "EMAIL", "PORTAL", "HAND_DELIVERY"], default: "COURIER" },
+        courierName:  { type: String, trim: true, default: "" },
+        awbNo:        { type: String, trim: true, default: "" },   // airway-bill / tracking no
+        sentTo:       { type: String, trim: true, default: "" },   // TPA branch / email / portal ref
+        remarks:      { type: String, trim: true, default: "" },
+        dispatchedBy: String,
+        dispatchedAt: { type: Date, default: Date.now },
+      },
+    ],
     // R7bb-FIX-E-15 / D3-HIGH-2: maker-checker on TPA approval. The
     // user who SUBMITTED the preauth cannot also APPROVE the claim —
     // otherwise a single TPA Coordinator can move from preauth straight
@@ -551,8 +591,10 @@ PatientBillSchema.methods.recalcTotals = function () {
       // IGST — register/snapshot under-reports inter-state IGST.
       const _hosp = (this.constructor?.HOSPITAL_STATE_CODE || process.env.HOSPITAL_STATE_CODE || "").trim();
       const _legacyIgst = this.igstAmount != null && Number(this.igstAmount.toString ? this.igstAmount.toString() : this.igstAmount) > 0;
+      // R9-FIX(R9-033): normalise both sides (was a raw `!==` compare, so
+      // "29" vs "29-KA" vs "Karnataka" all read as inter-state).
       const _isInterState =
-        (_hosp && this.placeOfSupply && String(this.placeOfSupply).trim() !== _hosp) ||
+        (_hosp && this.placeOfSupply && !sameGstState(this.placeOfSupply, _hosp, { defaultIntra: true })) ||
         _legacyIgst;
       if (_isInterState) {
         item.cgstAmount = toDec(0);
@@ -566,7 +608,11 @@ PatientBillSchema.methods.recalcTotals = function () {
 
       let tpaShare = 0;
       let ptShare = lineTotal;
-      if (this.paymentType === "TPA") {
+      // R9-FIX(R9-034): CORPORATE bills split payer/patient exactly like TPA
+      // (the employer/insurer share uses the same tpaPercent / tpaPayableAmount
+      // fields). Previously only paymentType==="TPA" split, so a CORPORATE bill
+      // fell through to the else and the PATIENT was billed the employer's share.
+      if (this.paymentType === "TPA" || this.paymentType === "CORPORATE") {
         if (toNum(item.tpaPercent) > 0) {
           // Percentage-based: recompute fresh from the (possibly-changed) lineTotal.
           tpaShare = (lineTotal * toNum(item.tpaPercent)) / 100;
@@ -598,9 +644,12 @@ PatientBillSchema.methods.recalcTotals = function () {
         tax    += tAmt;
         tpaPay += tpaShare;
         ptPay  += ptShare;
-      } else if (item.orderStatus !== "Cancelled") {
-        // Cancelled items contribute to NOTHING — pending bucket captures
-        // only Ordered + InProgress (the "coming soon" charges).
+      } else if (item.orderStatus !== "Cancelled" && !item.excludedByPackage) {
+        // R9-FIX(R9-028): a package-superseded per-line charge (bed/nursing/
+        // doctor-visit rolled into an ANH package) is NOT a "coming soon"
+        // order — it must not inflate pendingOrdersAmount. Previously such
+        // items fell into the pending bucket, so a package bill advertised
+        // phantom pending charges that were already absorbed by the package.
         pendingNet += lineTotal;
       }
     });
@@ -637,7 +686,9 @@ PatientBillSchema.methods.recalcTotals = function () {
     // R7ap-F35: aggregate item-level CGST/SGST/IGST into bill-level fields.
     // Driven by placeOfSupply (set above per-item). Used by GSTR-1 export.
     const _hosp = process.env.HOSPITAL_STATE_CODE || "";
-    const _isInter = _hosp && this.placeOfSupply && String(this.placeOfSupply).trim() !== _hosp;
+    // R9-FIX(R9-033): normalise both sides (bill-level GST split — mirrors the
+    // per-item decision above).
+    const _isInter = _hosp && this.placeOfSupply && !sameGstState(this.placeOfSupply, _hosp, { defaultIntra: true });
     if (_isInter) {
       this.cgstAmount = toDec(0);
       this.sgstAmount = toDec(0);
@@ -647,6 +698,24 @@ PatientBillSchema.methods.recalcTotals = function () {
       this.sgstAmount = toDec(tax / 2);
       this.igstAmount = toDec(0);
     }
+  } else {
+    // R9-FIX(R9-027): when the bill has NO items, the aggregation block above
+    // is skipped and every total (gross/discount/tax/tpa/net/patientPayable/
+    // roundOff/pendingOrders/GST split) kept its STALE pre-emptying value. A
+    // bill whose items were all removed therefore still advertised a phantom
+    // balance due (the balance calc below reads patientPayableAmount). Zero the
+    // whole totals block so an itemless bill reads ₹0 across the board.
+    this.grossAmount          = toDec(0);
+    this.totalDiscount        = toDec(0);
+    this.taxAmount            = toDec(0);
+    this.tpaPayableAmount     = toDec(0);
+    this.patientPayableAmount = toDec(0);
+    this.roundOffAmount       = toDec(0);
+    this.netAmount            = toDec(0);
+    this.pendingOrdersAmount  = toDec(0);
+    this.cgstAmount           = toDec(0);
+    this.sgstAmount           = toDec(0);
+    this.igstAmount           = toDec(0);
   }
 
   // Recalculate balance. Payment rows can be negative (refunds), so totalPaid
@@ -655,10 +724,17 @@ PatientBillSchema.methods.recalcTotals = function () {
   // closed-out bill.
   const totalPaid = this.payments.reduce((s, p) => s + toNum(p.amount), 0);
   this.advancePaid = toDec(totalPaid);
+  // R8-FIX(#34): TPA_CLAIM remittances pay down the TPA share (tpaPayableAmount),
+  // NOT the patient's residual (patientPayableAmount). Counting them here zeroed
+  // any short-pay/co-pay routed to the patient — the bill falsely read balance 0
+  // and per-bill collection rejected the patient's payment as OVERPAY. advancePaid
+  // stays all money received; the patient balance excludes TPA_CLAIM.
+  const patientPaid = this.payments.reduce(
+    (s, p) => s + (p.paymentMode === "TPA_CLAIM" ? 0 : toNum(p.amount)), 0);
   if (this.billStatus === "REFUNDED" || this.billStatus === "CANCELLED") {
     this.balanceAmount = toDec(0);
   } else {
-    this.balanceAmount = toDec(Math.max(0, toNum(this.patientPayableAmount) - totalPaid));
+    this.balanceAmount = toDec(Math.max(0, toNum(this.patientPayableAmount) - patientPaid));
   }
 };
 

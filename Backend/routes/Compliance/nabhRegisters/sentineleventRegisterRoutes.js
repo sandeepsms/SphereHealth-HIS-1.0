@@ -114,6 +114,9 @@ router.post("/", requireAction("compliance.nabh.write"), async (req, res) => {
       rcaInitiated: !!body.rcaInitiated,
       rcaId: mongoose.isValidObjectId(body.rcaId) ? body.rcaId : null,
       status: body.status || "Open",
+      // NABH FMS/PSQ — optionally pin the implicated device so RCA + recall
+      // can join events to the equipment register.
+      equipmentRef: body.equipmentRef || undefined,
       // Manual entries get an explicit sourceRef so retries on the same
       // payload are idempotent. Caller can supply one; default to a UUID.
       sourceRef: body.sourceRef || undefined,
@@ -124,6 +127,66 @@ router.post("/", requireAction("compliance.nabh.write"), async (req, res) => {
       return res.status(400).json({ success: false, message: "Could not write sentinel-event row (check server logs)" });
     }
     return res.status(201).json({ success: true, data: row });
+  } catch (e) {
+    return res.status(500).json({ success: false, message: e.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// PATCH /:id — progress the event: status, RCA linkage, immediate action.
+// R7hr-NABH-PSQ: pre-fix the register only exposed GET+POST, so every row was
+// frozen at "Open" — the Open→InProgress→Closed lifecycle + the RCA-assigned
+// state were unreachable in-app. Closed is terminal unless an explicit
+// reopen:true is passed (recorded in the audit trail). Every change appends an
+// auditTrail entry (STATUS_CHANGED / RCA_INITIATED / CLOSED).
+// ─────────────────────────────────────────────────────────────────────────
+router.patch("/:id", validateObjectIdParam("id"), requireAction("compliance.nabh.write"), async (req, res) => {
+  try {
+    const row = await SentinelEventRegister.findById(req.params.id);
+    if (!row) return res.status(404).json({ success: false, message: "Sentinel-event row not found" });
+
+    const body = req.body || {};
+    const actor = req.user || {};
+    const actorMeta = {
+      byUserId: actor._id || actor.id || null,
+      byName:   actor.fullName || actor.name || "",
+      byRole:   actor.role || "",
+    };
+    const auditEntries = [];
+
+    // Status transition (Open → InProgress → Closed; Closed terminal unless reopen)
+    if (body.status && body.status !== row.status) {
+      const ALLOWED = ["Open", "InProgress", "Closed"];
+      if (!ALLOWED.includes(body.status)) {
+        return res.status(400).json({ success: false, message: `Invalid status "${body.status}" — expected one of ${ALLOWED.join(", ")}` });
+      }
+      if (row.status === "Closed" && body.status !== "Closed" && body.reopen !== true) {
+        return res.status(409).json({ success: false, code: "SENTINEL_CLOSED", message: "This sentinel event is Closed. Pass reopen:true to re-open it (recorded in the audit trail)." });
+      }
+      const prev = row.status;
+      row.status = body.status;
+      auditEntries.push({ action: body.status === "Closed" ? "CLOSED" : "STATUS_CHANGED", ...actorMeta, notes: `${prev} → ${body.status}${body.reopen ? " (re-opened)" : ""}${body.notes ? " · " + String(body.notes).trim() : ""}` });
+    }
+
+    // RCA linkage
+    if (body.rcaInitiated === true && !row.rcaInitiated) {
+      row.rcaInitiated = true;
+      if (body.rcaId && mongoose.isValidObjectId(body.rcaId)) row.rcaId = body.rcaId;
+      auditEntries.push({ action: "RCA_INITIATED", ...actorMeta, notes: row.rcaId ? `RCA ${row.rcaId}` : "RCA initiated" });
+    } else if (body.rcaId && mongoose.isValidObjectId(body.rcaId) && String(body.rcaId) !== String(row.rcaId || "")) {
+      row.rcaId = body.rcaId;
+      row.rcaInitiated = true;
+      auditEntries.push({ action: "RCA_INITIATED", ...actorMeta, notes: `RCA linked ${body.rcaId}` });
+    }
+
+    if (typeof body.immediateAction === "string") row.immediateAction = body.immediateAction;
+
+    if (!auditEntries.length && typeof body.immediateAction !== "string") {
+      return res.status(400).json({ success: false, message: "Nothing to update — provide status, rcaInitiated/rcaId, or immediateAction" });
+    }
+    row.auditTrail.push(...auditEntries);
+    await row.save();
+    return res.json({ success: true, data: row });
   } catch (e) {
     return res.status(500).json({ success: false, message: e.message });
   }

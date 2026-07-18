@@ -70,6 +70,15 @@ class AdmissionController {
     if (req.user?.role === "Doctor" && req.doctorProfile?._id) {
       filters.attendingDoctorId = req.doctorProfile._id;
     }
+    // R9-FIX(R9-082): enforce the nurse ward scope. restrictToOwnNurseWard set
+    // req.nurseWard / req.scopeFilter, but NO admission handler ever consumed
+    // it — so a ward nurse could list EVERY ward's admissions (the scoping was
+    // dead). req.nurseWard is set only for a Nurse WITH a ward configured;
+    // ward-less legacy nurses fall through and still see all (fail-open, as the
+    // middleware documents).
+    if (req.nurseWard) {
+      filters.wardId = req.nurseWard;
+    }
     const result = await AdmissionService.getAllAdmissions(filters);
     return res.json({ success: true, ...result });
   });
@@ -886,6 +895,57 @@ class AdmissionController {
     return res.json({ success: true, data: updated });
   });
 
+  // NABH COP.10/COP.11 (#131) — PATCH /api/admissions/:id/vulnerability
+  // Set / update the vulnerable-patient flags (rebuilds the special-care
+  // checklist, preserving ticked items) and/or tick checklist items.
+  //   body: { flags?: [String], notes?, checklistUpdates?: [{item, done}] }
+  updateVulnerability = handle(async (req, res) => {
+    const Admission = require("../../models/Patient/admissionModel");
+    const { buildSpecialCareChecklist, VULNERABILITY_FLAGS } = require("../../services/Patient/vulnerabilityChecklist");
+    const adm = await Admission.findById(req.params.id).select("vulnerability admissionNumber");
+    if (!adm) return res.status(404).json({ success: false, message: "Admission not found" });
+    const actor = req.user?.fullName || req.user?.employeeId || "Staff";
+    const b = req.body || {};
+    let touched = false;
+
+    if (Array.isArray(b.flags)) {
+      const bad = b.flags.filter((f) => !VULNERABILITY_FLAGS.includes(f));
+      if (bad.length) {
+        return res.status(400).json({ success: false, message: `Unknown vulnerability flag(s): ${bad.join(", ")}. Allowed: ${VULNERABILITY_FLAGS.join(", ")}` });
+      }
+      const prior = (adm.vulnerability?.specialCareChecklist || []).map((c) => (c.toObject ? c.toObject() : c));
+      adm.vulnerability = adm.vulnerability || {};
+      adm.vulnerability.flags = b.flags;
+      adm.vulnerability.identifiedAt = adm.vulnerability.identifiedAt || new Date();
+      adm.vulnerability.identifiedByName = adm.vulnerability.identifiedByName || actor;
+      if (b.notes !== undefined) adm.vulnerability.notes = b.notes;
+      adm.vulnerability.specialCareChecklist = buildSpecialCareChecklist(b.flags, prior);
+      touched = true;
+    } else if (b.notes !== undefined) {
+      adm.vulnerability = adm.vulnerability || {};
+      adm.vulnerability.notes = b.notes;
+      touched = true;
+    }
+
+    if (Array.isArray(b.checklistUpdates) && adm.vulnerability?.specialCareChecklist?.length) {
+      const wanted = new Map(b.checklistUpdates.map((u) => [u.item, !!u.done]));
+      for (const row of adm.vulnerability.specialCareChecklist) {
+        if (wanted.has(row.item)) {
+          row.done = wanted.get(row.item);
+          row.completedByName = row.done ? actor : "";
+          row.completedAt = row.done ? new Date() : null;
+        }
+      }
+      touched = true;
+    }
+
+    if (!touched) {
+      return res.status(400).json({ success: false, message: "Nothing to update — pass flags and/or checklistUpdates" });
+    }
+    await adm.save();
+    return res.json({ success: true, data: { admissionNumber: adm.admissionNumber, vulnerability: adm.vulnerability } });
+  });
+
   // R7hr(DC-P2) — POST /api/admissions/:id/convert-to-ipd
   // Day-care complication → overnight stay. Flips the SAME admission to
   // IPD (admissionType "Planned") so the episode/bed/bills continue —
@@ -1046,6 +1106,21 @@ class AdmissionController {
       }
     }
 
+    // R8-FIX(#19): reject OVERPAYMENT symmetrically. remainingAfter < 0 means the
+    // entered amount exceeds total open-bill dues. Previously the waterfall's
+    // `isLast ? remaining` absorbed the surplus onto the last bill, where
+    // recalcTotals' max(0,…) clamp silently swallowed it (no advance/refund
+    // record). Force the cashier to collect the exact dues; route any genuine
+    // excess through a separate advance deposit.
+    if (remainingAfter < -0.5) {
+      const overpayment = +(-remainingAfter).toFixed(2);
+      return res.status(400).json({
+        success: false, code: "OVERPAY",
+        message: `Entered ₹${enteredAmt.toFixed(2)} exceeds outstanding ₹${balanceNow.toFixed(2)} by ₹${overpayment.toFixed(2)}. Collect the exact balance; route any excess through a separate advance deposit (POST /api/billing/advance).`,
+        balance: balanceNow, entered: enteredAmt, overpayment,
+      });
+    }
+
     const set = {
       "dischargeWorkflow.stage":         "BillCleared",
       "dischargeWorkflow.billClearedAt": new Date(),
@@ -1164,10 +1239,12 @@ class AdmissionController {
           const patientShare = toNum(bill.patientPayableAmount) || toNum(bill.netAmount) || 0;
           const paidSoFar    = bill.payments.reduce((s, p) => s + toNum(p.amount), 0);
           const billBal      = Math.max(0, patientShare - paidSoFar);
-          const isLast       = i === bills.length - 1;
-          // Each bill takes what it owes; the last one absorbs any leftover
-          // (rounding / overpayment) so nothing collected goes unrecorded.
-          const pay = isLast ? remaining : Math.min(remaining, billBal);
+          // R8-FIX(#19): cap EVERY bill at its own balance (drop the isLast
+          // absorb). The gate above now rejects overpayment, so `remaining`
+          // never exceeds the summed dues; capping each bill guarantees no
+          // single bill is overpaid even if the gate/waterfall bill sets
+          // diverge. Sub-rupee rounding stays within the 0.5 PAID tolerance.
+          const pay = Math.min(remaining, billBal);
           if (pay <= 0.005) continue;
 
           // R7hr(NABH-P3.4) — receipt serial on the discharge collection too.

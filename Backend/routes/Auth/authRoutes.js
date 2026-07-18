@@ -12,7 +12,7 @@ const { validatePassword, checkPasswordReuse } = require("../../utils/passwordPo
 // authenticate middleware so revocation + token-version checks run on every
 // hit. Import lifted to module scope so route handlers below can reference
 // `authenticate` at module-load time.
-const { authenticate } = require("../../middleware/auth");
+const { authenticate, invalidateUserStatus } = require("../../middleware/auth");
 // R7bz — IP-based brute-force throttle in front of POST /login. Defends
 // against username-rotation attacks that sidestep the per-user 5-strike
 // lockout below by hitting many usernames once each from the same IP.
@@ -357,6 +357,7 @@ router.post("/change-password", authenticate, async (req, res) => {
     user.mustChangePassword = false;
     user.tokenVersion = (user.tokenVersion || 0) + 1;
     await user.save();
+    invalidateUserStatus(user._id); // R9-FIX(R9-081): drop the 60s status cache so the new token isn't 401'd as stale
 
     // R7bb-FIX-A-9: PASSWORD_CHANGED audit row.
     try {
@@ -542,6 +543,7 @@ router.post("/logout-all-devices", authenticate, async (req, res) => {
       { $inc: { tokenVersion: 1 } },
       { new: true, select: "_id employeeId tokenVersion role" }
     );
+    invalidateUserStatus(req.user.id); // R9-FIX(R9-081): drop the cached tokenVersion immediately
     try {
       await userActivity.emit({
         event: "USER_TOKEN_REVOKED_ALL",

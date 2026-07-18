@@ -8,7 +8,7 @@ const formatDate = (date) => {
   const mm = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
   const yyyy = d.getFullYear();
-  return `${mm}-${dd}-${yyyy}`;
+  return `${yyyy}-${mm}-${dd}`; // R8-FIX(#24): must match vitalSheetService.formatDate / VitalSheet.date (YYYY-MM-DD)
 };
 
 // ── VitalSheet se latest snapshot pull karo ───────────
@@ -26,19 +26,35 @@ const pullLatestVitals = async (uhid, date) => {
 
   const last = sheet.tableData[sheet.tableData.length - 1];
   const v = last.values || {};
-  const get = (key) => {
-    if (v instanceof Map) return v.get(key)?.value ?? null;
-    return v[key]?.value ?? null;
+  // R9-FIX(R9-058): the vital sheet's column keys are free-form and cased by
+  // the charting UI ("Pulse", "BP", "SpO2", "Resp. Rate", "Temp."), but this
+  // snapshot did exact-case lookups on "pulse"/"bp"/"rr"/"temp"/"spo2" — which
+  // NEVER matched, so every shift-handover carried an all-null vitals snapshot.
+  // Build a case/separator-insensitive index (same normalisation as
+  // nabhRegisterEmitter.js:994) and resolve each vital through its aliases.
+  const norm = (k) => String(k).toLowerCase().replace(/[\s._\-/]/g, "");
+  const idx = {};
+  const entries = v instanceof Map ? v.entries() : Object.entries(v);
+  for (const [k, val] of entries) {
+    const nk = norm(k);
+    if (!(nk in idx)) idx[nk] = val?.value ?? null;
+  }
+  const get = (...aliases) => {
+    for (const a of aliases) {
+      const nk = norm(a);
+      if (nk in idx && idx[nk] != null && idx[nk] !== "") return idx[nk];
+    }
+    return null;
   };
 
   return {
     vitalSheetRef: sheet._id,
     vitalsSnapshot: {
-      pulse: get("pulse"),
-      bp: get("bp"),
-      rr: get("rr"),
-      temp: get("temp"),
-      spo2: get("spo2"),
+      pulse: get("pulse", "hr", "heartrate", "pr", "pulserate"),
+      bp: get("bp", "bloodpressure", "nibp"),
+      rr: get("rr", "resp", "resprate", "respiratoryrate", "respiration"),
+      temp: get("temp", "temperature"),
+      spo2: get("spo2", "sao2", "o2sat", "oxygensaturation"),
       takenAt: last.time,
     },
   };

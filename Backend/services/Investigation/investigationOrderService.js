@@ -1,6 +1,33 @@
 const InvestigationOrder = require("../../models/Investigation/InvestigationOrderModel");
 const InvestigationMaster = require("../../models/Investigation/InvestigationMasterModel");
 const InvestigationPricing = require("../../models/Investigation/InvestigationPricingModel");
+const { nextSequence: _nextSeq } = require("../../utils/counter");
+
+// NABL / ISO 15189 7.4.1 — compute the biological flag SERVER-SIDE from the
+// numeric reference interval + critical thresholds carried on the result, so
+// the H/L/critical flag is derived, not a manually-typed isAbnormal. Returns
+// { flag, isAbnormal, critical, severity } — critical drives the auto-alert.
+// (Age/sex-stratified interval SELECTION from a reference-range master is a
+// separate follow-up; here the interval is supplied on the result payload.)
+function _classifyResult(r) {
+  const out = { flag: "", isAbnormal: false, critical: false, severity: null };
+  const v = parseFloat(r.value);
+  const fin = (x) => typeof x === "number" && Number.isFinite(x);
+  if (!Number.isFinite(v)) {
+    out.isAbnormal = !!r.isAbnormal;
+    out.flag = r.isAbnormal ? "A" : "";
+    return out;
+  }
+  if (fin(r.criticalLow) && v <= r.criticalLow)   { return { flag: "LL", isAbnormal: true, critical: true, severity: "PANIC" }; }
+  if (fin(r.criticalHigh) && v >= r.criticalHigh) { return { flag: "HH", isAbnormal: true, critical: true, severity: "PANIC" }; }
+  if (fin(r.refLow) && v < r.refLow)   { return { flag: "L", isAbnormal: true, critical: false, severity: null }; }
+  if (fin(r.refHigh) && v > r.refHigh) { return { flag: "H", isAbnormal: true, critical: false, severity: null }; }
+  if (fin(r.refLow) || fin(r.refHigh)) { return { flag: "N", isAbnormal: false, critical: false, severity: null }; }
+  // No interval supplied — fall back to the manually-supplied isAbnormal.
+  out.isAbnormal = !!r.isAbnormal;
+  out.flag = r.isAbnormal ? "A" : "";
+  return out;
+}
 
 class InvestigationOrderService {
   // ── CREATE ORDER ──────────────────────────────────────────────
@@ -30,10 +57,14 @@ class InvestigationOrderService {
       throw new Error("At least one investigation is required");
 
     const orderItems = [];
+    const skipped = []; // R9-FIX(R9-053): surface, don't silently drop
 
     for (const item of items) {
-      const inv = await InvestigationMaster.findById(item.investigationId);
-      if (!inv || !inv.isActive) continue;
+      const inv = await InvestigationMaster.findById(item.investigationId).catch(() => null);
+      if (!inv || !inv.isActive) {
+        skipped.push({ investigationId: String(item.investigationId || ""), reason: !inv ? "not found" : "inactive" });
+        continue;
+      }
 
       // Determine where test will be performed
       let performedAt = item.performedAt || "INTERNAL";
@@ -65,6 +96,14 @@ class InvestigationOrderService {
       });
     }
 
+    // R9-FIX(R9-053): reject the whole order if ANY requested test was invalid,
+    // rather than silently creating a partial order. A dropped test the
+    // clinician believes was ordered is a patient-safety gap.
+    if (skipped.length) {
+      const e = new Error(`Some investigations could not be ordered (inactive or unknown): ${skipped.map((s) => s.investigationId).join(", ")}. Remove them and retry.`);
+      e.code = "INVALID_INVESTIGATIONS"; e.status = 400; e.skipped = skipped;
+      throw e;
+    }
     if (!orderItems.length) throw new Error("No valid investigations found");
 
     const order = await InvestigationOrder.create({
@@ -163,6 +202,7 @@ class InvestigationOrderService {
       throw new Error("Cannot collect sample for cancelled order");
 
     const now = new Date();
+    const accDate = now.toISOString().slice(0, 10).replace(/-/g, "");
     for (const item of order.items) {
       if (item.performedAt === "EXTERNAL") continue;
       if (itemIds && !itemIds.includes(item._id.toString())) continue;
@@ -170,15 +210,120 @@ class InvestigationOrderService {
       item.sampleStatus = "COLLECTED";
       item.sampleCollectedAt = now;
       item.sampleCollectedBy = collectedBy || "Lab Staff";
+      // NABL 7.2.5 — mint a unique accession number per sample at receipt.
+      if (!item.accessionNumber) {
+        const seq = await _nextSeq(`accession:${accDate}`);
+        item.accessionNumber = `ACC-${accDate}-${String(seq).padStart(4, "0")}`;
+      }
     }
 
-    order.orderStatus = "SAMPLE_COLLECTED";
+    // R8-FIX(#12): advance the header only on the FIRST collection
+    // (PENDING → SAMPLE_COLLECTED). For an add-on/staggered collection on an
+    // order already IN_PROGRESS (or SAMPLE_COLLECTED), leave the header
+    // untouched: forcing IN_PROGRESS → SAMPLE_COLLECTED is semantically wrong
+    // AND rejected by the state-machine guard (409 ILLEGAL_TRANSITION), which
+    // aborts order.save() and discards the accessions just minted above. (Also
+    // unblocks #23's reject→recollect: a recollect leaves the order at
+    // COMPLETED/IN_PROGRESS, so no illegal header transition is attempted.)
+    if (order.orderStatus === "PENDING") {
+      order.orderStatus = "SAMPLE_COLLECTED";
+    }
     order.actionLog.push({
       action: "SAMPLE_COLLECTED",
       performedBy: collectedBy || "Lab Staff",
       performedAt: now,
     });
 
+    await order.save();
+    return this._populate(order._id);
+  }
+
+  // ── REJECT SAMPLE ─────────────────────────────────────────────
+  // NABL / ISO 15189 7.2.6 — pre-analytical sample rejection with a structured
+  // reason. A rejected item's sampleStatus → REJECTED and result entry is
+  // blocked (enterResults throws SAMPLE_REJECTED) until the sample is recollected.
+  static get REJECTION_REASONS() {
+    return ["Hemolysed", "Clotted", "Insufficient-quantity", "Mislabelled", "Wrong-container", "Contaminated", "Delayed-transport", "Improper-storage", "Other"];
+  }
+
+  async rejectSample(orderId, { itemIds = null, rejectionReason, rejectedBy }) {
+    const valid = InvestigationOrderService.REJECTION_REASONS;
+    if (!rejectionReason || !valid.includes(rejectionReason)) {
+      const err = new Error(`rejectionReason is required and must be one of: ${valid.join(", ")}`);
+      err.code = "INVALID_REJECTION_REASON"; err.status = 400; throw err;
+    }
+    const order = await InvestigationOrder.findById(orderId);
+    if (!order) throw new Error("Order not found");
+    if (order.orderStatus === "CANCELLED") throw new Error("Cannot reject sample for a cancelled order");
+
+    const now = new Date();
+    let n = 0;
+    for (const item of order.items) {
+      if (item.performedAt === "EXTERNAL") continue;
+      if (itemIds && !itemIds.includes(item._id.toString())) continue;
+      if (item.resultStatus === "VERIFIED") continue; // never reject an already-released result
+      item.sampleStatus   = "REJECTED";
+      item.rejectionReason = rejectionReason;
+      item.rejectedBy     = rejectedBy || "Lab Staff";
+      item.rejectedAt     = now;
+      item.resultStatus   = "PENDING";
+      n++;
+    }
+    if (!n) { const err = new Error("No eligible sample items to reject"); err.status = 400; throw err; }
+
+    order.actionLog.push({ action: "SAMPLE_REJECTED", performedBy: rejectedBy || "Lab Staff", performedAt: now, remarks: `${n} item(s): ${rejectionReason}` });
+    // R9-FIX(R9-050): a reject that reopened items (resultStatus → PENDING) means
+    // the order is no longer COMPLETED — pull the header back so the reopened
+    // test shows as outstanding work, not a released order with a pending item.
+    if (order.orderStatus === "COMPLETED" && order.items.some((it) => it.resultStatus === "PENDING")) {
+      order.orderStatus = "IN_PROGRESS";
+      order.completedAt = null;
+    }
+    // R8-FIX(#23): NABL/ISO 15189 7.2.6 — rejecting a compromised specimen AFTER
+    // results were drafted must re-open the item for recollection (resultStatus
+    // COMPLETED/IN_PROGRESS → PENDING). That reopen is not in the strict LabResult
+    // matrix, so use the guard's sanctioned force-bypass. Safe + audited: VERIFIED
+    // (released) items are skipped above (never reopened), and the SAMPLE_REJECTED
+    // actionLog row above is the required caller-side audit for the force path.
+    order.__forceTransition = true;
+    order.__forceAdminUserId = rejectedBy || "Lab Staff";
+    await order.save();
+    return this._populate(order._id);
+  }
+
+  // ── AMEND VERIFIED RESULT ─────────────────────────────────────
+  // NABL / ISO 15189 7.4.1.7 — a released (VERIFIED) result may only be
+  // corrected through a recorded amendment: the old→new value + reason are
+  // kept in an append-only trail, never a silent overwrite.
+  async amendResult(orderId, { itemId, amendments = [], amendedBy }) {
+    const order = await InvestigationOrder.findById(orderId);
+    if (!order) throw new Error("Order not found");
+    const item = order.items.id(itemId);
+    if (!item) throw new Error("Test item not found");
+    if (item.resultStatus !== "VERIFIED") {
+      const err = new Error("Amendment applies only to a VERIFIED (released) result — edit the draft directly otherwise");
+      err.code = "NOT_VERIFIED"; err.status = 409; throw err;
+    }
+    if (!Array.isArray(amendments) || !amendments.length) {
+      const err = new Error("amendments[] with { parameterName, newValue, reason } is required"); err.status = 400; throw err;
+    }
+    const now = new Date();
+    for (const am of amendments) {
+      if (!am.reason || !String(am.reason).trim()) { const e = new Error("Each amendment needs a reason (ISO 15189 7.4.1.7)"); e.status = 400; throw e; }
+      const r = item.results.find((x) => x.parameterName === am.parameterName);
+      if (!r) { const e = new Error(`Parameter "${am.parameterName}" not found on this result`); e.status = 400; throw e; }
+      const oldVal = r.value;
+      item.amendments.push({ field: `${am.parameterName}.value`, oldValue: String(oldVal), newValue: String(am.newValue), reason: String(am.reason).trim(), amendedBy: amendedBy || "Pathologist", amendedAt: now });
+      r.value = String(am.newValue);
+      const c = _classifyResult(r); r.flag = c.flag; r.isAbnormal = c.isAbnormal;
+    }
+    // Re-attest the amended report.
+    item.verifiedBy = amendedBy || item.verifiedBy;
+    item.verifiedAt = now;
+    order.actionLog.push({ action: "RESULTS_AMENDED", performedBy: amendedBy || "Pathologist", performedAt: now, remarks: `${amendments.length} field(s) on ${item.investigationName}` });
+    // Sanctioned amendment path — bypass the post-verification result lock
+    // (the old→new value + reason is preserved in item.amendments[] above).
+    order._amendmentInProgress = true;
     await order.save();
     return this._populate(order._id);
   }
@@ -190,11 +335,89 @@ class InvestigationOrderService {
     if (order.orderStatus === "CANCELLED")
       throw new Error("Cannot enter results for cancelled order");
 
+    // NABL 5.4 — resolve patient age + sex once so per-parameter reference
+    // intervals can be pulled from the InvestigationMaster when the lab tech
+    // didn't hand-type bounds. Best-effort: absence just skips master lookup.
+    let patientAgeYears = null, patientSex = null;
+    try {
+      if (order.patientId) {
+        const Patient = require("../../models/Patient/patientModel");
+        const p = await Patient.findById(order.patientId).select("gender dateOfBirth age").lean();
+        if (p) {
+          patientSex = p.gender || null;
+          if (p.dateOfBirth) {
+            const ms = Date.now() - new Date(p.dateOfBirth).getTime();
+            patientAgeYears = ms > 0 ? Math.floor(ms / (365.25 * 24 * 3600 * 1000)) : null;
+          }
+          if (patientAgeYears == null && Number.isFinite(Number(p.age))) patientAgeYears = Number(p.age);
+        }
+      }
+    } catch (e) { /* demographics optional — master fallback simply won't fire */ }
+
     const now = new Date();
-    for (const { itemId, results, interpretation } of itemResults) {
+    const criticalHits = []; // { item, r, severity } → auto-alert after save
+    for (const { itemId, results, interpretation, analyser, analyserCalibratedOn } of itemResults) {
       const item = order.items.id(itemId);
       if (!item) continue;
-      item.results = results || [];
+      // R9-FIX(R9-047): the QC-release gate at verify only inspects items that
+      // carry an `analyser`, but the field was OPTIONAL and the UI never sent
+      // one — so the gate was UNREACHABLE (no internal result recorded which
+      // instrument ran it, so a result off a QC-FAILED analyser could always be
+      // released). Make the analyser MANDATORY for INTERNAL result entry so the
+      // gate always has an instrument to check. Externally-performed items are
+      // exempt (no in-house instrument / QC). Re-entry of an item that already
+      // carries an analyser doesn't need to resend it.
+      if (item.performedAt === "INTERNAL" && !String(analyser || item.analyser || "").trim()) {
+        const err = new Error(`Analyser / equipment is required for internal result entry of "${item.investigationName}" (NABL QC traceability)`);
+        err.code = "ANALYSER_REQUIRED"; err.status = 400; throw err;
+      }
+      // Load this test's parameter master once (for age/sex ref-range fallback).
+      let _master = null;
+      try {
+        if (item.investigationId) {
+          _master = await InvestigationMaster.findById(item.investigationId).select("parameters").lean();
+        }
+      } catch (e) { _master = null; }
+      if (analyser) item.analyser = String(analyser).trim(); // NABL — drives the QC-release gate at verify
+      if (analyserCalibratedOn) item.analyserCalibratedOn = new Date(analyserCalibratedOn); // NABL 7.3.3
+      // NABL 7.2.6 — a REJECTED sample cannot carry results; recollect first.
+      if (item.sampleStatus === "REJECTED") {
+        const err = new Error(`Sample for "${item.investigationName}" was REJECTED (${item.rejectionReason || "no reason"}) — recollect before entering results`);
+        err.code = "SAMPLE_REJECTED"; err.status = 409; throw err;
+      }
+      // NABL 7.4.1.7 — a VERIFIED (released) result is locked; corrections
+      // must go through the amend endpoint, never a silent re-entry.
+      if (item.resultStatus === "VERIFIED") {
+        const err = new Error(`Results for "${item.investigationName}" are VERIFIED and locked — use /amend to correct a released result`);
+        err.code = "RESULT_VERIFIED_LOCKED"; err.status = 409; throw err;
+      }
+      const rows = (results || []).map((r) => {
+        // NABL 5.4 — if the tech didn't supply bounds, resolve the age/sex-
+        // stratified interval from the master and stamp it (never overrides
+        // hand-entered values). Enables server-side flagging without manual
+        // range typing when the master carries reference data.
+        const hasBounds = typeof r.refLow === "number" || typeof r.refHigh === "number";
+        if (!hasBounds && _master && r.parameterName) {
+          const rr = InvestigationMaster.resolveReferenceRange(_master, r.parameterName, patientAgeYears, patientSex);
+          if (rr) {
+            if (typeof rr.low === "number") r.refLow = rr.low;
+            if (typeof rr.high === "number") r.refHigh = rr.high;
+            if (typeof rr.criticalLow === "number" && r.criticalLow == null) r.criticalLow = rr.criticalLow;
+            if (typeof rr.criticalHigh === "number" && r.criticalHigh == null) r.criticalHigh = rr.criticalHigh;
+            if (!r.unit && rr.unit) r.unit = rr.unit;
+            if (!r.normalRange && rr.text) r.normalRange = rr.text;
+          }
+        }
+        const c = _classifyResult(r);
+        r.flag = c.flag;
+        r.isAbnormal = c.isAbnormal;
+        if (!r.normalRange && (typeof r.refLow === "number" || typeof r.refHigh === "number")) {
+          r.normalRange = `${r.refLow ?? ""} - ${r.refHigh ?? ""}`.trim();
+        }
+        if (c.critical) criticalHits.push({ item, r, severity: c.severity });
+        return r;
+      });
+      item.results = rows;
       item.interpretation = interpretation || "";
       item.resultStatus = "COMPLETED";
       item.resultEnteredBy = enteredBy || "Lab Technician";
@@ -220,10 +443,38 @@ class InvestigationOrderService {
       action: "RESULTS_ENTERED",
       performedBy: enteredBy || "Lab Technician",
       performedAt: now,
-      remarks: `${itemResults.length} test(s)`,
+      remarks: `${itemResults.length} test(s)${criticalHits.length ? ` · ${criticalHits.length} critical` : ""}`,
     });
 
     await order.save();
+
+    // NABL / ISO 15189 7.4.1(h) + IPSG.2 — auto-fire a critical-value alert for
+    // every panic result the moment it is charted (the clinician read-back is
+    // captured on the alert's acknowledge). Best-effort; never blocks the save.
+    if (criticalHits.length) {
+      try {
+        const alerter = require("../Notification/criticalValueAlerter");
+        for (const h of criticalHits) {
+          await alerter.emit({
+            kind: "LAB",
+            patientUHID: order.UHID,
+            patientName: order.patientName || "",
+            sourceRef: order._id,
+            sourceKind: "InvestigationOrder",
+            valueLabel: `${h.r.parameterName} ${h.r.value}${h.r.unit ? " " + h.r.unit : ""} (${h.r.flag})`,
+            severity: h.severity === "PANIC" ? "PANIC" : "CRITICAL",
+            emittedBy: enteredBy || "Lab",
+            notes: `Test: ${h.item.investigationName}; order ${order.orderNumber || order._id}`,
+          });
+        }
+        order.actionLog.push({ action: "CRITICAL_VALUE_ALERTED", performedBy: enteredBy || "Lab", performedAt: new Date(), remarks: `${criticalHits.length} panic value(s)` });
+        await order.save();
+      } catch (e) {
+        try { require("../../utils/logErr").logErr("criticalValueAlerter", `emit on lab results ${order._id}`)(e); }
+        catch { console.error("[investigationOrderService] critical-alert emit failed:", e?.message); }
+      }
+    }
+
     return this._populate(order._id);
   }
 
@@ -234,15 +485,20 @@ class InvestigationOrderService {
   ) {
     const order = await InvestigationOrder.findById(orderId);
     if (!order) throw new Error("Order not found");
+    if (order.orderStatus === "CANCELLED") { const e = new Error("Cannot enter results for a cancelled order"); e.status = 409; throw e; } // R9-FIX(R9-055)
 
     const item = order.items.id(itemId);
     if (!item) throw new Error("Test item not found");
     if (item.performedAt !== "EXTERNAL")
       throw new Error("This test is not external");
+    if (item.resultStatus === "VERIFIED") { const e = new Error("This result is verified (released) — correct it via the amendment path, not a re-entry"); e.code = "NOT_VERIFIED"; e.status = 409; throw e; } // R9-FIX(R9-055)
 
-    item.externalLabName = externalLabName || item.externalLabName;
-    item.externalReportRef = externalReportRef || "";
-    item.interpretation = interpretation || "";
+    // R9-FIX(R9-055): only overwrite fields that were actually supplied. A
+    // partial update (e.g. only externalLabName) must not BLANK a previously
+    // recorded externalReportRef / interpretation.
+    if (externalLabName !== undefined)   item.externalLabName   = externalLabName || item.externalLabName;
+    if (externalReportRef !== undefined) item.externalReportRef = externalReportRef;
+    if (interpretation !== undefined)    item.interpretation    = interpretation;
     item.resultStatus = "COMPLETED";
     item.resultEnteredBy = enteredBy || "Staff";
     item.resultEnteredAt = new Date();
@@ -251,8 +507,16 @@ class InvestigationOrderService {
       action: "EXTERNAL_RESULT_ATTACHED",
       performedBy: enteredBy || "Staff",
       performedAt: new Date(),
-      remarks: `From ${externalLabName}`,
+      remarks: `From ${externalLabName || item.externalLabName || "external lab"}`,
     });
+
+    // R9-FIX(R9-051): advance the header so an all-EXTERNAL order can be
+    // verified. Previously the header stayed PENDING and verifyResults' direct
+    // PENDING→COMPLETED flip 409'd ILLEGAL_TRANSITION — outside-lab orders
+    // could never be released. Mirror enterResults.
+    if (["PENDING", "SAMPLE_COLLECTED"].includes(order.orderStatus)) {
+      order.orderStatus = "IN_PROGRESS";
+    }
 
     await order.save();
     return this._populate(order._id);
@@ -262,6 +526,27 @@ class InvestigationOrderService {
   async verifyResults(orderId, { verifiedBy, itemIds = null }) {
     const order = await InvestigationOrder.findById(orderId);
     if (!order) throw new Error("Order not found");
+
+    // NABL / ISO 15189 7.3.7 — QC-release gate. Any item run on an analyser
+    // whose LATEST QC control FAILED must not be released until a passing
+    // control is logged. Items with no analyser verify as before (parity with
+    // the LabTrend verify gate).
+    const analysers = [...new Set(
+      order.items
+        .filter((i) => (!itemIds || itemIds.includes(i._id.toString())) && i.analyser && i.resultStatus === "COMPLETED")
+        .map((i) => i.analyser.trim()),
+    )];
+    if (analysers.length) {
+      const LabQCLog = require("../../models/Lab/LabQCLogModel");
+      const { escapeRegex } = require("../../utils/queryGuards");
+      for (const a of analysers) {
+        const lastQc = await LabQCLog.findOne({ equipmentName: new RegExp(`^${escapeRegex(a)}$`, "i") }).sort({ performedAt: -1 }).lean();
+        if (lastQc && lastQc.result === "FAIL") {
+          const err = new Error(`Release blocked — latest QC on ${a} FAILED (${new Date(lastQc.performedAt).toLocaleString("en-IN")}). Log a passing control, then verify.`);
+          err.code = "QC_FAILED"; err.status = 409; throw err;
+        }
+      }
+    }
 
     const now = new Date();
     for (const item of order.items) {
@@ -298,23 +583,23 @@ class InvestigationOrderService {
 
   // ── MARK PRINTED ──────────────────────────────────────────────
   async markReportPrinted(orderId, { printedBy }) {
-    const order = await InvestigationOrder.findByIdAndUpdate(
-      orderId,
-      {
-        reportPrintedAt: new Date(),
-        reportPrintedBy: printedBy || "Staff",
-        $push: {
-          actionLog: {
-            action: "REPORT_PRINTED",
-            performedBy: printedBy || "Staff",
-            performedAt: new Date(),
-          },
-        },
-      },
-      { new: true },
-    );
+    const order = await InvestigationOrder.findById(orderId);
     if (!order) throw new Error("Order not found");
-    return order;
+    // R9-FIX(R9-054): a lab report may only be released/printed once EVERY item
+    // is VERIFIED (pathologist sign-off). Previously findByIdAndUpdate stamped
+    // reportPrinted with no gate, so a Lab Tech could release a draft report
+    // with unverified/unsigned results (NABL / ISO 15189 release control).
+    const unverified = (order.items || []).filter((i) => i.resultStatus !== "VERIFIED");
+    if (unverified.length) {
+      const e = new Error(`Cannot release the report — ${unverified.length} result(s) not yet VERIFIED by a pathologist.`);
+      e.code = "NOT_VERIFIED"; e.status = 409;
+      throw e;
+    }
+    order.reportPrintedAt = new Date();
+    order.reportPrintedBy = printedBy || "Staff";
+    order.actionLog.push({ action: "REPORT_PRINTED", performedBy: printedBy || "Staff", performedAt: new Date() });
+    await order.save();
+    return this._populate(order._id);
   }
 
   // ── CANCEL ────────────────────────────────────────────────────

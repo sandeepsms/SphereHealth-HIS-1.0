@@ -26,6 +26,9 @@ const InvestigationSummarySchema = new mongoose.Schema(
 const ProcedureSchema = new mongoose.Schema(
   {
     procedureName: { type: String, trim: true },
+    // R7hr(PCS-P1) — ICD-10-PCS code picked from the master (7-char
+    // alphanumeric); optional so free-text procedures still save.
+    pcsCode: { type: String, trim: true, uppercase: true, default: "" },
     date: { type: Date },
     performedBy: { type: String, trim: true },
     notes: { type: String } },
@@ -67,6 +70,16 @@ const DischargeSummarySchema = new mongoose.Schema(
     finalDiagnosis: { type: String, trim: true },
     icdCode: { type: String, trim: true },
     comorbidities: [{ type: String, trim: true }],
+    // R7hr(ICD-P2) — picker-driven MULTI-diagnosis capture. Claims need the
+    // full coded list (primary + secondaries), not one code + prose
+    // comorbidities. Additive: old summaries with only icdCode still work
+    // (claimFormService falls back). Primary row mirrors icdCode.
+    codedDiagnoses: [{
+      dxType:      { type: String, enum: ["Primary", "Secondary"], default: "Secondary" },
+      code:        { type: String, trim: true },        // dotted ICD-10-CM, e.g. K35.80
+      description: { type: String, trim: true },
+      _id: false,
+    }],
 
     // ── Clinical Narrative ───────────────────────────────────
     historyOfPresentIllness: { type: String },
@@ -151,6 +164,29 @@ const DischargeSummarySchema = new mongoose.Schema(
     // attending isn't flagged mustCosign.
     selfFinalizeAck: { type: Boolean, default: false },
 
+    // ── Finalize override evidence (NABH audit trail) ────────────
+    // These were written by the finalize controller but were NOT declared
+    // here — under Mongoose strict mode findOneAndUpdate silently dropped
+    // them, so the override justification never persisted. Declared now so
+    // the evidence travels with the (immutable) discharge record.
+    nursingHandoverOverride:       { type: Boolean, default: false },
+    nursingHandoverOverrideReason: { type: String, default: "" },
+    nursingHandoverOverrideAt:     { type: Date, default: null },
+    nursingHandoverOverrideBy:     { type: String, default: "" },
+    // NABH AAC.3 (#130) — mandatory-content gate override.
+    contentGateOverride:       { type: Boolean, default: false },
+    contentGateOverrideReason: { type: String, default: "" },
+    contentGateMissing:        { type: [String], default: [] },
+    contentGateOverrideAt:     { type: Date, default: null },
+    contentGateOverrideBy:     { type: String, default: "" },
+
+    // NABH IMS.3 (#138) — retention legal hold (excludes from purge queue).
+    legalHold: { type: Boolean, default: false },
+    legalHoldReason: { type: String, default: "" },
+    legalHoldBy:     { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    legalHoldByName: { type: String, default: "" },
+    legalHoldAt:     { type: Date, default: null },
+
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" },
     updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: "Doctor" },
 
@@ -179,7 +215,23 @@ DischargeSummarySchema.index({ status: 1, createdAt: -1 });
 // finalized → finalized with the same value) or adding metadata fields
 // the law allows post-finalize (mlrNumberSnapshot for stamp updates),
 // we allow that — anything else is refused.
-const FINALIZED_WHITELIST = new Set(["mlrNumberSnapshot"]);
+// Fields the law allows writing AFTER finalize (every other field on a
+// finalized summary is refused by _refuseIfFinalized below):
+//   mlrNumberSnapshot — MLR stamp refresh on historical prints.
+//   cosigned*         — senior co-sign of a JR self-finalized summary
+//                       (D3-CRIT-4): a signature added post-finalize, not
+//                       a content edit (POST /discharge-summary/:id/cosign).
+//   selfFinalizeAck   — stamped by finalize() AFTER the status flip on a
+//                       JR mustCosign self-finalize, so it must survive the
+//                       guard (was silently throwing pre-fix).
+//   legalHold*        — NABH IMS.3 retention hold (open litigation / MLC):
+//                       a legal-custody flag set via POST /api/mrd/legal-hold.
+const FINALIZED_WHITELIST = new Set([
+  "mlrNumberSnapshot",
+  "cosignedBy", "cosignedByName", "cosignedAt",
+  "selfFinalizeAck",
+  "legalHold", "legalHoldReason", "legalHoldBy", "legalHoldByName", "legalHoldAt",
+]);
 async function _refuseIfFinalized(next) {
   try {
     const query = this.getQuery();

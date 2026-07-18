@@ -149,7 +149,7 @@ const LEGAL_TRANSITIONS = {
     PENDING:        ["COLLECTED", "REJECTED", "N/A"],
     COLLECTED:      ["RECEIVED_AT_LAB", "REJECTED"],
     RECEIVED_AT_LAB:["REJECTED"],   // once received, only outcome is reject (result handled elsewhere)
-    REJECTED:       [],              // terminal
+    REJECTED:       ["COLLECTED"],   // R8-FIX(#23): recollection — a rejected specimen may be re-drawn (NABL 7.2.6); enterResults still blocks results until re-collected
     "N/A":          [],
   },
 

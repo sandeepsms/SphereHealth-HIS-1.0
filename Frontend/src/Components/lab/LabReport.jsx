@@ -53,10 +53,22 @@ const LabReport = ({ settings = {}, receipt = {} }) => {
   // hospital-settings (rendered globally) — fall back to "—" so the
   // template never shows undefined. NABL ID is the accreditation
   // reference number; scope references the test list document.
+  // R7hr(LAB-P4): hospital settings actually store certificates in the
+  // accreditations[] array ({name, certNumber}) — read the NABL entry
+  // from there first so the real certificate number prints.
+  const nablCert = (settings.accreditations || []).find(
+    (a) => /NABL/i.test(a?.name || "") && a?.certNumber
+  )?.certNumber;
   const labAccredNo = r.labAccreditationNo
+    || nablCert
     || settings.nablAccreditationNo
     || settings.nablId
     || (settings.nabl ? "NABL Accredited" : "—");
+
+  // R7hr(LAB-P4) — NABL/ISO 15189: results released before authorization
+  // must be clearly marked provisional; a re-released report after edits
+  // must be identified as amended.
+  const isFinal = /final|verified/i.test(String(r.status || ""));
   const refRangeSource = r.referenceRangeSource
     || settings.labReferenceRangeSource
     || "CLSI EP28-A3 / Manufacturer's package insert";
@@ -88,6 +100,18 @@ const LabReport = ({ settings = {}, receipt = {} }) => {
       ]}
     >
       <div className="pr-lab-report">
+        {/* R7hr(LAB-P4) — release-status strips (NABL / ISO 15189) */}
+        {r.amended && (
+          <div style={{ margin: "0 0 8px", padding: "7px 12px", borderRadius: 6, background: "#fee2e2", border: "1.5px solid #dc2626", color: "#7f1d1d", fontWeight: 800, fontSize: 12, letterSpacing: ".4px", textAlign: "center" }}>
+            AMENDED REPORT — supersedes the version released on {fmtDate(r.verifiedAt)}
+          </div>
+        )}
+        {!isFinal && (
+          <div style={{ margin: "0 0 8px", padding: "7px 12px", borderRadius: 6, background: "#fef3c7", border: "1.5px solid #d97706", color: "#92400e", fontWeight: 800, fontSize: 12, letterSpacing: ".4px", textAlign: "center" }}>
+            PROVISIONAL REPORT — pending verification by the authorized signatory
+          </div>
+        )}
+
         {/* Hospital + test-list scope banner — NABH AAC.3 reference */}
         <div className="pr-section">
           <div className="pr-section__title">Methodology &amp; Scope</div>

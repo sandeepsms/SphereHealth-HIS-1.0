@@ -99,7 +99,13 @@ async function aggregateGSTForMonth(periodStart, periodEnd) {
   //   2. empty string → intra-state assumed everywhere (legacy default)
   //
   // HSN comes from Drug master (denormalised here via $lookup).
-  const hospitalStateCode = (process.env.HOSPITAL_STATE_CODE || "").trim();
+  // R9-FIX(R9-033): normalise the hospital state code through the shared
+  // canonicaliser (gstr1Exporter already did; this sibling didn't), so a
+  // config of "29-Karnataka" / "Karnataka" collapses to "29" and matches the
+  // 2-digit placeOfSupply the app stores on sales — otherwise the intra/inter
+  // comparison below silently mis-split CGST/SGST vs IGST here.
+  const { normalizeGstStateCode } = require("../../utils/gstState");
+  const hospitalStateCode = normalizeGstStateCode(process.env.HOSPITAL_STATE_CODE || "");
   const pharmacyPipeline = [
     { $match: {
         createdAt: { $gte: periodStart, $lt: periodEnd },

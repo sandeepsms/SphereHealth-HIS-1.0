@@ -99,9 +99,14 @@ async function computeDayBook(dayOrStart) {
     { $facet: {
         collections: [
           // Positive non-voided non-ADVANCE_ADJUSTMENT rows paid in window.
+          // R9-FIX(R9-095): exclude the synthetic VOID- reversal rows. A voided
+          // positive payment's cash effect is already booked by the
+          // reversedPayments leg below — letting its synthetic -X row fall into
+          // collections here would double-book the reversal against cash-in.
           { $match: {
               _paidInWindow: true,
               "payments.voidedAt": { $exists: false },
+              "payments.transactionId": { $not: /^VOID-/ },
               _mode: { $ne: "ADVANCE_ADJUSTMENT" },
           } },
           { $match: { _amt: { $gt: 0 } } },
@@ -118,9 +123,14 @@ async function computeDayBook(dayOrStart) {
         ],
         billRefundsOut: [
           // Negative non-voided rows paid in window (real refunds STANDING).
+          // R9-FIX(R9-095): exclude the synthetic VOID- reversal rows. The
+          // -X reversal of a voided payment is already counted by the
+          // reversedPayments leg — counting it here too double-booked a
+          // single void as cash-out TWICE (netCashFlow off by 2x).
           { $match: {
               _paidInWindow: true,
               "payments.voidedAt": { $exists: false },
+              "payments.transactionId": { $not: /^VOID-/ },
               _amt: { $lt: 0 },
           } },
           { $group: {
@@ -129,22 +139,14 @@ async function computeDayBook(dayOrStart) {
               count: { $sum: 1 },
           } },
         ],
-        // R7bf-H A6-CRIT-6: reversed refunds. A negative payment row that
-        // was VOIDED in this window means the cashier rolled back a
-        // refund — cash is back in the drawer. Booking it as IN closes
-        // the netCashFlow leak. paidAt may be from an earlier day; what
-        // matters is that the void happened today.
-        reversedRefunds: [
-          { $match: {
-              _voidedInWindow: true,
-              _amt: { $lt: 0 },
-          } },
-          { $group: {
-              _id: null,
-              total: { $sum: { $abs: "$_amt" } },
-              count: { $sum: 1 },
-          } },
-        ],
+        // R9-FIX(R9-099): the "reversedRefunds" facet (a negative payment row
+        // VOIDED in-window → book its cash back IN) was UNREACHABLE dead code.
+        // voidPayment refuses any row with amount<=0 ("Cannot void a reversal
+        // entry"), so a refund can never be voided — no negative row ever gets
+        // voidedAt, and `_voidedInWindow && _amt<0` never matched. Removed the
+        // facet (the variable is now a constant 0, kept only for the output
+        // shape the Accounts console reads). Voided POSITIVE payments are a
+        // real case and remain handled by the reversedPayments facet below.
         // Voided positive payments — money LEAVES the drawer (cashier
         // gave the patient back the cash for a typo'd payment).
         reversedPayments: [
@@ -386,7 +388,7 @@ async function computeDayBook(dayOrStart) {
   const collectionsCount  = facet.collections?.[0]?.count || 0;
   const advancesApplied   = toNum(facet.advancesApplied?.[0]?.total);
   const billRefundsOut    = toNum(facet.billRefundsOut?.[0]?.total);
-  const reversedRefunds   = toNum(facet.reversedRefunds?.[0]?.total);
+  const reversedRefunds   = 0; // R9-FIX(R9-099): dead facet removed (see above); constant 0 kept for output-shape compat
   const reversedPayments  = toNum(facet.reversedPayments?.[0]?.total);
   const tdsDeducted       = toNum(facet.tds?.[0]?.total);
   const byMode            = (facet.byMode || []).map((r) => ({

@@ -23,6 +23,11 @@
 import React from "react";
 import PrintShell from "@/templates/PrintShell";
 import { fmtDate, fmtTime } from "./normalizeData";
+// R7hr(THEME-REG): coverage records + NABH registers — previously Narrative-only.
+import SharedRegisterSections from "./SharedRegisterSections";
+// R7hr(DOCS-FULL-FU): six full formal documents appendix (order sheet, MAR,
+// NABL labs, diagnostic reports, consents, diet, discharge).
+import SharedFormalDocSections from "./SharedFormalDocSections";
 
 /* ── Event-kind metadata (colour + label) ──────────────────────── */
 const KIND_META = {
@@ -450,6 +455,8 @@ const TimelineTheme = ({ settings, file, events }) => {
           </div>
         )}
       </div>
+      <SharedRegisterSections file={file} />
+      <SharedFormalDocSections file={file} />
     </PrintShell>
   );
 };

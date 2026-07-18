@@ -1495,6 +1495,16 @@ export default function TreatmentChart({ UHID, visitId, patientName, nurseMode =
                               </div>
                             )}
                             <div style={{ color: isStopped ? C.muted : C.text }}>{order.orderDetails?.medicineName || "—"}</div>
+                            {/* D11 — NABH MOM.4/MOM.5 medication-safety warnings
+                                (Do-Not-Use abbreviation + LASA/tall-man). Backend
+                                stamps order.safetyWarnings on save; surface each as
+                                a non-blocking advisory so the decision-support
+                                reaches the clinician at the point of administration. */}
+                            {Array.isArray(order.safetyWarnings) && order.safetyWarnings.map((w, wi) => (
+                              <div key={wi} style={{ background: C.amberL, border: `1px solid ${C.amberB}`, borderRadius: 4, padding: "3px 7px", fontSize: 9.5, fontWeight: 600, color: C.amber, marginTop: 3, lineHeight: 1.35 }} title={w.message}>
+                                ⚠️ {w.message}
+                              </div>
+                            ))}
                             {/* R7bq-1 — IV dilution + infuse-over chip so nurse sees the drip rate
                                 inline on the MAR row. On dose given, this drives the auto I/O entry. */}
                             {order.orderDetails?.dilutionVolume > 0 && (

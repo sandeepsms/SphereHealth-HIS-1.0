@@ -123,6 +123,21 @@ export const TEMPLATES = [
   },
 
   {
+    id: "feedback_link",
+    name: "Feedback Link",
+    icon: "pi-star",
+    description: "Share the patient-feedback form link (NABH PRE.3)",
+    contextHint: "patientName · feedbackUrl",
+    build: ({ patientName = "Sir/Madam", feedbackUrl = "", hospitalName = "your hospital" }) =>
+      `Dear ${patientName},\n\n` +
+      `Thank you for visiting ${hospitalName} 🙏\n\n` +
+      `Please take a minute to rate your experience — it helps us improve:\n` +
+      `${feedbackUrl}\n` +
+      `\nYour responses are confidential.\n` +
+      `\n— ${hospitalName}`,
+  },
+
+  {
     id: "custom",
     name: "Custom Message",
     icon: "pi-pencil",

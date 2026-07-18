@@ -11,6 +11,7 @@ import React, { useMemo } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import useHospitalSettings from "../../Components/print/useHospitalSettings";
 import PrintPreviewPage from "../../Components/print/PrintPreviewPage";
+import { PrintFooterContext } from "../../Components/print/PrintShell";
 import PRINTABLES from "../../Components/print/printables";
 import { useEnrichedPrintPayload } from "../../Components/print/printEnrichment";
 import "../../Components/print/print.css";
@@ -329,6 +330,16 @@ const DEMO = {
     idNumber: "XXXX-XXXX-4242",
     visitingHours: "5:00 PM – 7:00 PM (daily)",
   },
+  // FeedbackSlip self-renders the QR from `url` (qrcode pkg) — no `qr`
+  // field here on purpose. Demo token routes to the real public page,
+  // which correctly shows "invalid link" if actually scanned.
+  "feedback-slip": {
+    url: `${window.location.origin}/feedback/demo-4f8a2c19`,
+    patientName: "Demo Patient", UHID: "UH00000099",
+    visitType: "OPD", department: "General Medicine",
+    date: new Date().toISOString(),
+    validUntil: new Date(Date.now() + 14 * 86400000).toISOString(),
+  },
   "mar-sheet": {
     marNo: "MAR-2026-00087",
     patientName: "Demo Patient", uhid: "UH00000099", ipdNo: "IPD-2026-0042",
@@ -482,7 +493,11 @@ const PrintRouterPage = () => {
   // missing standard patient/admission fields, backfill them from the API
   // before the template renders — otherwise the strip under the header
   // prints "—" wherever the calling page didn't hand-plumb a field.
-  const { receipt, enriching } = useEnrichedPrintPayload(payload);
+  // R7hr(DEFER-17): demo payloads skip enrichment — their placeholder
+  // UHIDs 404'd on every gallery preview.
+  const { receipt, enriching } = useEnrichedPrintPayload(payload, {
+    disabled: search.get("demo") === "1",
+  });
 
   if (!cfg) {
     return (
@@ -540,7 +555,12 @@ const PrintRouterPage = () => {
          POSTs to /api/print-audit before window.print(). */
       printAudit={payload?.printAudit}
     >
-      <Component settings={settings} receipt={receipt || {}} />
+      {/* R7hr(FOOTER-N): registry `footer: "neutral"` flows to PrintShell
+          via context so clinical/operational printables drop the billing
+          footer without each component threading a prop. */}
+      <PrintFooterContext.Provider value={cfg.footer || "billing"}>
+        <Component settings={settings} receipt={receipt || {}} />
+      </PrintFooterContext.Provider>
     </PrintPreviewPage>
   );
 };

@@ -29,6 +29,11 @@ const DUE_SOON_MINUTES = 60;  // status flips to DUE_SOON in the last hour befor
 // admission. Aligns with the TYPE_MAP in nursingAssessmentsRoutes.js + the
 // NABH cadence requirements ("twice a day" = 12h, "daily" = 24h).
 const EXPECTED_TUPLES = [
+  // NABH AAC.4 — initial assessment must be completed within the policy window
+  // (24h) of admission. One-time (not recurring): keyed off admissionDate, and
+  // marked DONE from the admission's initialAssessment.{doctor|nurse}CompletedAt.
+  { assessmentType: "initial-assessment", role: "doctor", cadenceHours: 24, oneTime: true },
+  { assessmentType: "initial-assessment", role: "nurse",  cadenceHours: 24, oneTime: true },
   // Nurse-driven
   { assessmentType: "vitals",          role: "nurse",  cadenceHours: 4  }, // Q4H baseline
   { assessmentType: "mews",            role: "nurse",  cadenceHours: 12 },
@@ -172,7 +177,7 @@ async function sweepOverdue() {
 async function seedAllActiveAdmissions() {
   try {
     const admissions = await Admission.find({ status: "Active" })
-      .select("_id UHID patientName admissionDate")
+      .select("_id UHID patientName admissionDate initialAssessment")
       .lean();
     const now = new Date();
     let inserted = 0;
@@ -195,26 +200,42 @@ async function seedAllActiveAdmissions() {
       const baseAt = adm.admissionDate ? new Date(adm.admissionDate) : now;
       for (const tuple of EXPECTED_TUPLES) {
         const nextDueAt = new Date(baseAt.getTime() + tuple.cadenceHours * 60 * 60 * 1000);
+        const setOnInsert = {
+          admissionId: adm._id,
+          UHID: adm.UHID || "",
+          patientName: adm.patientName || "",
+          assessmentType: tuple.assessmentType,
+          role: tuple.role,
+          cadenceHours: tuple.cadenceHours,
+        };
+        let update;
+        if (tuple.oneTime && tuple.assessmentType === "initial-assessment") {
+          // Source of truth is admission.initialAssessment.<role>CompletedAt.
+          // $set (not $setOnInsert) so the badge clears the moment the IA is
+          // signed, and shows OVERDUE if the 24h window lapses unsigned.
+          const doneAt = adm.initialAssessment?.[`${tuple.role}CompletedAt`] || null;
+          update = {
+            $setOnInsert: setOnInsert,
+            $set: {
+              lastAssessedAt: doneAt,
+              nextDueAt: doneAt ? null : nextDueAt,
+              status: doneAt ? "DONE_THIS_WINDOW" : _statusFor(nextDueAt, now),
+            },
+          };
+        } else {
+          update = {
+            $setOnInsert: {
+              ...setOnInsert,
+              lastAssessedAt: null,
+              nextDueAt,
+              status: nextDueAt <= now ? "OVERDUE" : "NOT_DUE_YET",
+            },
+          };
+        }
         ops.push({
           updateOne: {
-            filter: {
-              admissionId: adm._id,
-              assessmentType: tuple.assessmentType,
-              role: tuple.role,
-            },
-            update: {
-              $setOnInsert: {
-                admissionId: adm._id,
-                UHID: adm.UHID || "",
-                patientName: adm.patientName || "",
-                assessmentType: tuple.assessmentType,
-                role: tuple.role,
-                cadenceHours: tuple.cadenceHours,
-                lastAssessedAt: null,
-                nextDueAt,
-                status: nextDueAt <= now ? "OVERDUE" : "NOT_DUE_YET",
-              },
-            },
+            filter: { admissionId: adm._id, assessmentType: tuple.assessmentType, role: tuple.role },
+            update,
             upsert: true,
           },
         });

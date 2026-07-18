@@ -454,7 +454,9 @@ export default function NutritionalAssessmentPage() {
   const [patient, setPatient] = useState(null);
   return (
     <ClinicalLayout onPatientSelect={setPatient} selectedId={patient?._id} pageType="nutrition">
-      <NutritionalContent patient={patient} />
+      {/* R9-FIX(R9-109): key on patient id so the form remounts on patient
+          switch — the #47 fix, applied to this twin (no cross-patient bleed). */}
+      <NutritionalContent key={patient?._id || "no-patient"} patient={patient} />
     </ClinicalLayout>
   );
 }

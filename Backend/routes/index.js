@@ -115,6 +115,13 @@ router.use("/pincode", require("./Common/pincodeRoutes"));
 // authenticate + requireAction("settings.write").
 router.use("/hospital-settings", hospitalSettingsRoutes);
 
+// ABDM gateway callbacks — the ABDM Consent Manager calls these directly
+// (authenticated by the router's own HMAC signature check, not our JWT), so
+// they MUST be mounted before the JWT wall. Scoped to /abdm/v0.5 so the
+// router-level requireAbdmEnabled/signature guards never touch the authed
+// /abdm admin routes mounted below the wall.
+router.use("/abdm/v0.5", require("./ABDM/abdmCallbackRoutes"));
+
 // ── Everything below requires a valid JWT ────────────────────
 router.use(authenticate);
 
@@ -179,6 +186,17 @@ router.use("/nurse-notes",nurseRoutes);
 router.use("/nurse-staff", nurseStaffRoutes);
 router.use("/doctor-notes", doctorNotesRoutes);
 router.use("/doctor-orders", doctorOrderRoutes);
+// NABH MOM.4/MOM.5 — live Do-Not-Use abbreviation + LASA collision screen.
+router.use("/medication-safety", require("./Clinical/medicationSafetyRoutes"));
+// NABH Minor batch-5 registers/records:
+router.use("/cost-estimates", require("./Billing/costEstimateRoutes"));              // PRE.4 numbered itemized estimate
+router.use("/duty-roster", require("./Compliance/nabhRegisters/dutyRosterRoutes"));  // HRM.1 dated duty roster
+router.use("/occurrence-reports", require("./Compliance/nabhRegisters/occurrenceReportRoutes")); // PSQ unified occurrence form
+router.use("/nabh-registers/birth", require("./Compliance/nabhRegisters/birthRegisterRoutes"));  // IMS birth register
+router.use("/nabh-registers/cssd-load", require("./Compliance/nabhRegisters/cssdLoadRegisterRoutes"));            // HIC.7 CSSD load-release
+router.use("/nabh-registers/notifiable-disease", require("./Compliance/nabhRegisters/notifiableDiseaseRegisterRoutes")); // IDSP notifiable-disease
+router.use("/patient-acknowledgements", require("./Clinical/patientAcknowledgementRoutes"));     // PRE.1/DPDP consents + rights
+router.use("/second-opinions", require("./Clinical/secondOpinionRoutes"));           // PRE.1 second-opinion tracking
 
 router.use("/admissions", admissionRoutes);
 router.use("/bed-transfers", bedTransferRoutes);
@@ -198,6 +216,15 @@ router.use("/hospital-charges", hospitalChargesRoutes);
 router.use("/services", serviceMasterRoutes);
 router.use("/billing", newBillingRoutes);
 router.use("/cashier-sessions", cashierSessionRoutes);   // R7ap-F20
+// CLAIM-P4.1 — insurer registry (config-backed) for the registration insurer
+// picker + claim-form company selector. Read-only, JWT-gated.
+router.use("/insurers", require("./Billing/insurerRoutes"));
+// CLAIM-P4.3 — admin management of uploaded official insurer claim PDFs +
+// field-maps (the "fill the company's own form" overlay templates).
+router.use("/insurer-forms", require("./Billing/insurerFormTemplateRoutes"));
+// ICD-P1 — ICD-10-CM diagnosis-code master: typeahead search + yearly
+// CMS-file import (so descriptions auto-fill from a current codeset).
+router.use("/icd10", require("./Clinical/icd10Routes"));
 
 // nursing-notes alias (NABH Initial Assessment page uses /api/nursing-notes)
 router.use("/nursing-notes", nurseRoutes);
@@ -207,6 +234,11 @@ router.use("/investigation-orders", investigationOrderRoutes);
 
 // Phase 1: NABH Paperless Modules
 router.use("/discharge-summary", dischargeSummaryRoutes);
+
+// AI Clinical Documentation Assistant (ambient scribe) — structures a consult
+// transcript into a reviewable clinical-note draft. Feature-flagged by
+// ANTHROPIC_API_KEY; gated on clinical.scribe (Admin/Doctor).
+router.use("/clinical-scribe", require("./Clinical/clinicalScribeRoutes"));
 router.use("/consent-forms", consentFormRoutes);
 // R7hr-113 — Paperless PROM/PREM surveys. Discharge finalize gate consults
 // /api/prom-prem-surveys?admissionId=X to confirm one signed PROM + one
@@ -247,6 +279,12 @@ router.use("/admission-investigations", require("./Clinical/admissionInvestigati
 // ── R7hr-231: doctor-set nursing assessment plan (which assessments + per-day
 //    minimums the nurse must do) + today's done-counts.
 router.use("/nursing-assessment-plan", require("./Nurse/nursingAssessmentPlanRoutes"));
+
+// ── NABH MOM.2 (transfer of care) — structured nurse shift-handover. Writes
+//    gated on mar.write (Admin/Nurse), reads on nurse-notes.read inside the
+//    router itself. Was built (model+service+controller+routes) but never
+//    mounted, so the handover form 404'd (D12).
+router.use("/shift-handover", require("./Nurse/shiftHandoverRoutes"));
 
 // ── Roadmap A1–A5 + D14: patient-safety gates ────────────────
 router.use("/safety",           require("./Clinical/safetyRoutes"));
@@ -372,6 +410,8 @@ router.use("/grievances",            require("./Quality/grievanceRoutes"));
 // dashboard). Public patient-submit surface is /public-feedback (above).
 router.use("/feedback",              require("./Quality/feedbackRoutes"));
 router.use("/credentials",           require("./HR/credentialRoutes"));
+router.use("/staff-training",        require("./HR/staffTrainingRoutes"));   // HRM.4/5 competency + in-service
+router.use("/abdm",                  require("./ABDM/abdmAdminRoutes"));      // ABDM admin/ops (status, ABHA link, FHIR preview)
 router.use("/fire-drills",           require("./Compliance/fireDrillRoutes"));
 // R7bo — NABH compliance registers (RBS / Emergency / Blood Transfusion).
 // Surveyors ask for these as chronological audit-grade logs; the registers

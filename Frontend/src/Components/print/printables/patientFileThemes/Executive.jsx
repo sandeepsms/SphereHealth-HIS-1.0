@@ -25,6 +25,11 @@
 import React from "react";
 import PrintShell from "@/templates/PrintShell";
 import { fmtDate, fmtDayMonth, pronoun } from "./normalizeData";
+// R7hr(THEME-REG): coverage records + NABH registers — previously Narrative-only.
+import SharedRegisterSections from "./SharedRegisterSections";
+// R7hr(DOCS-FULL-FU): six full formal documents appendix (order sheet, MAR,
+// NABL labs, diagnostic reports, consents, diet, discharge).
+import SharedFormalDocSections from "./SharedFormalDocSections";
 
 /* ── prose helpers (component-local, mirrored from Narrative) ──── */
 const cleanSentence = (s) => {
@@ -844,6 +849,8 @@ const ExecutiveTheme = ({ settings = {}, file, events = [] }) => {
           )}
         </main>
       </div>
+      <SharedRegisterSections file={file} />
+      <SharedFormalDocSections file={file} />
     </PrintShell>
   );
 };

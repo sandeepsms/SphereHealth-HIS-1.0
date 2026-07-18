@@ -76,7 +76,12 @@ const _CRIT_HIGH = Number(process.env.RBS_CRITICAL_HIGH || 300);
 
 function _actor(actor = {}) {
   return {
-    byUserId: actor._id || actor.id || actor.userId || null,
+    // R9-FIX(R9-073): accept `byUserId` too. The MAR med-error call site (and
+    // any caller using the {byUserId,byName,byRole} shape) passed byUserId, but
+    // this only read _id/id/userId — so the reporting user's id silently fell to
+    // null on every MAR-originated medication error. byName/byRole already had
+    // their `by*` fallbacks; byUserId was the odd one out.
+    byUserId: actor._id || actor.id || actor.userId || actor.byUserId || null,
     byName:   actor.fullName || actor.name || actor.byName || "",
     byRole:   actor.role || actor.byRole || "",
   };
@@ -295,6 +300,22 @@ async function emitEmergencyTriage(args = {}) {
   }
 }
 
+// The ER *visit* disposition enum (models/Patient/emergencyModel.js) uses labels
+// that differ from this *register's* enum (models/Compliance/EmergencyRegisterModel.js):
+// notably the two most legally-sensitive exits — "Expired" → "Death" and
+// "Left Against Medical Advice" → "DAMA". Without this normalisation the register
+// save fails Mongoose enum validation and is swallowed by the catch below, so the
+// NABH Emergency Register was never updated/locked for Death & DAMA/LAMA exits.
+const ER_DISPOSITION_MAP = {
+  "Left Against Medical Advice": "DAMA",
+  Expired: "Death",
+  "Brought Dead": "DOA",
+  "Dead on Arrival": "DOA",
+};
+const ER_REGISTER_DISPOSITIONS = new Set([
+  "Admitted", "Discharged", "DAMA", "Referred", "Death", "DOA", "Absconded", "Observation",
+]);
+
 async function emitEmergencyDisposition(args = {}) {
   try {
     const { visit, actor = {}, disposition, admissionLinkId, referredTo, notes } = args;
@@ -303,8 +324,12 @@ async function emitEmergencyDisposition(args = {}) {
     if (!row) return null;
     if (row.locked) return row;
 
+    const mappedDisposition = ER_DISPOSITION_MAP[disposition] || disposition;
+    // A non-terminal / unknown value (e.g. "Pending") must not lock the register.
+    if (!ER_REGISTER_DISPOSITIONS.has(mappedDisposition)) return null;
+
     const at = new Date();
-    row.disposition = disposition;
+    row.disposition = mappedDisposition;
     row.dispositionAt = at;
     row.doorToDispositionMinutes = _diffMinutes(at, row.arrivalAt);
     if (admissionLinkId) row.admissionLinkId = admissionLinkId;
@@ -628,22 +653,46 @@ async function emitFallRisk(args = {}) {
     });
     // R7gw-B9-T01 — auto-trigger Sentinel-event register when a fall
     // actually occurred AND a major injury was recorded. Non-blocking.
+    // injurySeverity is case-sensitive — only "Major"/"Severe" escalate.
     const fallOccurred = !!(data.fallOccurred || data.fallEvent);
     const majorInjury = !!(data.majorInjury || data.injurySeverity === "Major" || data.injurySeverity === "Severe");
     if (fallOccurred && majorInjury) {
       try {
+        // R8-FIX(#47): STABLE per-incident sourceRef so re-saving the same
+        // fall coalesces onto ONE SentinelEventRegister row (the Morse page
+        // POSTs a FRESH NursingAssessment + FallRiskRegister row every save,
+        // so the old `FallRisk:${row._id}` minted a duplicate sentinel each
+        // time). emitSentinelEvent is find-or-create by sourceRef.
+        //
+        // PRIMARY key: the client-minted per-incident id (data.fallEventId).
+        // It is generated ONCE when the nurse marks the fall and reused across
+        // saves, so it survives the nurse CORRECTING the fall time or any
+        // admission/UHID scope change. A genuinely new fall gets a new id
+        // (checkbox re-armed). FALLBACK for non-UI producers that omit it:
+        // {admission||UHID}:{fall timestamp||date} — best-effort, coarser.
+        // R9-FIX(R9-072): the client-supplied fallEventId is ALWAYS prefixed
+        // with the patient scope, so a replayed/forged fallEventId can only
+        // dedup against the SAME patient's own falls — never swallow another
+        // patient's sentinel via a colliding UUID.
+        const _fallScope = String(canonicalAdmissionId || assessment.UHID || "").trim();
+        const _fallStamp = String(data.fallDateTime || data.fallDate || "").trim() ||
+          new Date(assessment.recordedAt || Date.now()).toISOString().slice(0, 10);
+        const _incidentId = String(data.fallEventId || "").trim();
+        const _sentinelSourceRef = _incidentId
+          ? `FallRisk:${_fallScope}:${_incidentId}`
+          : `FallRisk:${_fallScope}:${_fallStamp}`;
         await emitSentinelEvent({
           UHID: assessment.UHID,
           patientId: assessment.patientId || null,
           patientName: assessment.patientName || "",
           admissionId: canonicalAdmissionId,
           eventType: "Fall-with-Major-Injury",
-          discoveredAt: assessment.recordedAt || new Date(),
+          discoveredAt: data.fallDateTime || assessment.recordedAt || new Date(),
           discoveredByEmpId: assessment.recordedBy || actorMeta.byName || "",
           severity: "Critical",
           immediateAction: data.postFallActions || "Post-fall huddle activated; vitals + neuro check; imaging ordered; doctor informed",
           rcaInitiated: false,
-          sourceRef: `FallRisk:${row._id}`,
+          sourceRef: _sentinelSourceRef,
           autoTriggeredFrom: "emitFallRisk",
           actor: actor || {},
         });
@@ -745,6 +794,15 @@ async function emitPressureUlcer(args = {}) {
     // even if the sentinel emit fails.
     if (sentinel) {
       try {
+        // R9-FIX(R9-070): STABLE per-incident sourceRef (the #47 fix, applied
+        // to this twin). Previously keyed on the fresh PressureUlcerRegister
+        // row _id, so EVERY re-assessment of the SAME HAPU minted a new
+        // sentinel. One pressure ulcer = one (admission|UHID, site) — re-
+        // assessments and stage progression at that site coalesce onto one
+        // row via emitSentinelEvent's find-or-create; a distinct ulcer at a
+        // different site still raises its own.
+        const _puScope = String(canonicalAdmissionId || assessment.UHID || "").trim();
+        const _puSite = String(data.ulcerSite || "").trim().toLowerCase() || "unspecified";
         await emitSentinelEvent({
           UHID: assessment.UHID,
           patientId: assessment.patientId || null,
@@ -756,7 +814,7 @@ async function emitPressureUlcer(args = {}) {
           severity: "Critical",
           immediateAction: `HAPU detected stage ${ulcerStage} at ${data.ulcerSite || "site unknown"}; repositioning bundle activated; wound care + nutrition consult triggered`,
           rcaInitiated: false,
-          sourceRef: `PressureUlcer:${row._id}`,
+          sourceRef: `PressureUlcer:${_puScope}:${_puSite}`,
           autoTriggeredFrom: "emitPressureUlcer",
           actor: actor || {},
         });
@@ -1100,6 +1158,19 @@ async function emitECG(args = {}) {
       });
     }
 
+    // R7hr(REG-V): the auto-emit caller (doctorOrderRoutes) passes the real
+    // ward name ("Male General Ward") but the schema's location is a closed
+    // enum — the create() threw ValidationError, the catch below swallowed
+    // it, and NO auto-emitted ECG row was ever written. Normalize here so
+    // both the auto and manual paths are enum-safe.
+    const rawLoc = String(ecg.location || "");
+    const location =
+      /icu/i.test(rawLoc)                    ? "ICU"      :
+      /emerg|casualt|\ber\b/i.test(rawLoc)   ? "ER"       :
+      /cath/i.test(rawLoc)                   ? "Cath Lab" :
+      /day\s*care/i.test(rawLoc)             ? "Day Care" :
+      /opd|out\s*patient/i.test(rawLoc)      ? "OPD"      : "Ward";
+
     const row = await ECGRegister.create({
       patientId: patient._id,
       UHID: patient.UHID,
@@ -1111,7 +1182,7 @@ async function emitECG(args = {}) {
 
       ecgNumber,
       performedAt: performedAtVal,
-      location: ecg.location || "Ward",
+      location,
       leadType: ecg.leadType || "12-lead",
 
       indication: ecg.indication || "",
@@ -1415,9 +1486,20 @@ async function emitReadmission(args = {}) {
       UHID: patient.UHID,
       _id: { $ne: admission._id },
       actualDischargeDate: { $ne: null, $exists: true },
+      // R8-FIX(#42): only a real INPATIENT discharge is a valid readmission index.
+      // Exclude OPD/Services visits and OPD→IPD same-episode conversions (the OPD
+      // half auto-closes with an actualDischargeDate + convertedToAdmission set) —
+      // counting them made an OPD→IPD same-day conversion look like a readmission,
+      // inflating the NABH COP.16 readmission rate reported to leadership.
+      admissionType: { $nin: ["OPD", "Services"] },
+      convertedToAdmission: null,
     })
       .sort({ actualDischargeDate: -1 })
-      .select("_id admissionNumber admissionDate actualDischargeDate primaryDiagnosis department dischargeWorkflow")
+      // R7hr-NABH-READMIT-DX: Admission has no `primaryDiagnosis` field — the
+      // real fields are `provisionalDiagnosis` / `reasonForAdmission`. Selecting
+      // (and reading) the non-existent field left currentDiagnosis /
+      // previousDiagnosis / sameDiagnosis silently blank on every readmission row.
+      .select("_id admissionNumber admissionDate actualDischargeDate provisionalDiagnosis reasonForAdmission department dischargeWorkflow")
       .lean();
 
     if (!previous?.actualDischargeDate) return null;
@@ -1432,9 +1514,13 @@ async function emitReadmission(args = {}) {
     if (existing) return existing;
 
     const actorMeta = _actor(actor);
-    const sameDiagnosis = !!(admission.primaryDiagnosis && previous.primaryDiagnosis
-      && String(admission.primaryDiagnosis).trim().toLowerCase()
-        === String(previous.primaryDiagnosis).trim().toLowerCase());
+    // Best available diagnosis at admission time = provisional dx, else the
+    // reason for admission (the discharge/final dx lives on the DischargeSummary,
+    // not the Admission row).
+    const currentDx = admission.provisionalDiagnosis || admission.reasonForAdmission || "";
+    const previousDx = previous.provisionalDiagnosis || previous.reasonForAdmission || "";
+    const sameDiagnosis = !!(currentDx && previousDx
+      && String(currentDx).trim().toLowerCase() === String(previousDx).trim().toLowerCase());
 
     const row = await ReadmissionRegister.create({
       patientId: patient._id || null,
@@ -1445,13 +1531,13 @@ async function emitReadmission(args = {}) {
       currentAdmissionId: admission._id,
       currentAdmissionNumber: admission.admissionNumber || "",
       currentAdmissionDate,
-      currentDiagnosis: admission.primaryDiagnosis || "",
+      currentDiagnosis: currentDx,
       currentDepartment: admission.department || "",
       currentAttendingDoctor: admission.attendingDoctor || admission.consultantIncharge || "",
       previousAdmissionId: previous._id,
       previousAdmissionNumber: previous.admissionNumber || "",
       previousDischargeDate: previous.actualDischargeDate,
-      previousDiagnosis: previous.primaryDiagnosis || "",
+      previousDiagnosis: previousDx,
       previousDepartment: previous.department || "",
       previousDischargeType: previous.dischargeWorkflow?.dischargeType || "",
       daysSinceDischarge: days,
@@ -1568,7 +1654,7 @@ async function emitMortality(args = {}) {
       primaryCause: dischargeSummary?.causeOfDeath
         || deathNote?.primaryCause
         || deathNote?.causeDeath1 // R7em-7 — "I (a) Immediate Cause" doubles as the primary registry cause
-        || dischargeSummary?.primaryDiagnosis
+        || dischargeSummary?.finalDiagnosis // DischargeSummary has no primaryDiagnosis field (it is finalDiagnosis)
         || "Not Specified",
       // R7em-7 — frontend posts causeDeath1/2/3 + `contributing`; alias to
       // the registry field names without losing existing callers.
@@ -1715,7 +1801,7 @@ async function emitRestraint(args = {}) {
       adverseEvent: !!restraint.adverseEvent,
       adverseEventNotes: restraint.adverseEventNotes || "",
       status: endTime ? "Removed" : "Active",
-      sourceRef: restraint.sourceRef || null,
+      sourceRef: restraint.sourceRef || "",   // R7hr(REG-V): schema is String now
       sourceType: restraint.sourceType || "DoctorOrder",
       occurredAt: startTime,
       auditTrail: [{
@@ -2147,11 +2233,13 @@ const SentinelEventRegister = require("../../models/Compliance/SentinelEventRegi
 const _crypto = require("crypto");
 
 async function emitSentinelEvent(payload = {}) {
+  // R9-FIX(R9-071): declared OUTSIDE the try so the E11000 catch below can
+  // reference it — previously block-scoped inside the try, so the catch's
+  // `findOne({ sourceRef })` threw a ReferenceError (swallowed → dead code).
+  const sourceRef = payload.sourceRef || _crypto.randomUUID();
   try {
     if (!payload.UHID) return null;
     if (!payload.eventType) return null;
-
-    const sourceRef = payload.sourceRef || _crypto.randomUUID();
 
     // Idempotency by sourceRef
     try {
@@ -2169,6 +2257,7 @@ async function emitSentinelEvent(payload = {}) {
       UHID: String(payload.UHID).toUpperCase().trim(),
       patientName: payload.patientName || "",
       admissionId: payload.admissionId || null,
+      equipmentRef: payload.equipmentRef || undefined,
       eventType: payload.eventType,
       discoveredAt,
       discoveredByEmpId: payload.discoveredByEmpId || actorMeta.byName || "",
@@ -2197,7 +2286,13 @@ async function emitSentinelEvent(payload = {}) {
     });
     return row;
   } catch (e) {
-    if (e?.code === 11000) return null;
+    // R8-FIX(#47): a concurrent emit won the unique-sourceRef race; return the
+    // row it created so find-or-create stays idempotent (was `return null`,
+    // which silently dropped the caller's reference to the existing sentinel).
+    if (e?.code === 11000) {
+      try { return await SentinelEventRegister.findOne({ sourceRef }).lean(); }
+      catch (_) { return null; }
+    }
     // eslint-disable-next-line no-console
     console.error("[nabhRegisterEmitter] emitSentinelEvent FAILED:", e.message, "— UHID:", payload?.UHID, "eventType:", payload?.eventType);
     return null;
@@ -2310,6 +2405,7 @@ async function emitNearMissEvent(payload = {}) {
       UHID: payload.UHID || "",
       patientName: payload.patientName || "",
       admissionId: canonicalAdmissionId,
+      equipmentRef: payload.equipmentRef || undefined,
       eventType: payload.eventType,
       observedAt: new Date(payload.observedAt),
       observedByEmpId: String(payload.observedByEmpId).trim(),
@@ -2402,6 +2498,7 @@ async function emitMedicationError(args = {}) {
       severityNCC: severity,
       actionTakenImmediate: error.actionTakenImmediate || "",
       patientHarm,
+      equipmentRef: error.equipmentRef || undefined,
       reportedByEmpId: error.reportedByEmpId || actor.empId || "",
       reportedByName: error.reportedByName || actorMeta.byName || "",
       reportedByUserId: _asObjectId(actorMeta.byUserId),
@@ -3332,12 +3429,23 @@ async function emitDayCare(args = {}) {
 
     const cl = admission.dayCare?.preProcChecklist || {};
     const checklistComplete = !!(cl.consentVerified && cl.npoConfirmed && cl.siteMarked && cl.highRiskMedsReviewed);
+    // R7hr(REG-V): Admission has NO top-level age/gender — both callers pass
+    // the raw admission doc, so every register row was written age=null,
+    // sex="" and the statutory DC register printed a blank Age/Sex column.
+    // Pull them from the patient (same pattern as the readmission check).
+    let pt = null;
+    try {
+      const Patient = require("../../models/Patient/patientModel");
+      pt = admission.patientId
+        ? await Patient.findById(admission.patientId).select("age gender").lean()
+        : null;
+    } catch (_) { /* age/sex stay blank rather than failing the emit */ }
     const payload = {
       patientId:       admission.patientId,
       UHID:            admission.UHID,
       patientName:     admission.patientName || "",
-      age:             admission.age || null,
-      sex:             admission.gender || "",
+      age:             pt?.age ?? admission.age ?? null,
+      sex:             pt?.gender || admission.gender || "",
       admissionNumber: admission.admissionNumber || "",
       procedure:       admission.reasonForAdmission || admission.provisionalDiagnosis || "",
       doctor:          admission.attendingDoctor || "",

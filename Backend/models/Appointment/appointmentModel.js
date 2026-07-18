@@ -56,11 +56,16 @@ const AppointmentSchema = new mongoose.Schema(
 // succeeded. Partial unique index now lets DB enforce one booking per
 // slot, EXCEPT when the prior appointment is Cancelled or NoShow (those
 // don't block re-booking).
+// R9-FIX(R9-009): MongoDB REJECTS $nin inside partialFilterExpression
+// (only $eq/$gt/$gte/$lt/$lte/$type/$and/$exists/$in are permitted), so the
+// index above silently failed to build — leaving the slot-conflict race wide
+// open again. Express the same predicate positively with $in over the
+// blocking statuses (everything except Cancelled/NoShow).
 AppointmentSchema.index(
   { doctorId: 1, appointmentDate: 1, slotTime: 1 },
   {
     unique: true,
-    partialFilterExpression: { status: { $nin: ["Cancelled", "NoShow"] } },
+    partialFilterExpression: { status: { $in: ["Booked", "Confirmed", "CheckedIn", "Completed"] } },
   },
 );
 AppointmentSchema.index({ appointmentDate: 1, status: 1 });

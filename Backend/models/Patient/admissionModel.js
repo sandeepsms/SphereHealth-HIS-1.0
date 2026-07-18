@@ -144,6 +144,37 @@ const AdmissionSchema = new mongoose.Schema(
     modeOfArrival: { type: String, default: "" },
     broughtBy:     { type: String, default: "" },
 
+    // ── NABH COP.10/COP.11 — vulnerable / high-risk identification ──
+    // `flags` marks the patient's vulnerable population(s); setting them
+    // materialises `specialCareChecklist` (built by vulnerabilityChecklist
+    // service) so the ward can evidence the special-care pathway.
+    vulnerability: {
+      flags: { type: [String], default: [] }, // Paediatric/Geriatric/Obstetric/…
+      identifiedAt: { type: Date, default: null },
+      identifiedByName: { type: String, default: "" },
+      notes: { type: String, default: "" },
+      specialCareChecklist: {
+        type: [{
+          _id: false,
+          item: { type: String, default: "" },
+          category: { type: String, default: "" },
+          done: { type: Boolean, default: false },
+          completedByName: { type: String, default: "" },
+          completedAt: { type: Date, default: null },
+        }],
+        default: [],
+      },
+    },
+
+    // NABH IMS.3 (#138) — retention legal hold. When true the record is
+    // excluded from the retention purge-candidate queue (open litigation /
+    // MLC / insurance dispute). Set / cleared via POST /api/mrd/legal-hold.
+    legalHold: { type: Boolean, default: false },
+    legalHoldReason: { type: String, default: "" },
+    legalHoldBy:     { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    legalHoldByName: { type: String, default: "" },
+    legalHoldAt:     { type: Date, default: null },
+
     admissionType: {
       type: String,
       // ✅ Added OPD, Daycare, Services

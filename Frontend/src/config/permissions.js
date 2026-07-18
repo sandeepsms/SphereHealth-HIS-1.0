@@ -169,6 +169,9 @@ export const ACTIONS = {
   "ipd.transfer":          ["Admin", "Doctor", "Nurse"],
   "ipd.delete":            ["Admin"],
   "ipd.discharge-summary": ["Admin", "Doctor"],
+  // R7hr(ICD-P1) — ICD-10 master (mirror of backend).
+  "icd10.read":            ["Admin", "Doctor", "Nurse", "MRD", "TPA Coordinator", "Accountant", "Receptionist"],
+  "icd10.manage":          ["Admin", "MRD"],
   "vitals.write":          ["Admin", "Nurse", "Doctor"],
   "mar.write":             ["Admin", "Nurse"],
   // R7ei — ICU Bundles of Care write surface (mirror of backend).
@@ -274,6 +277,7 @@ export const ACTIONS = {
   "ward.equipment":        ["Admin", "Ward Boy", "Nurse"],
   "ward.supplies":         ["Admin", "Ward Boy", "Housekeeping", "Nurse"],
   "ward.code-blue":        ["Admin", "Doctor", "Nurse", "Ward Boy"],
+  "ward.code-blue.respond": ["Admin", "Doctor", "Nurse"],             // R8-FIX(#46): respond+close clinical-only (mirror backend)
   "ward.mortuary":         ["Admin", "Doctor", "Nurse", "Ward Boy"],
   "ward.manage":           ["Admin", "Nurse"],
 
@@ -316,6 +320,8 @@ export const ACTIONS = {
   "mar.read":                  ["Admin", "Doctor", "Nurse", "MRD"],
   "discharge-summary.read":    ["Admin", "Doctor", "Nurse", "MRD"],
   "discharge-summary.write":   ["Admin", "Doctor"],
+  // Mirror — AI Clinical Documentation Assistant (ambient scribe). Doctor-only.
+  "clinical.scribe":           ["Admin", "Doctor"],
   "mlc.write":                 ["Admin", "Doctor"],
   "mlc.read":                  ["Admin", "Doctor", "Nurse"],
   "ipd.read":                  ["Admin", "Doctor", "Nurse", "Receptionist"],
@@ -373,6 +379,14 @@ export const ACTIONS = {
   "feedback.read":                 ["Admin", "MRD", "Receptionist"],
   "hr.credential.write":           ["Admin"],
   "hr.credential.read":            ["Admin", "Doctor"],
+  // Mirror — NABH HRM.4/5 staff competency + in-service training.
+  // R9-FIX(R9-084): "HR" is not a real role (absent from the User.role enum) —
+  // stripped to match the backend grant (config/permissions.js).
+  "hr.training.write":             ["Admin"],
+  "hr.training.read":              ["Admin", "Doctor", "Nurse"],
+  // Mirror — ABDM admin/ops (status, ABHA link, care contexts, FHIR preview).
+  "abdm.read":                     ["Admin"],
+  "abdm.write":                    ["Admin"],
   "compliance.firedrill.write":    ["Admin", "Security"],
   "compliance.firedrill.read":     ["Admin", "Security"],
   // R7bo — NABH Inspection Dashboard (RBS / Emergency / Blood Transfusion).
@@ -381,7 +395,17 @@ export const ACTIONS = {
   // Hand-Hygiene, HAI, Med-Error, etc.
   "compliance.nabh.read":          ["Admin", "Doctor", "Nurse", "MRD"],
   "compliance.nabh.write":         ["Admin", "Doctor", "Nurse", "MRD"],
+  // D19 — mirror of backend: NABH register tamper-evidence verify surface.
+  "compliance.nabh.verify":        ["Admin", "MRD"],
   "print.audit.write":             ["Admin", "Doctor", "Nurse", "Pharmacist", "Lab Technician", "Receptionist", "MRD"],
+
+  // Mirror of Backend/config/permissions.js — NABH HRM.1 duty roster +
+  // PRE.1/PRE.4/DPDP patient acknowledgements + second-opinion.
+  // R9-FIX(R9-084): stripped phantom "HR" role (not in User.role enum).
+  "hr.roster.read":                ["Admin", "Doctor", "Nurse"],
+  "hr.roster.write":               ["Admin"],
+  "patient.consent.read":          ["Admin", "Receptionist", "Doctor", "Nurse", "MRD"],
+  "patient.consent.write":         ["Admin", "Receptionist", "Doctor", "Nurse"],
 
   // ── R7bh-F6 — Accountant regulatory + cold-chain (mirror of backend) ─
   "tax.returns.write":             ["Admin", "Accountant"],
@@ -389,6 +413,9 @@ export const ACTIONS = {
   "tax.tds.write":                 ["Admin", "Accountant"],
   "tax.tds.read":                  ["Admin", "Accountant"],
   "compliance.retention.read":     ["Admin", "MRD"],
+  // Mirror — NABH IMS.3 retention legal-hold setter (POST /api/mrd/legal-hold).
+  // MRD / Admin only; hides the "Legal hold" control for everyone else.
+  "compliance.legal-hold.write":   ["Admin", "MRD"],
   "pharmacy.cold-chain.write":     ["Admin", "Pharmacist", "Nurse"],
   "pharmacy.cold-chain.read":      ["Admin", "Pharmacist", "Nurse", "Doctor"],
 

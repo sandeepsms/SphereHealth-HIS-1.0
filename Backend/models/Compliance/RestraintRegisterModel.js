@@ -128,7 +128,13 @@ const RestraintRegisterSchema = new Schema({
   },
 
   // ── Source linkage / audit ──
-  sourceRef:  { type: Schema.Types.ObjectId, default: null },
+  // R7hr(REG-V): was ObjectId, but restraintController always supplies a
+  // string UUID (crypto.randomUUID) — the cast threw on EVERY emit, the
+  // emitter's catch swallowed it, and the register stayed empty forever.
+  // String matches the UUID-dedup pattern the other registers use (and
+  // still accepts stringified ObjectIds). Collection was empty — no
+  // migration needed.
+  sourceRef:  { type: String, default: "", index: true },
   sourceType: { type: String, default: "DoctorOrder" },     // DoctorOrder / NurseNote / Restraint
   occurredAt: { type: Date, default: Date.now, index: true },
   auditTrail: { type: [AuditSchema], default: [] },

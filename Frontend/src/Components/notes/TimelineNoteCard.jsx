@@ -169,7 +169,11 @@ export function StatusBadge({ status }) {
   );
 }
 
-export function TypePill({ type, icon, label }) {
+// R7hr(NOTE-WRAP, owner 2026-07-12) — "halka wrapper": the type pill is now a
+// neutral grey chip with NO icon and NO per-type colour. The type NAME stays
+// (scannability), the colour chrome goes; Signed/Draft badge + the date/time
+// rail are the only status colour left on the list wrapper.
+export function TypePill({ type, label }) {
   const a = accentOf(type);
   return (
     <span style={{
@@ -178,14 +182,12 @@ export function TypePill({ type, icon, label }) {
       fontSize: 10,
       fontWeight: 800,
       letterSpacing: ".5px",
-      background: a.tint,
-      color: a.color,
-      border: `1px solid ${a.color}33`,
+      background: "#f1f5f9",
+      color: "#475569",
+      border: "1px solid #e2e8f0",
       display: "inline-flex",
       alignItems: "center",
-      gap: 5,
     }}>
-      <i className={`pi ${icon || a.icon}`} style={{ fontSize: 10 }} />
       {label || a.label}
     </span>
   );
@@ -295,7 +297,6 @@ export default function TimelineNoteCard({
 
   if (!note) return null;
 
-  const accent = accentOf(note.noteType);
   const isSigned = note.status === "signed";
   const isCritical = note.isCritical || note.isCriticalEvent;
   const isDraft = note.status === "draft" || !note.status;
@@ -325,9 +326,14 @@ export default function TimelineNoteCard({
     <div
       className={`dnp-note ${isSigned ? "dnp-note--signed" : "dnp-note--draft"} ${isCritical ? "dnp-note--critical" : ""}`}
       style={{
-        "--dnp-accent": accent.color,
-        "--dnp-tint":   accent.tint,
-        borderLeft: `4px solid ${accent.color}`,
+        // R7hr(NOTE-WRAP, owner 2026-07-12) — "halka wrapper": per-type accent
+        // colour dropped from the list-item chrome (left rail, time pill, dot,
+        // hover tint all read these vars). Neutral slate keeps the structure
+        // without the colour; the CRITICAL inset ring still comes from the
+        // dnp-note--critical class, and Signed/Draft badge keeps its colour.
+        "--dnp-accent": "#64748b",
+        "--dnp-tint":   "#f1f5f9",
+        borderLeft: "4px solid #e2e8f0",
       }}
     >
       {/* ── Left rail: time bubble + shift + dot ─────────────────── */}
@@ -336,7 +342,7 @@ export default function TimelineNoteCard({
           <div className="dnp-note__time-hh">{timeStr}</div>
           <span className="dnp-note__time-shift">{shiftCap}</span>
         </div>
-        <div className="dnp-note__time-dot" style={{ background: accent.color }} />
+        <div className="dnp-note__time-dot" />
       </div>
 
       {/* ── Body ─────────────────────────────────────────────────── */}

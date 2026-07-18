@@ -29,6 +29,13 @@ router.get("/emergency", requireAction("compliance.read"), ctrl.listEmergency);
 // Blood Transfusion register
 router.get("/blood-transfusion", requireAction("compliance.read"), ctrl.listBloodTransfusion);
 router.post("/blood-transfusion", requireAction("doctor-orders.write"), ctrl.createBloodTransfusion);
+// NABH COP.13 — progressive monitoring workflow (cross-match → start →
+// intra-vitals → complete → reaction). Nursing/doctor write.
+router.patch("/blood-transfusion/:id/cross-match", requireAction("doctor-orders.write"), ctrl.crossMatchBloodTransfusion);
+router.patch("/blood-transfusion/:id/start",       requireAction("doctor-orders.write"), ctrl.startBloodTransfusion);
+router.patch("/blood-transfusion/:id/intra-vitals",requireAction("doctor-orders.write"), ctrl.addIntraVitalsBloodTransfusion);
+router.patch("/blood-transfusion/:id/complete",    requireAction("doctor-orders.write"), ctrl.completeBloodTransfusion);
+router.patch("/blood-transfusion/:id/reaction",    requireAction("doctor-orders.write"), ctrl.reactionBloodTransfusion);
 
 // R7bp — auto-populated from NursingAssessment saves
 router.get("/pain",            requireAction("compliance.read"), ctrl.listPain);
@@ -40,10 +47,19 @@ router.get("/dvt",             requireAction("compliance.read"), ctrl.listDVT);
 // All gated on compliance.read (Admin + Doctor + Nurse + MRD) to match
 // the surveyor-access policy used by the other NABH register endpoints.
 router.get("/ot-register",            requireAction("compliance.read"), ctrl.listOT);
+// NABH PSQ — WHO Surgical Safety Checklist phase capture (Sign-In/Time-Out/Sign-Out).
+router.patch("/ot-register/:id/who-checklist", requireAction("compliance.nabh.write"), ctrl.recordWhoChecklist);
 router.get("/asa-register",           requireAction("compliance.read"), ctrl.listASA);
 router.get("/readmission-register",   requireAction("compliance.read"), ctrl.listReadmission);
 router.get("/mortality-register",     requireAction("compliance.read"), ctrl.listMortality);
+// NABH COP.18 — record the mortality-review committee's decision (write tier).
+router.patch("/mortality-register/:id", validateObjectIdParam("id"), requireAction("compliance.nabh.write"), ctrl.reviewMortality);
 router.get("/restraint-register",     requireAction("compliance.read"), ctrl.listRestraint);
 router.get("/antimicrobial-register", requireAction("compliance.read"), ctrl.listAntimicrobial);
+
+// D19 — NABH register tamper-evidence: recompute + verify per-row HMAC integrity
+// digests for a surveyor-critical register (Admin / MRD). :register ∈
+// mortality | sentinel | rca | near-miss | medication-error | cssd-load | emergency
+router.get("/integrity-verify/:register", requireAction("compliance.nabh.verify"), ctrl.verifyRegisterIntegrity);
 
 module.exports = router;

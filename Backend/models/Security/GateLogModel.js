@@ -30,7 +30,12 @@ const GateLogSchema = new mongoose.Schema(
     },
     personType: {
       type: String,
-      enum: ["Visitor", "Patient", "Staff", "Vendor", "Ambulance", "Other"],
+      // "Attendant" is first-class: VisitorPass issues attendant passes
+      // (attendantName/attendantRelation), and the gate desk records the
+      // linked entry as personType "Attendant" when that pass is scanned.
+      // Its absence made a real attendant gate-entry throw a Mongoose
+      // ValidationError → HTTP 500 (E2E: tasks/security slice).
+      enum: ["Visitor", "Attendant", "Patient", "Staff", "Vendor", "Ambulance", "Other"],
       default: "Visitor",
       index: true,
     },

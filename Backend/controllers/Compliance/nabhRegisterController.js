@@ -14,6 +14,7 @@
 "use strict";
 
 const BloodSugarRegister = require("../../models/Compliance/BloodSugarRegisterModel");
+const sendErr = require("../../utils/sendErr");
 const EmergencyRegister = require("../../models/Compliance/EmergencyRegisterModel");
 const BloodTransfusionRegister = require("../../models/Compliance/BloodTransfusionRegisterModel");
 const PainAssessmentRegister = require("../../models/Compliance/PainAssessmentRegisterModel");
@@ -30,6 +31,14 @@ const AntimicrobialUseRegister = require("../../models/Compliance/AntimicrobialU
 // R7en — ECG Register (NABH AAC.4 + IPSG.2 + COP.7)
 const ECGRegister = require("../../models/Compliance/ECGRegisterModel");
 const emitter = require("../../services/Compliance/nabhRegisterEmitter");
+// D19 — surveyor-critical registers + per-row integrity verifier (tamper-evidence).
+// MortalityRegister + EmergencyRegister are already required above.
+const SentinelEventRegister   = require("../../models/Compliance/SentinelEventRegisterModel");
+const RCARegister             = require("../../models/Compliance/RCARegisterModel");
+const NearMissEventRegister   = require("../../models/Compliance/NearMissEventRegisterModel");
+const MedicationErrorRegister = require("../../models/Compliance/MedicationErrorRegisterModel");
+const CSSDLoadRecord          = require("../../models/Compliance/CSSDLoadRecordModel");
+const { verifyRegisterModel } = require("../../utils/registerIntegrity");
 
 function _dateRange(query) {
   const out = {};
@@ -69,7 +78,7 @@ exports.listBloodSugar = async (req, res) => {
     ]);
     res.json({ success: true, data: rows, pagination: { page, limit, total } });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -92,7 +101,7 @@ exports.createBloodSugar = async (req, res) => {
     if (!row) return res.status(400).json({ success: false, message: "Could not write register row" });
     res.status(201).json({ success: true, data: row });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -117,7 +126,7 @@ exports.listEmergency = async (req, res) => {
     ]);
     res.json({ success: true, data: rows, pagination: { page, limit, total } });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -156,7 +165,7 @@ exports.createBloodTransfusion = async (req, res) => {
     if (!row) return res.status(400).json({ success: false, message: "Could not write register row" });
     res.status(201).json({ success: true, data: row });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -177,8 +186,174 @@ exports.listBloodTransfusion = async (req, res) => {
     ]);
     res.json({ success: true, data: rows, pagination: { page, limit, total } });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
+};
+
+// ── NABH COP.13 — Blood-transfusion monitoring workflow (progressive) ──────
+// The register row is created (Draft) at order time; these PATCH stages walk
+// it cross-match → start → intra-vitals → complete → reaction, each pushing an
+// audit entry. A locked (post-completion) row is immutable.
+function _btActor(req) {
+  const u = req.user || {};
+  return { byName: u.fullName || u.name || "", byRole: u.role || "", byUserId: u._id || null };
+}
+async function _loadBt(req, res) {
+  const row = await BloodTransfusionRegister.findById(req.params.id);
+  if (!row) { res.status(404).json({ success: false, message: "Transfusion record not found" }); return null; }
+  if (row.locked) { res.status(409).json({ success: false, code: "BT_LOCKED", message: "Record is locked (completed + reaction window closed)" }); return null; }
+  return row;
+}
+
+exports.crossMatchBloodTransfusion = async (req, res) => {
+  try {
+    const row = await _loadBt(req, res); if (!row) return;
+    const b = req.body || {};
+    if (!["Compatible", "Incompatible", "Urgent_Uncrossmatched"].includes(b.result)) {
+      return res.status(400).json({ success: false, message: "result must be Compatible | Incompatible | Urgent_Uncrossmatched" });
+    }
+    row.crossMatch = {
+      result: b.result,
+      doneByName: b.doneByName || _btActor(req).byName,
+      doneAt: b.doneAt ? new Date(b.doneAt) : new Date(),
+      validUntil: b.validUntil ? new Date(b.validUntil) : null,
+      notes: b.notes || "",
+    };
+    // Incompatible cross-match must not advance to a releasable state.
+    row.status = b.result === "Incompatible" ? "Draft" : "Cross-matched";
+    row.auditTrail.push({ action: "CROSS_MATCHED", ..._btActor(req), notes: `result=${b.result}` });
+    await row.save();
+    res.json({ success: true, data: row });
+  } catch (e) { sendErr(res, e); }
+};
+
+exports.startBloodTransfusion = async (req, res) => {
+  try {
+    const row = await _loadBt(req, res); if (!row) return;
+    const b = req.body || {};
+    // NABH — cannot start without a compatible cross-match + documented consent.
+    if (row.crossMatch?.result !== "Compatible" && row.crossMatch?.result !== "Urgent_Uncrossmatched") {
+      return res.status(409).json({ success: false, code: "BT_NO_CROSSMATCH", message: "Compatible cross-match required before starting" });
+    }
+    if (b.preVitals) row.preTransfusion.vitals = b.preVitals;
+    if (b.hbGdL != null) row.preTransfusion.hbGdL = b.hbGdL;
+    if (b.premedsGiven) row.preTransfusion.premedsGiven = b.premedsGiven;
+    if (b.consentSigned != null) row.preTransfusion.consentSigned = !!b.consentSigned;
+    if (row.preTransfusion.consentSigned !== true) {
+      return res.status(409).json({ success: false, code: "BT_NO_CONSENT", message: "Documented transfusion consent required before starting" });
+    }
+    row.startedAt = b.startedAt ? new Date(b.startedAt) : new Date();
+    row.rateMlPerHr = b.rateMlPerHr ?? row.rateMlPerHr;
+    row.transfusedByName = b.transfusedByName || _btActor(req).byName;
+    row.status = "In-progress";
+    row.auditTrail.push({ action: "TRANSFUSION_STARTED", ..._btActor(req) });
+    await row.save();
+    res.json({ success: true, data: row });
+  } catch (e) { sendErr(res, e); }
+};
+
+exports.addIntraVitalsBloodTransfusion = async (req, res) => {
+  try {
+    const row = await _loadBt(req, res); if (!row) return;
+    const v = req.body?.vitals || req.body || {};
+    const actor = _btActor(req);
+    row.intraVitals.push({
+      at: v.at ? new Date(v.at) : new Date(),
+      bp: v.bp || "", pulse: v.pulse ?? null, temp: v.temp ?? null, spo2: v.spo2 ?? null,
+      recordedByName: v.recordedByName || actor.byName, recordedByUserId: actor.byUserId,
+    });
+    if (row.status === "Released" || row.status === "Cross-matched") row.status = "In-progress";
+    row.auditTrail.push({ action: "INTRA_VITALS", ...actor });
+    await row.save();
+    res.json({ success: true, data: row });
+  } catch (e) { sendErr(res, e); }
+};
+
+exports.completeBloodTransfusion = async (req, res) => {
+  try {
+    const row = await _loadBt(req, res); if (!row) return;
+    const b = req.body || {};
+    row.endedAt = b.endedAt ? new Date(b.endedAt) : new Date();
+    if (row.startedAt) row.durationMinutes = Math.max(0, Math.round((row.endedAt - row.startedAt) / 60000));
+    if (b.postVitals) row.postTransfusion.vitals = b.postVitals;
+    if (b.hbGdL != null) row.postTransfusion.hbGdL = b.hbGdL;
+    // Reaction window stays open 48h post-end.
+    row.reaction.reportingWindowEndsAt = new Date(row.endedAt.getTime() + 48 * 3600 * 1000);
+    row.status = row.reaction?.occurred ? "Reaction-pending" : "Completed";
+    row.auditTrail.push({ action: "TRANSFUSION_ENDED", ..._btActor(req) });
+    await row.save();
+    res.json({ success: true, data: row });
+  } catch (e) { sendErr(res, e); }
+};
+
+exports.reactionBloodTransfusion = async (req, res) => {
+  try {
+    const row = await _loadBt(req, res); if (!row) return;
+    const b = req.body || {};
+    row.reaction.occurred = true;
+    if (b.type) row.reaction.type = b.type;
+    if (b.severity) row.reaction.severity = b.severity;
+    row.reaction.onsetAt = b.onsetAt ? new Date(b.onsetAt) : new Date();
+    if (b.minutesIntoTransfusion != null) row.reaction.minutesIntoTransfusion = b.minutesIntoTransfusion;
+    if (b.description) row.reaction.description = b.description;
+    if (b.managementTaken) row.reaction.managementTaken = b.managementTaken;
+    if (b.outcome) row.reaction.outcome = b.outcome;
+    if (b.reportedToBloodBankBy) {
+      row.reaction.reportedToBloodBankBy = b.reportedToBloodBankBy;
+      row.reaction.reportedToBloodBankAt = new Date();
+    }
+    if (row.status !== "Completed") row.status = "Reaction-pending";
+    row.auditTrail.push({ action: "REACTION_LOGGED", ..._btActor(req), notes: `${b.type || "?"}/${b.severity || "?"}` });
+    await row.save();
+    res.json({ success: true, data: row });
+  } catch (e) { sendErr(res, e); }
+};
+
+// ── NABH PSQ (#150) — WHO Surgical Safety Checklist ────────────────────────
+// PATCH /registers/nabh/ot-register/:id/who-checklist — record one phase.
+// body: { phase: "signIn"|"timeOut"|"signOut", byName?, ...item booleans }.
+// Completing Sign-Out sets whoChecklistComplete + auto-locks the OT row.
+const _WHO_ITEMS = {
+  signIn: ["patientIdentityConfirmed", "siteMarked", "anaesthesiaSafetyChecked", "pulseOximeterOn", "knownAllergyReviewed", "difficultAirwayRisk", "aspirationRisk"],
+  timeOut: ["teamIntroduced", "patientSiteProcedureConfirmed", "antibioticProphylaxisGiven", "anticipatedCriticalEvents", "imagingDisplayed"],
+  signOut: ["procedureNameConfirmed", "instrumentSpongeNeedleCountCorrect", "specimenLabelled", "equipmentIssuesNoted"],
+};
+exports.recordWhoChecklist = async (req, res) => {
+  try {
+    const row = await OTRegister.findById(req.params.id);
+    if (!row) return res.status(404).json({ success: false, message: "OT record not found" });
+    if (row.locked) return res.status(409).json({ success: false, code: "OT_LOCKED", message: "OT record is locked" });
+    const b = req.body || {};
+    const phase = b.phase;
+    if (!_WHO_ITEMS[phase]) {
+      return res.status(400).json({ success: false, message: "phase must be signIn | timeOut | signOut" });
+    }
+    const u = req.user || {};
+    row.whoChecklist = row.whoChecklist || {};
+    const ph = row.whoChecklist[phase] || {};
+    for (const item of _WHO_ITEMS[phase]) if (b[item] !== undefined) ph[item] = !!b[item];
+    if (phase === "signOut" && b.keyRecoveryConcerns !== undefined) ph.keyRecoveryConcerns = String(b.keyRecoveryConcerns);
+    ph.done = b.done !== undefined ? !!b.done : true;
+    ph.at = new Date();
+    ph.byName = b.byName || u.fullName || u.name || "";
+    row.whoChecklist[phase] = ph;
+    row.markModified("whoChecklist");
+
+    const complete = !!(row.whoChecklist.signIn?.done && row.whoChecklist.timeOut?.done && row.whoChecklist.signOut?.done);
+    row.whoChecklistComplete = complete;
+    // Sign-Out closes the loop → the row may now lock (if the surgery is done).
+    if (complete && row.status === "Completed" && !row.locked) {
+      row.locked = true;
+      row.lockedAt = new Date();
+    }
+    row.auditTrail.push({
+      action: "AMENDED", at: new Date(),
+      byUserId: u._id || null, byName: ph.byName, byRole: u.role || "",
+      notes: `WHO checklist ${phase} recorded${complete ? " — checklist COMPLETE" : ""}`,
+    });
+    await row.save();
+    return res.json({ success: true, data: { _id: row._id, otNumber: row.otNumber, whoChecklist: row.whoChecklist, whoChecklistComplete: row.whoChecklistComplete, locked: row.locked } });
+  } catch (e) { sendErr(res, e); }
 };
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -206,7 +381,7 @@ function _listRegister(Model, dateField) {
       ]);
       res.json({ success: true, data: rows, pagination: { page, limit, total } });
     } catch (e) {
-      res.status(500).json({ success: false, message: e.message });
+      sendErr(res, e);
     }
   };
 }
@@ -235,7 +410,7 @@ exports.listDVT = async (req, res) => {
     ]);
     res.json({ success: true, data: rows, pagination: { page, limit, total } });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -273,7 +448,7 @@ exports.listOT = async (req, res) => {
     ]);
     res.json({ success: true, data: rows, total, pagination: { page, limit, total } });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -296,7 +471,7 @@ exports.listASA = async (req, res) => {
     ]);
     res.json({ success: true, data: rows, total, pagination: { page, limit, total } });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -319,7 +494,7 @@ exports.listReadmission = async (req, res) => {
     ]);
     res.json({ success: true, data: rows, total, pagination: { page, limit, total } });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -343,7 +518,46 @@ exports.listMortality = async (req, res) => {
     ]);
     res.json({ success: true, data: rows, total, pagination: { page, limit, total } });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
+  }
+};
+
+// Mortality review — NABH COP.18 (monthly mortality-review committee).
+// R7hr-NABH-PSQ: pre-fix the register was read-only, so the committee could
+// see deaths but never record its review (reviewedByCommittee / reviewDate /
+// reviewFindings / preventableFlag). Adds the write path + a REVIEWED audit
+// entry. Gated on compliance.nabh.write (route).
+exports.reviewMortality = async (req, res) => {
+  try {
+    const row = await MortalityRegister.findById(req.params.id);
+    if (!row) return res.status(404).json({ success: false, message: "Mortality row not found" });
+
+    const body = req.body || {};
+    const actorMeta = {
+      byUserId: req.user?._id || req.user?.id || null,
+      byName:   req.user?.fullName || req.user?.name || "",
+      byRole:   req.user?.role || "",
+    };
+
+    let touched = false;
+    if (body.reviewedByCommittee !== undefined) { row.reviewedByCommittee = !!body.reviewedByCommittee; touched = true; }
+    if (body.preventableFlag !== undefined)     { row.preventableFlag = !!body.preventableFlag; touched = true; }
+    if (typeof body.reviewFindings === "string"){ row.reviewFindings = body.reviewFindings; touched = true; }
+    if (body.reviewDate)                        { row.reviewDate = new Date(body.reviewDate); touched = true; }
+    else if (body.reviewedByCommittee && !row.reviewDate) { row.reviewDate = new Date(); }
+
+    if (!touched) {
+      return res.status(400).json({ success: false, message: "Nothing to update — provide reviewedByCommittee, preventableFlag, reviewFindings, or reviewDate" });
+    }
+    row.auditTrail.push({
+      action: "REVIEWED",
+      ...actorMeta,
+      notes: `committee=${row.reviewedByCommittee} preventable=${row.preventableFlag}${body.reviewFindings ? " · findings recorded" : ""}`,
+    });
+    await row.save();
+    return res.json({ success: true, data: row });
+  } catch (e) {
+    sendErr(res, e);
   }
 };
 
@@ -366,7 +580,7 @@ exports.listRestraint = async (req, res) => {
     ]);
     res.json({ success: true, data: rows, total, pagination: { page, limit, total } });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -391,7 +605,7 @@ exports.listAntimicrobial = async (req, res) => {
     ]);
     res.json({ success: true, data: rows, total, pagination: { page, limit, total } });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -455,6 +669,43 @@ exports.dashboardSummary = async (req, res) => {
       ],
     });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
+  }
+};
+
+// ───────────────────────────────────────────────────────────────────
+// D19 — Register integrity verification (tamper-evidence)
+// ───────────────────────────────────────────────────────────────────
+// GET /registers/nabh/integrity-verify/:register — recompute the per-row HMAC
+// integrity digest for a surveyor-critical register and flag any row whose
+// stored digest no longer matches its material content (an out-of-band edit
+// that bypassed the pre-save stamp). Rows with no stored digest report as
+// "legacy" (unverified), NOT "tampered". Admin / MRD only (compliance.nabh.verify).
+const _INTEGRITY_MODELS = {
+  "mortality":        MortalityRegister,
+  "sentinel":         SentinelEventRegister,
+  "rca":              RCARegister,
+  "near-miss":        NearMissEventRegister,
+  "medication-error": MedicationErrorRegister,
+  "cssd-load":        CSSDLoadRecord,
+  "emergency":        EmergencyRegister,
+};
+
+exports.verifyRegisterIntegrity = async (req, res) => {
+  try {
+    const key = String(req.params.register || "").toLowerCase();
+    const Model = _INTEGRITY_MODELS[key];
+    if (!Model) {
+      return res.status(400).json({
+        success: false,
+        message: `Unknown register "${key}". Expected one of: ${Object.keys(_INTEGRITY_MODELS).join(", ")}`,
+      });
+    }
+    const filter = {};
+    if (req.query.UHID) filter.UHID = String(req.query.UHID).toUpperCase();
+    const result = await verifyRegisterModel(Model, filter, { limit: req.query.limit });
+    return res.json({ success: true, register: key, ...result });
+  } catch (e) {
+    sendErr(res, e);
   }
 };

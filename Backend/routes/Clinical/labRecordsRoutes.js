@@ -4,6 +4,13 @@ const ctrl    = require("../../controllers/Clinical/labRecordsController");
 const { requireAction } = require("../../middleware/auth");
 // R7bm-F9: 400 on a malformed :id before findById throws CastError -> 500.
 const { validateObjectIdParam } = require("../../utils/queryGuards");
+// R7hr(LAB-P3) — outside-report attachment upload (scanned PDF / image).
+const path = require("path");
+const fs = require("fs");
+const { safeUpload } = require("../../middleware/safeUpload");
+const LAB_UPLOAD_DIR = path.join(__dirname, "..", "..", "uploads", "lab-records");
+try { fs.mkdirSync(LAB_UPLOAD_DIR, { recursive: true }); } catch (_) { /* dir exists */ }
+const uploadReport = safeUpload({ destination: LAB_UPLOAD_DIR, allowedKinds: ["image", "document"] });
 
 /* Reference data — every clinical role can read presets so the
    doctor can suggest a panel from the order page too. */
@@ -32,5 +39,8 @@ router.get  ("/reports/:id",    validateObjectIdParam("id"), requireAction("lab.
 router.post ("/reports",        requireAction("lab.records.write"), ctrl.reportCreate);
 router.put  ("/reports/:id",    validateObjectIdParam("id"), requireAction("lab.records.write"), ctrl.reportUpdate);
 router.patch("/reports/:id/verify", validateObjectIdParam("id"), requireAction("lab.records.verify"), ctrl.reportVerify);
+// R7hr(LAB-P3) — attach / detach the original scanned outside report.
+router.post  ("/reports/:id/attachment", validateObjectIdParam("id"), requireAction("lab.records.write"), uploadReport.array("files", 5), ctrl.reportAttachmentUpload);
+router.delete("/reports/:id/attachment", validateObjectIdParam("id"), requireAction("lab.records.write"), ctrl.reportAttachmentDelete);
 
 module.exports = router;

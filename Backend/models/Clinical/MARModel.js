@@ -32,7 +32,12 @@ const AdministrationEntrySchema = new mongoose.Schema(
     administeredByUser2Id: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     nurse2Name:            { type: String, trim: true, default: "" },
     nurse2StaffId:         { type: String, trim: true, default: "" },
-    isHamDose:             { type: Boolean, default: false } },
+    isHamDose:             { type: Boolean, default: false },
+    // NABH MOM.4 / IPSG.3 — five-rights attestation. The DoctorOrder
+    // /administer path already gates a GIVEN dose on this; the MAR path
+    // previously did not read or persist it, so a dose charted here bypassed
+    // the check. recordAdministration now requires it for GIVEN.
+    fiveRightsChecked:     { type: Boolean, default: false } },
   { _id: true }
 );
 

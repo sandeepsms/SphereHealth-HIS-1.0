@@ -12,6 +12,7 @@
  *   POST /api/public-feedback/:token  publicSubmit  — patient submits
  */
 const PatientFeedback = require("../../models/Quality/PatientFeedbackModel");
+const { escapeRegex, parseHospitalDate } = require("../../utils/queryGuards");   // TD-3 dedup — was hand-rolled twice below
 const { RATING_KEYS } = PatientFeedback;
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
@@ -160,13 +161,17 @@ exports.list = async (req, res) => {
     const { from, to, visitType, department, via, minOverall } = req.query;
     const q = { status: "submitted" };
     if (visitType) q.visitType = visitType;
-    if (department) q.department = new RegExp(`^${String(department).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
+    if (department) q.department = new RegExp(`^${escapeRegex(String(department))}$`, "i");
     if (via) q.submittedVia = via;
     if (minOverall) q["ratings.overall"] = { $gte: Number(minOverall) };
     if (from || to) {
       q.submittedAt = {};
-      if (from) q.submittedAt.$gte = new Date(from);
-      if (to) q.submittedAt.$lte = new Date(`${to}T23:59:59.999Z`);
+      try {
+        if (from) q.submittedAt.$gte = parseHospitalDate(from);
+        if (to) q.submittedAt.$lte = parseHospitalDate(to, { endOfDay: true });
+      } catch (e) {
+        return res.status(e.status || 400).json({ success: false, code: e.code || "INVALID_DATE", message: e.message });
+      }
     }
     const limit = clamp(Number(req.query.limit) || 100, 1, 500);
     const page = clamp(Number(req.query.page) || 1, 1, 100000);
@@ -186,11 +191,15 @@ exports.stats = async (req, res) => {
     const { from, to, visitType, department } = req.query;
     const match = { status: "submitted" };
     if (visitType) match.visitType = visitType;
-    if (department) match.department = new RegExp(`^${String(department).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i");
+    if (department) match.department = new RegExp(`^${escapeRegex(String(department))}$`, "i");
     if (from || to) {
       match.submittedAt = {};
-      if (from) match.submittedAt.$gte = new Date(from);
-      if (to) match.submittedAt.$lte = new Date(`${to}T23:59:59.999Z`);
+      try {
+        if (from) match.submittedAt.$gte = parseHospitalDate(from);
+        if (to) match.submittedAt.$lte = parseHospitalDate(to, { endOfDay: true });
+      } catch (e) {
+        return res.status(e.status || 400).json({ success: false, code: e.code || "INVALID_DATE", message: e.message });
+      }
     }
 
     // Category averages — one $avg per key, only counting answered (>0) rows.
@@ -199,24 +208,39 @@ exports.stats = async (req, res) => {
       avgStage[k] = { $avg: { $cond: [{ $gt: [`$ratings.${k}`, 0] }, `$ratings.${k}`, "$$REMOVE"] } };
     }
 
-    const [agg] = await PatientFeedback.aggregate([
+    // R7hr(DEFER-15): the three sequential queries (summary group, visit-type
+    // breakdown, recent comments) now run as ONE $facet — one collection
+    // scan of the matched window instead of three round-trips.
+    const [facets] = await PatientFeedback.aggregate([
       { $match: match },
-      { $group: {
-          _id: null,
-          count: { $sum: 1 },
-          ...avgStage,
-          promoters:  { $sum: { $cond: [{ $gte: ["$npsScore", 9] }, 1, 0] } },
-          passives:   { $sum: { $cond: [{ $and: [{ $gte: ["$npsScore", 7] }, { $lte: ["$npsScore", 8] }] }, 1, 0] } },
-          detractors: { $sum: { $cond: [{ $and: [{ $ne: ["$npsScore", null] }, { $lte: ["$npsScore", 6] }] }, 1, 0] } },
-          npsAnswered:{ $sum: { $cond: [{ $ne: ["$npsScore", null] }, 1, 0] } },
-        } },
-    ]);
+      { $facet: {
+          summary: [
+            { $group: {
+                _id: null,
+                count: { $sum: 1 },
+                ...avgStage,
+                promoters:  { $sum: { $cond: [{ $gte: ["$npsScore", 9] }, 1, 0] } },
+                passives:   { $sum: { $cond: [{ $and: [{ $gte: ["$npsScore", 7] }, { $lte: ["$npsScore", 8] }] }, 1, 0] } },
+                detractors: { $sum: { $cond: [{ $and: [{ $ne: ["$npsScore", null] }, { $lte: ["$npsScore", 6] }] }, 1, 0] } },
+                npsAnswered:{ $sum: { $cond: [{ $ne: ["$npsScore", null] }, 1, 0] } },
+              } },
+          ],
+          byVisitType: [
+            { $group: { _id: "$visitType", count: { $sum: 1 }, avgOverall: { $avg: { $cond: [{ $gt: ["$ratings.overall", 0] }, "$ratings.overall", "$$REMOVE"] } } } },
+            { $sort: { count: -1 } },
+          ],
+          comments: [
+            { $match: { $or: [{ wentWell: { $nin: ["", null] } }, { improvements: { $nin: ["", null] } }] } },
+            { $sort: { submittedAt: -1 } },
+            { $limit: 25 },
+            { $project: { patientName: 1, anonymous: 1, visitType: 1, department: 1, wentWell: 1, improvements: 1, "ratings.overall": 1, npsScore: 1, submittedAt: 1 } },
+          ],
+      } },
+    ]).option({ allowDiskUse: true, maxTimeMS: 15_000 });
 
-    const byVisitType = await PatientFeedback.aggregate([
-      { $match: match },
-      { $group: { _id: "$visitType", count: { $sum: 1 }, avgOverall: { $avg: { $cond: [{ $gt: ["$ratings.overall", 0] }, "$ratings.overall", "$$REMOVE"] } } } },
-      { $sort: { count: -1 } },
-    ]);
+    const agg         = facets?.summary?.[0] || null;
+    const byVisitType = facets?.byVisitType || [];
+    const comments    = facets?.comments || [];
 
     const round = (v) => (v == null ? 0 : Number(v.toFixed(2)));
     const categoryAverages = {};
@@ -226,12 +250,6 @@ exports.stats = async (req, res) => {
     const nps = agg && agg.npsAnswered
       ? Math.round(((agg.promoters - agg.detractors) / agg.npsAnswered) * 100)
       : null;
-
-    // Recent free-text comments (most recent 25 with any text).
-    const comments = await PatientFeedback.find(
-      { ...match, $or: [{ wentWell: { $nin: ["", null] } }, { improvements: { $nin: ["", null] } }] },
-      { patientName: 1, anonymous: 1, visitType: 1, department: 1, wentWell: 1, improvements: 1, "ratings.overall": 1, npsScore: 1, submittedAt: 1 },
-    ).sort({ submittedAt: -1 }).limit(25).lean();
 
     return res.json({
       success: true,
@@ -252,5 +270,98 @@ exports.stats = async (req, res) => {
     });
   } catch (err) {
     return res.status(500).json({ success: false, code: "FEEDBACK_STATS_FAILED", message: err.message });
+  }
+};
+
+// ── STAFF: CQI experience indicator (month-bucketed PROM/PREM trend) ─────────
+// NABH PRE.6 + QPS.3. The `stats` endpoint is a single-window snapshot; the
+// Quality committee's CQI dashboard tracks the *trend* — satisfaction rate and
+// NPS bucketed by month so an improvement/decline is visible over time. This
+// powers the same kind of indicator tile as the discharge-TAT CQI metric.
+//
+//   satisfactionRate = % of answered-overall rows rating overall ≥ 4 (of 5)
+//   nps              = %promoters(9-10) − %detractors(0-6) over answered rows
+//
+// Query: ?months=12 (default, 3-36) or explicit ?from&to; ?visitType&department.
+exports.cqiIndicator = async (req, res) => {
+  try {
+    const TZ = process.env.HOSPITAL_TZ || "Asia/Kolkata";
+    const { from, to, visitType, department } = req.query;
+    const months = Math.max(3, Math.min(Number(req.query.months) || 12, 36));
+
+    const match = { status: "submitted" };
+    if (visitType) match.visitType = visitType;
+    if (department) match.department = new RegExp(`^${escapeRegex(String(department))}$`, "i");
+    if (from || to) {
+      match.submittedAt = {};
+      try {
+        if (from) match.submittedAt.$gte = parseHospitalDate(from);
+        if (to) match.submittedAt.$lte = parseHospitalDate(to, { endOfDay: true });
+      } catch (e) {
+        return res.status(e.status || 400).json({ success: false, code: e.code || "INVALID_DATE", message: e.message });
+      }
+    } else {
+      // Default window: the last `months` calendar months up to now.
+      const start = new Date();
+      start.setUTCMonth(start.getUTCMonth() - months, 1);
+      start.setUTCHours(0, 0, 0, 0);
+      match.submittedAt = { $gte: start };
+    }
+
+    const rows = await PatientFeedback.aggregate([
+      { $match: match },
+      { $group: {
+          _id: { $dateToString: { format: "%Y-%m", date: "$submittedAt", timezone: TZ } },
+          n: { $sum: 1 },
+          overallAnswered: { $sum: { $cond: [{ $gt: ["$ratings.overall", 0] }, 1, 0] } },
+          satisfied:       { $sum: { $cond: [{ $gte: ["$ratings.overall", 4] }, 1, 0] } },
+          avgOverall:      { $avg: { $cond: [{ $gt: ["$ratings.overall", 0] }, "$ratings.overall", "$$REMOVE"] } },
+          promoters:  { $sum: { $cond: [{ $gte: ["$npsScore", 9] }, 1, 0] } },
+          detractors: { $sum: { $cond: [{ $and: [{ $ne: ["$npsScore", null] }, { $lte: ["$npsScore", 6] }] }, 1, 0] } },
+          npsAnswered:{ $sum: { $cond: [{ $ne: ["$npsScore", null] }, 1, 0] } },
+        } },
+      { $sort: { _id: 1 } },
+    ]).option({ allowDiskUse: true, maxTimeMS: 15_000 });
+
+    const round = (v) => (v == null ? 0 : Number(v.toFixed(2)));
+    const series = rows.map((r) => ({
+      period: r._id, // "YYYY-MM"
+      n: r.n,
+      avgOverall: round(r.avgOverall),
+      satisfactionRate: r.overallAnswered ? Math.round((r.satisfied / r.overallAnswered) * 100) : null,
+      nps: r.npsAnswered ? Math.round(((r.promoters - r.detractors) / r.npsAnswered) * 100) : null,
+    }));
+
+    // Window roll-up + trend (latest complete month vs the one before).
+    const totals = rows.reduce((a, r) => ({
+      n: a.n + r.n, satisfied: a.satisfied + r.satisfied, overallAnswered: a.overallAnswered + r.overallAnswered,
+      promoters: a.promoters + r.promoters, detractors: a.detractors + r.detractors, npsAnswered: a.npsAnswered + r.npsAnswered,
+    }), { n: 0, satisfied: 0, overallAnswered: 0, promoters: 0, detractors: 0, npsAnswered: 0 });
+
+    const overallSatisfaction = totals.overallAnswered ? Math.round((totals.satisfied / totals.overallAnswered) * 100) : null;
+    const overallNps = totals.npsAnswered ? Math.round(((totals.promoters - totals.detractors) / totals.npsAnswered) * 100) : null;
+
+    let trend = "flat";
+    if (series.length >= 2) {
+      const cur = series[series.length - 1].satisfactionRate;
+      const prev = series[series.length - 2].satisfactionRate;
+      if (cur != null && prev != null) trend = cur > prev ? "up" : cur < prev ? "down" : "flat";
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        indicator: "Patient Experience (PROM/PREM)",
+        unit: "% satisfied + NPS",
+        window: { months, from: match.submittedAt?.$gte || null, to: match.submittedAt?.$lte || null },
+        totalResponses: totals.n,
+        overallSatisfaction, // % overall ≥ 4
+        overallNps,          // −100..+100
+        trend,               // up | down | flat (latest month vs prior)
+        series,              // month-bucketed points for the CQI chart
+      },
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, code: "FEEDBACK_CQI_FAILED", message: err.message });
   }
 };

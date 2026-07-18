@@ -16,6 +16,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 const activityLogger = require("../../services/Clinical/activityLogger");
+const sendErr = require("../../utils/sendErr");
 
 function user(req) {
   const u = req.user || {};
@@ -51,7 +52,7 @@ exports.acknowledgeCriticalResult = async (req, res) => {
     });
     return res.json({ success: true });
   } catch (e) {
-    return res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };
 
@@ -80,7 +81,7 @@ exports.breakGlassAccess = async (req, res) => {
     });
     return res.json({ success: true });
   } catch (e) {
-    return res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };
 
@@ -108,7 +109,7 @@ exports.twoIdentifierConfirm = async (req, res) => {
     });
     return res.json({ success: true });
   } catch (e) {
-    return res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };
 
@@ -141,7 +142,7 @@ exports.surgicalChecklist = async (req, res) => {
     });
     return res.json({ success: true });
   } catch (e) {
-    return res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };
 
@@ -170,6 +171,6 @@ exports.painReassessment = async (req, res) => {
     });
     return res.json({ success: true });
   } catch (e) {
-    return res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };

@@ -4,6 +4,7 @@
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 const NurseStaff = require("../../models/Nurse/NurseStaffModel");
+const { safeRegex } = require("../../utils/queryGuards"); // R8-FIX(#50): ReDoS/regex-injection guard
 
 // ─────────────────────────────────────────────────────────────
 // Create nurse staff
@@ -76,15 +77,16 @@ const getAllNurseStaff = async (query) => {
   if (department) filter.department = department;
   if (designation) filter["professional.designation"] = designation;
   if (shift) filter.shift = shift;
-  if (ward) filter.ward = { $regex: ward, $options: "i" };
+  if (ward) filter.ward = safeRegex(ward); // R8-FIX(#50)
   if (isActive !== undefined) filter.isActive = isActive === "true";
   if (search) {
+    const rx = safeRegex(search); // R8-FIX(#50)
     filter.$or = [
-      { "personalInfo.fullName": { $regex: search, $options: "i" } },
-      { "personalInfo.firstName": { $regex: search, $options: "i" } },
-      { staffId: { $regex: search, $options: "i" } },
-      { "contact.mobileNumber": { $regex: search, $options: "i" } },
-      { "professional.registrationNumber": { $regex: search, $options: "i" } },
+      { "personalInfo.fullName": rx },
+      { "personalInfo.firstName": rx },
+      { staffId: rx },
+      { "contact.mobileNumber": rx },
+      { "professional.registrationNumber": rx },
     ];
   }
 

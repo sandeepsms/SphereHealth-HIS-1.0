@@ -452,7 +452,11 @@ const blockNonClinicalForDoctorNurse = (req, res, next) => {
   // Only POST/PUT/PATCH/DELETE — GET stays unblocked so the patient
   // header can still display amount-due, advance balance, etc.
   if (!WRITE_METHODS.has(req.method)) return next();
-  const url = req.originalUrl.split("?")[0];
+  // R9-FIX(R9-080): case-fold the path so a mixed-case bypass (e.g.
+  // `POST /api/billing/<id>/PAYMENT`) can't slip past these lowercase,
+  // case-sensitive rule regexes under Express's default case-insensitive
+  // routing. Id segments are matched by `[^/]+`, so folding is match-neutral.
+  const url = req.originalUrl.split("?")[0].toLowerCase();
   for (const rule of BLOCK_DOCTOR_NURSE_FINANCIAL_RULES) {
     if (rule.method === req.method && rule.regex.test(url)) {
       return res.status(403).json({
@@ -501,7 +505,7 @@ const admissionParamResolver = (req) => req.params?.id || null;
 // middleware sits ABOVE the feature routers, so req.params is still empty
 // when we run. req.path is the post-/api path (e.g. "/mar/<id>/medication/…").
 const marUrlResolver = async (req) => {
-  const m = req.path.match(/^\/mar\/([^/]+)\/medication/);
+  const m = req.path.match(/^\/mar\/([^/]+)\/medication/i); // R9-FIX(R9-080): case-insensitive resource name
   if (!m) return null;
   try {
     const MAR = require("../models/Clinical/MARModel");
@@ -514,7 +518,7 @@ const marUrlResolver = async (req) => {
 };
 
 const docOrderByIdResolver = async (req) => {
-  const m = req.path.match(/^\/doctor-orders\/([^/]+)\//);
+  const m = req.path.match(/^\/doctor-orders\/([^/]+)\//i); // R9-FIX(R9-080)
   if (!m) return req.body?.admissionId || null;
   try {
     const DoctorOrder = require("../models/Doctor/DoctorOrderModel");
@@ -530,7 +534,7 @@ const docOrderByIdResolver = async (req) => {
 // resolve the admission via the DoctorNotes doc so the discharge gate
 // can fire on a discharged admission's amendment attempt.
 const doctorNoteByIdResolver = async (req) => {
-  const m = req.path.match(/^\/doctor-notes\/([^/]+)\//);
+  const m = req.path.match(/^\/doctor-notes\/([^/]+)\//i); // R9-FIX(R9-080)
   if (!m) return req.body?.admissionId || null;
   try {
     const DoctorNotes = require("../models/Doctor/DoctorNotesModel");
@@ -543,7 +547,7 @@ const doctorNoteByIdResolver = async (req) => {
 };
 
 const prescriptionByIdResolver = async (req) => {
-  const m = req.path.match(/^\/prescriptions\/([^/]+)/);
+  const m = req.path.match(/^\/prescriptions\/([^/]+)/i); // R9-FIX(R9-080)
   if (!m) return req.body?.admissionId || null;
   try {
     const Prescription = require("../models/Doctor/prescription");
@@ -556,7 +560,7 @@ const prescriptionByIdResolver = async (req) => {
 };
 
 const carePlanByIdResolver = async (req) => {
-  const m = req.path.match(/^\/nursing-care-plans\/([^/]+)/);
+  const m = req.path.match(/^\/nursing-care-plans\/([^/]+)/i); // R9-FIX(R9-080)
   if (!m) return req.body?.admissionId || null;
   try {
     const NursingCarePlan = require("../models/Nurse/NursingCarePlanModel");
@@ -569,7 +573,7 @@ const carePlanByIdResolver = async (req) => {
 };
 
 const icuBundleByIdResolver = async (req) => {
-  const m = req.path.match(/^\/icu-bundles\/([^/]+)/);
+  const m = req.path.match(/^\/icu-bundles\/([^/]+)/i); // R9-FIX(R9-080)
   if (!m) return req.body?.admissionId || null;
   try {
     const ICUBundle = require("../models/Clinical/ICUBundleModel");
@@ -597,7 +601,7 @@ const pharmacyIpdResolver = (req) => req.body?.admissionId || null;
 // on PharmacySaleSchema L102). enforceStrict so an unresolvable parent
 // (deleted/garbage id) fails closed rather than being waved through.
 const pharmacySaleByIdResolver = async (req) => {
-  const m = req.path.match(/^\/pharmacy\/sales\/([^/]+)\/add-items/);
+  const m = req.path.match(/^\/pharmacy\/sales\/([^/]+)\/add-items/i); // R9-FIX(R9-080)
   if (!m) return null;
   try {
     const PharmacySale = require("../models/Pharmacy/PharmacySaleModel");
@@ -619,7 +623,7 @@ const pharmacySaleByIdResolver = async (req) => {
 // to the gate runner. Falls back to body.admissionId when no UHID path
 // segment is present.
 const uhidPathResolver = async (req) => {
-  const m = req.path.match(/\/uhid\/([^/?]+)/);
+  const m = req.path.match(/\/uhid\/([^/?]+)/i); // R9-FIX(R9-080)
   if (!m) return req.body?.admissionId || null;
   try {
     const Admission = require("../models/Patient/admissionModel");
@@ -804,7 +808,12 @@ const ENFORCE_DISCHARGE_WRITE_RULES = [
 const enforceActivePatientForClinicalWrites = async (req, res, next) => {
   try {
     if (!WRITE_METHODS.has(req.method)) return next();
-    const url = req.originalUrl.split("?")[0];
+    // R9-FIX(R9-080): Express routing is case-INsensitive by default, so
+    // `/API/DOCTOR-NOTES` reaches the handler while these lowercase, case-
+    // sensitive rule regexes miss it — bypassing the discharged-record seal.
+    // Lowercase the path before matching (the id/UHID segments are matched by
+    // `[^/]+` wildcards, so case-folding them is match-neutral).
+    const url = req.originalUrl.split("?")[0].toLowerCase();
     // Find the FIRST matching rule (rule order matters — keep the more
     // specific sub-resource rules above the catch-all base regexes).
     const rule = ENFORCE_DISCHARGE_WRITE_RULES.find(
@@ -930,10 +939,18 @@ const enforceActivePatientForClinicalWrites = async (req, res, next) => {
   }
 };
 
+// R9-FIX(R9-081): drop the cached user-status row after a tokenVersion bump
+// (password change / logout-all) so the freshly-issued token isn't rejected as
+// TOKEN_STALE for up to the 60s LRU TTL (the cache still held the OLD version).
+function invalidateUserStatus(userId) {
+  try { _userStatusCache?.invalidate(String(userId)); } catch (_) { /* best-effort */ }
+}
+
 module.exports = {
   authenticate,
   authorize,
   adminOnly,
+  invalidateUserStatus,
   requireAction,
   requireAnyAction,
   attemptAuth,

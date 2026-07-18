@@ -50,6 +50,8 @@ router.post("/:id/clear-final-bill",              idGuard, authenticate, require
 router.post("/:id/issue-gate-pass",               idGuard, authenticate, requireAction("reception.discharge"), ctrl.issueGatePass);
 // R7hr(DC-P1) — day-care checklist + discharge-readiness (nurse tier).
 router.patch("/:id/daycare",                      idGuard, authenticate, requireAction("vitals.write"), ctrl.updateDayCare);
+// NABH COP.10/11 — vulnerable-patient flags + special-care checklist.
+router.patch("/:id/vulnerability",                idGuard, authenticate, requireAction("vitals.write"), ctrl.updateVulnerability);
 // R7hr(DC-P2) — day-care → IPD conversion (doctor/discharge tier; reason mandatory).
 router.post("/:id/convert-to-ipd",                idGuard, authenticate, requireAction("ipd.discharge"), ctrl.convertDayCareToIpd);
 

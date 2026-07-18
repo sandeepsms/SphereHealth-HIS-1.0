@@ -758,7 +758,12 @@ router.post("/", requireAction("doctor-orders.write"), credentialExpiryBlocker("
         // Atomic $push of this med onto today's MAR.
         if (mar) {
           const medRow = {
-            drugName:   order.orderDetails?.medicineName || order.orderDetails?.displayName || "",
+            // R9-FIX(R9-057): the MARMedicationSchema field is `medicineName`
+            // (required), NOT `drugName` — strict mode silently DROPPED the old
+            // `drugName`, leaving a nameless med row whose allergy probe
+            // (_drugProbe reads medicineName) returned "" → SAFE unconditionally,
+            // so a drug could be charted GIVEN against a documented allergy.
+            medicineName: order.orderDetails?.medicineName || order.orderDetails?.displayName || "",
             dose:       order.orderDetails?.dose || order.orderDetails?.dosage || "",
             route:      order.orderDetails?.route || "",
             frequency:  order.orderDetails?.frequency || "",
@@ -1329,7 +1334,14 @@ router.post("/:id/administer", validateObjectIdParam("id"), requireAction("mar.w
       holdReason, holdUntil, delayedTo, delayReason,
       prnEffect, prnReassessTime, adverseEvent, adverseDetails,
       isStatDose, statReason, nextDoseAdjustedAt,
+      nurseError, errorDetails,
     } = req.body;
+
+    // NABH MOM.4 — a nurse-flagged administration error must carry an NCC-MERP
+    // severity so the auto-emitted MedicationError row (and its sentinel gate)
+    // is classified; otherwise emitMedicationError would silently no-op.
+    if (nurseError === true && !errorDetails?.severityNCC)
+      return res.status(422).json({ ok: false, message: "errorDetails.severityNCC (NCC-MERP A–I) is required when nurseError is true" });
 
     if (!scheduledTime || !givenBy || !status)
       return res.status(400).json({ ok: false, message: "scheduledTime, givenBy, status required" });
@@ -1337,13 +1349,41 @@ router.post("/:id/administer", validateObjectIdParam("id"), requireAction("mar.w
     // Validate HAM 2-nurse check
     if (order.twoNurseRequired && status === "given" && !verifiedBy)
       return res.status(422).json({ ok: false, message: "HAM order requires second nurse verification (verifiedBy)" });
+    // R8-FIX(#13): a HAM given-dose witness must resolve to a REGISTERED,
+    // DISTINCT, active nurse. A free-text name (Treatment Chart primary-nurse UI)
+    // is otherwise un-attributable and lets one nurse defeat the ISMP independent
+    // double-check by typing ANY name. When verifiedBy is a free-text name, match
+    // it against the nurse roster (case-insensitive exact): exactly one active
+    // Nurse (≠ the acting nurse) → accept; zero → reject (fake/misspelt name);
+    // ambiguous → reject (ask for the unique full name). A valid ObjectId falls
+    // through to the role=Nurse + distinct-actor checks already below.
+    if (order.twoNurseRequired && status === "given" && verifiedBy &&
+        !require("mongoose").isValidObjectId(verifiedBy)) {
+      const nm  = String(verifiedBy).trim();
+      const esc = nm.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const matches = await User.find({ role: "Nurse", fullName: { $regex: `^${esc}$`, $options: "i" } })
+        .select("_id fullName isActive status").lean();
+      const active = matches.filter((u) => u.isActive !== false && u.status !== "Inactive" && String(u._id) !== String(req.user.id));
+      if (active.length === 0)
+        return res.status(422).json({ ok: false, code: "HAM_WITNESS_UNVERIFIED", message: `HAM witness "${nm}" does not match any registered nurse — enter a real verifying nurse's name.` });
+      if (active.length > 1)
+        return res.status(422).json({ ok: false, code: "HAM_WITNESS_AMBIGUOUS", message: `HAM witness "${nm}" matches more than one nurse — enter the full unique name.` });
+    }
 
     // B1-T05: When a witness (verifiedBy) is supplied — for HAM, controlled
     // substances, or voluntary co-sign — verify the actor is a real Nurse
     // (ISMP two-nurse rule, NABH MOM.3) AND is not the same person doing
     // the administration. Previously we only checked presence — any user id
     // (or none) passed. Hardens against forged witness on HAM doses.
-    if (verifiedBy) {
+    // D3 — verifiedBy may arrive as a User ObjectId (structured picker) OR as a
+    // free-text nurse NAME (Treatment Chart primary-nurse UI, placeholder "Name
+    // of verifying nurse"). A name is NOT castable to ObjectId, so run the User
+    // lookup + role/self checks ONLY when it IS a valid ObjectId; otherwise the
+    // name is stored verbatim as the witness (entry.verifiedBy below). Pre-fix
+    // User.findById(<name>) threw a CastError -> 400 and blocked charting a HAM
+    // dose as GIVEN from the primary-nurse UI.
+    const mongoose = require("mongoose");
+    if (verifiedBy && mongoose.isValidObjectId(verifiedBy)) {
       const wUser = await User.findById(verifiedBy).select("role employeeId fullName").lean();
       if (!wUser) {
         return res.status(400).json({ success: false, code: "VERIFIER_NOT_FOUND", message: "verifiedBy user not found" });
@@ -1379,6 +1419,8 @@ router.post("/:id/administer", validateObjectIdParam("id"), requireAction("mar.w
       holdReason, holdUntil, delayedTo, delayReason,
       prnEffect, prnReassessTime,
       adverseEvent: adverseEvent || false, adverseDetails,
+      nurseError: nurseError || false,
+      errorDetails: nurseError ? errorDetails : undefined,
       isStatDose:  isStatDose  || false,
       statReason:  statReason  || undefined,
       nextDoseAdjustedAt: nextDoseAdjustedAt || undefined,
@@ -1539,6 +1581,39 @@ router.post("/:id/administer", validateObjectIdParam("id"), requireAction("mar.w
       }
     }
 
+    // NABH MOM.4 — auto-capture a MedicationError register row when the nurse
+    // flags this administration as an error/deviation. Best-effort + idempotent
+    // (sourceRef keyed on order+slot+day); never fails the administer call.
+    if (nurseError === true) {
+      try {
+        const { emitMedicationError } = require("../../services/Compliance/nabhRegisterEmitter");
+        const dayKey = new Date(); dayKey.setHours(0, 0, 0, 0);
+        const sourceRef = `MAR_${order._id}_${scheduledTime || "prn"}_${dayKey.toISOString().slice(0, 10)}`;
+        await emitMedicationError({
+          patient:   { UHID: order.UHID, _id: order.patientId, fullName: order.patientName },
+          admission: { _id: order.admissionId, admissionNumber: order.admissionNumber || order.ipdNo || "" },
+          error: {
+            errorPhase:    errorDetails?.errorPhase || "Administering", // MedicationErrorRegister enum value for the admin phase
+            severityNCC:   errorDetails?.severityNCC,
+            category:      errorDetails?.category || "",
+            medicationName: order.orderDetails?.medicineName || order.orderDetails?.drugName || "",
+            expectedDose:  order.orderDetails?.dose || "",
+            actualDose:    doseGiven || "",
+            expectedRoute: order.orderDetails?.route || "",
+            actualRoute:   routeUsed || "",
+            actionTakenImmediate: errorDetails?.description || "",
+            admissionId:   order.admissionId || null,
+            sourceRef,
+            sourceType:    "MAR",
+          },
+          actor: { byUserId: req.user?._id || req.user?.id, byName: givenBy, byRole: req.user?.role },
+        });
+      } catch (e) {
+        const { logErr } = require("../../utils/logErr");
+        logErr("nabhRegisterEmitter", "emitMedicationError on order.administer")(e);
+      }
+    }
+
     res.json({ ok: true, data: order });
   } catch (err) {
     res.status(400).json({ ok: false, message: err.message });
@@ -1582,7 +1657,12 @@ router.post("/:id/infusion-rate", validateObjectIdParam("id"), requireAction("ma
     // rate change — verify the actor is a real Nurse (ISMP two-nurse rule)
     // AND is not the same person changing the rate. Previously we only
     // checked presence — any user id (or none) passed.
-    if (verifiedBy) {
+    // D3 — same contract as /administer: verifiedBy may be a free-text nurse
+    // NAME, which is not castable to ObjectId. Only run the User lookup +
+    // Nurse/self checks when it IS a valid ObjectId; a name is accepted verbatim
+    // as the witness (pre-fix User.findById(<name>) threw a CastError -> 400).
+    const mongoose = require("mongoose");
+    if (verifiedBy && mongoose.isValidObjectId(verifiedBy)) {
       const wUser = await User.findById(verifiedBy).select("role employeeId fullName").lean();
       if (!wUser) {
         return res.status(400).json({ success: false, code: "VERIFIER_NOT_FOUND", message: "verifiedBy user not found" });
@@ -2295,20 +2375,10 @@ router.post("/seed-demo", adminOnly, async (req, res) => {
     await DoctorOrder.deleteMany({ UHID, orderedBy: "Dr. Demo" });
     const created = await DoctorOrder.insertMany(DEMO_ORDERS, { ordered: false });
 
-    // R7hr-12-S? (P2-6): audit-trail the demo seed so a surveyor inspecting
-    // the clinical audit collection can immediately distinguish demo data
-    // from real orders. Non-blocking — never fail the seed call.
-    try {
-      const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
-      emitClinicalAudit({
-        req,
-        event: "SEED_DEMO",
-        UHID,
-        patientName,
-        targetType: "DoctorOrder",
-        after: { count: created.length, orderedBy: createdBy, env: process.env.NODE_ENV || "unknown" },
-      });
-    } catch (_) { /* silent */ }
+    // R8-FIX(#40): demo/seed data is intentionally NOT clinical-audited —
+    // synthetic rows (orderedBy "Dr. Demo") must not pollute the ClinicalAudit
+    // timeline, and "SEED_DEMO" was never a valid ClinicalAudit event enum value
+    // (the emit always failed validation and dropped silently anyway).
 
     res.status(201).json({ ok: true, message: `${created.length} demo orders created`, data: created });
   } catch (err) {

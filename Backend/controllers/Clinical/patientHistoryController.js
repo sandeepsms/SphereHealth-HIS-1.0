@@ -22,6 +22,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 const Patient            = require("../../models/Patient/patientModel");
+const sendErr = require("../../utils/sendErr");
 const Admission          = require("../../models/Patient/admissionModel");
 const OPDRegistration    = require("../../models/Patient/OPDModels");
 const DoctorNotes        = require("../../models/Doctor/DoctorNotesModel");
@@ -240,7 +241,7 @@ exports.getOPDHistory = async (req, res) => {
     });
   } catch (e) {
     console.error("[patientHistory] getOPDHistory error:", e);
-    return res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };
 
@@ -805,7 +806,7 @@ exports.getIPDFile = async (req, res) => {
     });
   } catch (e) {
     console.error("[patientHistory] getIPDFile error:", e);
-    return res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };
 
@@ -844,6 +845,6 @@ exports.listAdmissions = async (req, res) => {
       count: admissions.length,
     });
   } catch (e) {
-    return res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };

@@ -24,14 +24,8 @@ import { inlineUploadsInHtml } from "../../utils/secureUploads";
 import {
   renderNursingNabhExtras,
 } from "../../Components/clinical/iaNabhRenderers";
-
-const escapeHtml = (s) =>
-  String(s ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;"); // R7hr-251 (audit) — single-quoted attribute contexts
+import { sigImgInline, sigImgPanel } from "../../utils/signatureImg";  // R7hr(DEFER-13) — shared, hardened (data:/uploads only)
+import { escapeHtml } from "../../utils/htmlEscape";  // R7hr(DEDUP) — shared 5-char escaper (was inline ×4)
 
 const ISO_RX = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
 
@@ -402,7 +396,7 @@ const buildBuilder = (note) => {
             : totalDisplay >= 45 ? "HIGH risk (≥45)"
             : totalDisplay >= 25 ? "MODERATE risk (25–44)"
             : "LOW risk (0–24)");
-      const tbl = `<table class="nfx-tbl"><tr><th>Morse Fall Scale Item</th><th style="width:30%">Score</th></tr>${rows.map(r => `<tr><td>${escapeHtml(r[0])}</td><td>${fmtVal(r[1]) || "—"}</td></tr>`).join("")}<tr style="background:#fef2f2"><td><strong>Total</strong></td><td><strong>${totalDisplay != null ? totalDisplay : "—"}</strong></td></tr></table>`;
+      const tbl = `<table class="nfx-tbl"><tr><th>Morse Fall Scale Item</th><th style="width:30%">Score</th></tr>${rows.map(r => `<tr><td>${escapeHtml(r[0])}</td><td>${escapeHtml(fmtVal(r[1])) || "—"}</td></tr>`).join("")}<tr style="background:#fef2f2"><td><strong>Total</strong></td><td><strong>${totalDisplay != null ? escapeHtml(String(totalDisplay)) : "—"}</strong></td></tr></table>`; // R9-FIX(R9-107): escape nurse-supplied score values (dangerouslySetInnerHTML sink)
       // Precaution chips from intervention booleans (live form).
       const precautionChips = [
         f.intBedLowest    && "Bed in lowest position",
@@ -437,7 +431,7 @@ const buildBuilder = (note) => {
       const totalCalc = Number(eye || 0) + Number(verbal || 0) + Number(motor || 0);
       const gcsTotal = n.gcsTotal ?? (totalCalc > 0 ? totalCalc : null);
       const gcs = [["Eye", eye], ["Verbal", verbal], ["Motor", motor]];
-      const gcsTbl = `<table class="nfx-tbl"><tr><th>GCS</th>${gcs.map(g => `<th>${g[0]}</th>`).join("")}<th>Total</th></tr><tr><td>Score</td>${gcs.map(g => `<td>${fmtVal(g[1]) || "—"}</td>`).join("")}<td><strong>${gcsTotal ?? "—"}</strong></td></tr></table>`;
+      const gcsTbl = `<table class="nfx-tbl"><tr><th>GCS</th>${gcs.map(g => `<th>${escapeHtml(g[0])}</th>`).join("")}<th>Total</th></tr><tr><td>Score</td>${gcs.map(g => `<td>${escapeHtml(fmtVal(g[1])) || "—"}</td>`).join("")}<td><strong>${gcsTotal != null ? escapeHtml(String(gcsTotal)) : "—"}</strong></td></tr></table>`; // R9-FIX(R9-107): escape nurse-supplied GCS values (dangerouslySetInnerHTML sink)
       // Pupils: legacy n.pupilsLeft/Right OR live form's pupils + sizeL/sizeR
       const pupilsLeft  = n.pupilsLeft  || (n.pupils && n.pupilSizeL ? `${n.pupils} · ${n.pupilSizeL} mm` : n.pupils);
       const pupilsRight = n.pupilsRight || (n.pupils && n.pupilSizeR ? `${n.pupils} · ${n.pupilSizeR} mm` : n.pupils);
@@ -476,7 +470,7 @@ const buildBuilder = (note) => {
         ["Temperature", m.temperature ?? m.temp],
         ["Consciousness", m.consciousness ?? m.avpu],
       ];
-      const tbl = `<table class="nfx-tbl"><tr><th>MEWS Parameter</th><th style="width:30%">Score</th></tr>${rows.map(r => `<tr><td>${escapeHtml(r[0])}</td><td>${fmtVal(r[1]) || "—"}</td></tr>`).join("")}<tr style="background:#fffbeb"><td><strong>Total</strong></td><td><strong>${m.total ?? "—"}</strong></td></tr></table>`;
+      const tbl = `<table class="nfx-tbl"><tr><th>MEWS Parameter</th><th style="width:30%">Score</th></tr>${rows.map(r => `<tr><td>${escapeHtml(r[0])}</td><td>${escapeHtml(fmtVal(r[1])) || "—"}</td></tr>`).join("")}<tr style="background:#fffbeb"><td><strong>Total</strong></td><td><strong>${m.total != null ? escapeHtml(String(m.total)) : "—"}</strong></td></tr></table>`; // R9-FIX(R9-107): escape nurse-supplied MEWS values (dangerouslySetInnerHTML sink)
       return _section("MEWS Score (Modified Early Warning)", "#d97706", tbl + _grid([
         _kv("Band / Interpretation", m.band, true),
       ]));
@@ -975,10 +969,7 @@ export function buildNurseNoteCardHtml(note, opts = {}) {
     // R7hr — signer's digital-signature image on EVERY signed line (all
     // surfaces render this same prose). data:/uploads/https only.
     const _sigSrc = note.signature || note.signatureImage || "";
-    const _sigImg = (isSigned && typeof _sigSrc === "string"
-                     && (_sigSrc.startsWith("data:image/") || _sigSrc.startsWith("/uploads/") || /^https?:\/\//.test(_sigSrc)))
-      ? `<br/><img src="${escapeHtml(_sigSrc)}" alt="Signature" style="max-height:36px;max-width:200px;margin-top:4px;border:1px solid #e2e8f0;background:#fff;padding:2px;border-radius:3px"/>`
-      : "";
+    const _sigImg = isSigned ? sigImgInline(_sigSrc) : "";
     const psign = isSigned
       ? `<div class="pfx-sign">✓ <strong>${escapeHtml(typeLabel)} — signed</strong> · By: <strong>${escapeHtml(note.nurseName || note.signedByName || "Nurse")}</strong>${_empId ? ` · Emp ${escapeHtml(_empId)}` : ""} · ${escapeHtml(_when)}${_sigImg}</div>`
       : `<div class="pfx-sign">✎ Draft — not yet signed</div>`;
@@ -998,12 +989,10 @@ export function buildNurseNoteCardHtml(note, opts = {}) {
   // like a real signed document.
   const nurseEmpIdShown = note.signedByEmpId || note.nurseEmployeeId || "";
   const nSigSrc = note.signature || note.signatureImage || "";
-  const nSigImgHtml = (isSigned && nSigSrc && typeof nSigSrc === "string"
-                      && (nSigSrc.startsWith("data:image/")
-                          || nSigSrc.startsWith("/uploads/")
-                          || /^https?:\/\//.test(nSigSrc)))
-    ? `<div style="margin-left:auto;text-align:center;flex:none"><img src="${escapeHtml(nSigSrc)}" alt="Signature" style="max-height:38px;max-width:170px;border:1px solid #e2e8f0;background:#fff;padding:2px 8px;border-radius:5px"/><div style="font-size:8px;color:#94a3b8;letter-spacing:.5px;text-transform:uppercase;margin-top:2px">e-signature</div></div>`
-    : "";
+  // R7hr(DEFER-13): the nurse footer had missed the R7hr-251 hardening —
+  // it still rendered external http(s) signature URLs. Shared helper now
+  // enforces data:/uploads everywhere.
+  const nSigImgHtml = isSigned ? sigImgPanel(nSigSrc) : "";
   // R7hr-222 — formal "authenticated" panel (presentation only; same fields:
   // signer name, emp id, signed timestamp, signature image).
   const sigHtml = isSigned

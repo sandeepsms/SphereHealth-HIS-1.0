@@ -60,6 +60,21 @@ import { buildInitialAssessmentHtml } from "./buildInitialAssessmentHtml";
 // (builder HTML) fetches them through axios with the Bearer token; a plain
 // <img src="/uploads/…"> would 401.
 import { useInlinedUploadsHtml } from "@/utils/secureUploads";
+// R7hr(THEME-REG): coverage/register row logic now shared across all 5
+// themes from registerRows.js — one source of truth for field names.
+import { COVERAGE_BLOCKS, COVERAGE_ORDER, REGISTER_META, REGISTER_HEADERS, REGISTER_WIDTHS, registerRow } from "./registerRows";
+// R7hr(DOCS-FULL): full standalone-level discharge summary in the file.
+import FullDischargeSection from "./FullDischargeSection";
+// R7hr(DOCS-FULL 2/6): NABL results tables + full diagnostic reports.
+import { FullLabTrends, FullDiagnosticReports } from "./FullLabSection";
+// R7hr(DOCS-FULL 3/6): full consent records (risks/biometric/refusals).
+import FullConsentSection from "./FullConsentSection";
+// R7hr(DOCS-FULL 4/6): full meal-by-meal diet plans.
+import FullDietSection from "./FullDietSection";
+// R7hr(DOCS-FULL 5/6): consolidated MAR slot grid.
+import FullMarSection from "./FullMarSection";
+// R7hr(DOCS-FULL 6/6): consolidated doctor order sheet.
+import FullOrderSheetSection from "./FullOrderSheetSection";
 
 /* R7gd note-card embed wrapped in a component so the JWT-gated /uploads
    signature inlining hook can run per-card (hooks can't live in a .map). */
@@ -366,15 +381,6 @@ const Para = ({ children, style }) => (
   <p style={{ ...PARA, ...(style || {}) }}>{children}</p>
 );
 
-const DayLabel = ({ n, date, totalDays }) => (
-  <div style={DAY_LABEL}>
-    Day {n}{totalDays ? `/${totalDays}` : ""} — {dayHeading(date)}
-  </div>
-);
-
-// R7hr — MiniTable drops any column whose every cell is empty, so a table
-// never prints a phantom "—" column (e.g. SpO₂/RR when the vital sheet didn't
-// capture them). Column 0 (the row anchor — date/time/no.) is always kept.
 const _cellEmpty = (c) => c == null || c === "" || c === "—";
 const MiniTable = ({ headers, rows, widths }) => {
   const keep = headers.map((_, ci) => ci === 0 || rows.some((cells) => !_cellEmpty(cells[ci])));
@@ -413,94 +419,6 @@ const Table = MiniTable;
    Config-driven so every remaining captured collection reaches the file
    with minimal code. Each entry: how to read a row into table cells.
    A block renders only when it has ≥1 row (self-eliding).            */
-const _cfmt = (v) => {
-  if (v == null || v === "") return "";
-  if (v instanceof Date) return _cfmtDate(v);
-  if (typeof v === "object") return "";               // never dump [object Object]
-  // ISO date-only ("2026-05-14") or full timestamp → localised print date.
-  if (typeof v === "string" && /^\d{4}-\d{2}-\d{2}/.test(v)) return _cfmtDate(v);
-  return String(v);
-};
-const _cfmtDate = (d) => {
-  try {
-    return new Date(d).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "2-digit", hour: "2-digit", minute: "2-digit" });
-  } catch { return ""; }
-};
-const _pick = (o, ...keys) => { for (const k of keys) { const v = o?.[k]; if (v != null && v !== "") return v; } return ""; };
-
-// Each: { key (file field), title, nabh, headers, widths, row(x)->cells }
-const COVERAGE_BLOCKS = [
-  { key: "appointments", title: "Appointments", nabh: "",
-    headers: ["Date", "Department", "Doctor", "Complaint", "Status"], widths: ["16%","20%","22%","28%","14%"],
-    row: (x) => [_cfmt(_pick(x,"appointmentDate","date","slotStart","createdAt")), _pick(x,"department","departmentName"), _pick(x,"doctorName","consultantName"), _pick(x,"chiefComplaint","reason"), _pick(x,"status")] },
-  { key: "emergencyCases", title: "Emergency / ER Visits", nabh: "NABH AAC.1",
-    headers: ["Date", "Triage", "Complaint", "Disposition", "Consultant"], widths: ["15%","12%","33%","20%","20%"],
-    row: (x) => [_cfmt(_pick(x,"arrivalTime","visitDate","createdAt")), _pick(x,"triageLevel","triageCategory"), _pick(x,"chiefComplaint","presentingComplaint"), _pick(x,"disposition","outcome"), _pick(x,"consultantName","attendingDoctor")] },
-  { key: "prescriptions", title: "Prescriptions (Rx)", nabh: "NABH MOM.2",
-    headers: ["Date", "Rx no", "Doctor", "Medicines", "Advice"], widths: ["14%","16%","20%","32%","18%"],
-    row: (x) => [_cfmt(_pick(x,"prescriptionDate","createdAt")), _pick(x,"prescriptionNumber","rxNo"), _pick(x,"doctorName","consultantName"),
-      (Array.isArray(x.medicines || x.medications) ? (x.medicines||x.medications) : []).map(m=>_pick(m,"medicineName","name","drug")).filter(Boolean).join(", "), _pick(x,"advice","generalAdvice")] },
-  { key: "medReconciliation", title: "Medication Reconciliation", nabh: "NABH MOM.1",
-    headers: ["Date", "Phase", "Home meds", "Reconciled by", "Discrepancies"], widths: ["15%","16%","26%","22%","21%"],
-    row: (x) => [_cfmt(_pick(x,"reconciledAt","createdAt")), _pick(x,"phase","stage","type"),
-      String((Array.isArray(x.homeMedications||x.medications)?(x.homeMedications||x.medications):[]).length || _pick(x,"homeMedCount") || ""),
-      _pick(x,"reconciledByName","pharmacistName","reconciledBy"), _pick(x,"discrepancies","discrepancyNotes")] },
-  { key: "diabeticCharts", title: "Diabetic / Blood-Sugar Chart", nabh: "NABH COP.3",
-    headers: ["Date", "Readings", "Insulin", "Notes"], widths: ["18%","34%","24%","24%"],
-    row: (x) => {
-      const n = (Array.isArray(x.readings || x.entries) ? (x.readings || x.entries) : []).length;
-      return [_cfmt(_pick(x,"chartDate","date","createdAt")),
-        n > 0 ? `${n} reading(s)` : "", _pick(x,"insulinRegimen","insulin"), _pick(x,"notes","remarks")];
-    } },
-  { key: "procedureNotes", title: "Procedure Notes", nabh: "NABH COP.13",
-    headers: ["Date", "Procedure", "Performed by", "Site", "Notes"], widths: ["15%","22%","20%","15%","28%"],
-    row: (x) => [_cfmt(_pick(x,"procedureDate","performedAt","createdAt")), _pick(x,"procedureName","procedure","name"), _pick(x,"performedByName","doctorName","performedBy"), _pick(x,"site","bodyPart"), _pick(x,"notes","findings")] },
-  { key: "physioPlans", title: "Physiotherapy Plans", nabh: "NABH COP.20",
-    headers: ["Date", "Diagnosis", "Goals", "Modalities", "Sessions"], widths: ["14%","22%","24%","24%","16%"],
-    row: (x) => [_cfmt(_pick(x,"createdAt","planDate")), _pick(x,"diagnosis","indication"), _pick(x,"goals","goal"),
-      (Array.isArray(x.modalities)?x.modalities:[]).join(", ") || _pick(x,"modalities"), String(_pick(x,"sessionCount","totalSessions") || "")] },
-  { key: "physioSessions", title: "Physiotherapy Sessions", nabh: "NABH COP.20",
-    headers: ["Date", "Modality", "Duration", "Therapist", "Response"], widths: ["16%","24%","14%","22%","24%"],
-    row: (x) => [_cfmt(_pick(x,"sessionDate","performedAt","createdAt")), _pick(x,"modality","treatment"), _pick(x,"duration","durationMin"), _pick(x,"therapistName","performedBy"), _pick(x,"patientResponse","response","notes")] },
-  { key: "medicalCertificates", title: "Medical Certificates", nabh: "NABH IMS.1",
-    headers: ["Date", "Cert no", "Type", "Issued by", "Validity"], widths: ["15%","18%","22%","23%","22%"],
-    row: (x) => [_cfmt(_pick(x,"issuedAt","createdAt")), _pick(x,"certificateNumber","certNo"), _pick(x,"certificateType","type"), _pick(x,"issuedByName","doctorName"),
-      [_cfmt(_pick(x,"validFrom","fromDate")), _cfmt(_pick(x,"validTo","toDate"))].filter(Boolean).join(" – ")] },
-  { key: "pharmacySales", title: "Pharmacy Dispenses", nabh: "",
-    headers: ["Date", "Bill no", "Type", "Items", "Net (₹)"], widths: ["16%","20%","14%","32%","18%"],
-    row: (x) => [_cfmt(_pick(x,"createdAt","saleDate")), _pick(x,"billNumber","invoiceNumber"), _pick(x,"saleType","type"),
-      String((Array.isArray(x.items)?x.items:[]).length || "") + " item(s)", _cnum(_pick(x,"grandTotal","netAmount","total"))] },
-  { key: "advances", title: "Advance Deposits & Refunds", nabh: "",
-    headers: ["Date", "Receipt", "Amount (₹)", "Mode", "Applied / Refund"], widths: ["16%","18%","16%","16%","34%"],
-    row: (x) => [_cfmt(_pick(x,"paidAt","createdAt")), _pick(x,"receiptNumber","receiptNo"), _cnum(_pick(x,"amount")), _pick(x,"paymentMode","mode"),
-      [_pick(x,"appliedAmount") && `applied ${_cnum(x.appliedAmount)}`, _pick(x,"refundedAmount") && `refunded ${_cnum(x.refundedAmount)}`].filter(Boolean).join(" · ")] },
-  { key: "adrReports", title: "Adverse Drug Reactions", nabh: "Pharmacovigilance",
-    headers: ["Date", "Suspected drug", "Reaction", "Severity", "Outcome"], widths: ["15%","22%","28%","15%","20%"],
-    row: (x) => [_cfmt(_pick(x,"reportedAt","reactionDate","createdAt")), _pick(x,"suspectedDrug","drugName"), _pick(x,"reaction","adverseEffect"), _pick(x,"severity"), _pick(x,"outcome")] },
-  { key: "foodReactions", title: "Adverse Food Reactions", nabh: "",
-    headers: ["Date", "Food", "Reaction", "Severity", "Action"], widths: ["16%","22%","28%","14%","20%"],
-    row: (x) => [_cfmt(_pick(x,"reactionDate","createdAt")), _pick(x,"foodItem","food"), _pick(x,"reaction","symptoms"), _pick(x,"severity"), _pick(x,"actionTaken","action")] },
-  { key: "codeResponseEvents", title: "Code / Resuscitation Events", nabh: "NABH FMS.5",
-    headers: ["Time", "Code", "Location", "Outcome", "Response"], widths: ["18%","16%","22%","22%","22%"],
-    row: (x) => [_cfmt(_pick(x,"alertTime","createdAt")), _pick(x,"codeType","code"), _pick(x,"location","area"), _pick(x,"outcome"), _pick(x,"responseTime") && `${x.responseTime} min`] },
-  { key: "promPremSurveys", title: "Patient Experience (PROM / PREM)", nabh: "Patient Feedback",
-    headers: ["Date", "Type", "Score", "Comments"], widths: ["18%","20%","16%","46%"],
-    row: (x) => [_cfmt(_pick(x,"submittedAt","createdAt")), _pick(x,"surveyType","type"), String(_pick(x,"overallScore","score") || ""), _pick(x,"comments","feedback")] },
-];
-
-function _cnum(v) {
-  const n = typeof v === "object" && v ? Number(v.$numberDecimal ?? v) : Number(v);
-  return Number.isFinite(n) ? n.toLocaleString("en-IN") : "";
-}
-
-// Clinical records first, then administrative / feedback — a readable
-// medical-record order regardless of the config array's authoring order.
-const COVERAGE_ORDER = [
-  "emergencyCases", "prescriptions", "medReconciliation", "procedureNotes",
-  "diabeticCharts", "physioPlans", "physioSessions", "adrReports",
-  "foodReactions", "codeResponseEvents", "medicalCertificates",
-  "appointments", "pharmacySales", "advances", "promPremSurveys",
-];
 function CoverageRecords({ file }) {
   const blocks = COVERAGE_BLOCKS
     .slice()
@@ -523,19 +441,6 @@ function CoverageRecords({ file }) {
   );
 }
 
-const REGISTER_META = {
-  restraints:       { title: "Restraint Register",        nabh: "NABH COP.17" },
-  fallEvents:       { title: "Fall-Risk / Fall Register", nabh: "NABH COP.12" },
-  pressureUlcers:   { title: "Pressure-Ulcer Register",   nabh: "NABH COP.4"  },
-  medicationErrors: { title: "Medication-Error Register", nabh: "NABH COP.16" },
-  sentinelEvents:   { title: "Sentinel-Event Register",   nabh: "NABH QMS"    },
-  haiSurveillance:  { title: "HAI Surveillance",          nabh: "NABH HIC.1"  },
-  lama:             { title: "LAMA / DAMA Register",      nabh: "NABH COP.20" },
-  mortality:        { title: "Mortality Register",        nabh: "NABH IMS"    },
-  nearMissEvents:   { title: "Near-Miss Register",        nabh: "NABH FMS.7"  },
-  otRegister:       { title: "OT Register",               nabh: "NABH COP.7"  },
-  antimicrobialUse: { title: "Antimicrobial Use",         nabh: "NABH IPC"    },
-};
 
 function ComplianceRegisters({ registers }) {
   const reg = registers || {};
@@ -550,15 +455,9 @@ function ComplianceRegisters({ registers }) {
           <React.Fragment key={k}>
             <SubHeader>{meta.title}{meta.nabh ? ` · ${meta.nabh}` : ""}</SubHeader>
             <MiniTable
-              headers={["Date", "Detail", "Indication / Reason", "By", "Status"]}
-              widths={["16%","30%","26%","16%","12%"]}
-              rows={reg[k].map((x) => [
-                _cfmt(_pick(x,"eventDate","assessedAt","appliedAt","occurredAt","createdAt")),
-                _pick(x,"deviceType","stage","errorType","eventType","diagnosis","organism","detail","summary","description","title"),
-                _pick(x,"indication","reason","rootCause","cause","riskLevel","category"),
-                _pick(x,"recordedByName","orderedByName","assessedByName","recordedBy","actorName"),
-                _pick(x,"status","outcome","severity"),
-              ])}
+              headers={REGISTER_HEADERS}
+              widths={REGISTER_WIDTHS}
+              rows={reg[k].map(registerRow)}
             />
           </React.Fragment>
         );
@@ -1988,9 +1887,38 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
       ) : null}
 
       {/* ════════════════════════════════════════════════════════════
+          8a. DOCTOR ORDER SHEET                          [NABH MOM.4]
+          R7hr(DOCS-FULL 6/6) — consolidated standalone-style order
+          sheet (Medication / Investigations / Other, generic+indication
+          sub-lines, duration, STAT highlight). Per-day "Orders raised"
+          in the journey stays as-is.
+          ════════════════════════════════════════════════════════════ */}
+      {(f.doctorOrders || []).length > 0 ? (
+        <>
+          <SectionHeader nabh="NABH MOM.4">Doctor Order Sheet</SectionHeader>
+          <FullOrderSheetSection file={f} />
+        </>
+      ) : null}
+
+      {/* ════════════════════════════════════════════════════════════
+          8b. MEDICATION ADMINISTRATION RECORD (MAR)      [NABH MOM.6]
+          R7hr(DOCS-FULL 5/6) — consolidated standalone-MARSheet-style
+          slot grid (06/10/14/18/22 + Other, glyph + time + nurse,
+          Given/Missed/Held totals). The day-wise journey keeps its
+          inline narrative; this is the formal MAR document.
+          ════════════════════════════════════════════════════════════ */}
+      {((f.doctorOrders || []).some((o) => (o.admin || []).length) || (f.mar || []).length > 0) ? (
+        <>
+          <SectionHeader nabh="NABH MOM.6">Medication Administration Record (MAR)</SectionHeader>
+          <FullMarSection file={f} />
+        </>
+      ) : null}
+
+      {/* ════════════════════════════════════════════════════════════
           9. INVESTIGATIONS & REPORTS               [NABH AAC.7 / AAC.8]
           ════════════════════════════════════════════════════════════ */}
-      {(invs.length > 0 || (f.labReports || []).length > 0) ? (
+      {(invs.length > 0 || (f.labReports || []).length > 0
+        || (f.labTrends || []).some((t) => (t.tests || []).some((x) => (x.readings || []).length))) ? (
         <>
           <SectionHeader nabh="NABH AAC.7 / AAC.8">Investigations & Reports</SectionHeader>
 
@@ -2039,7 +1967,22 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
             </>
           ) : null}
 
+          {/* R7hr(DOCS-FULL) — NABL results tables (labTrends were never
+              printed before) + full diagnostic reports when the raw docs rode
+              the receipt; one-line digest kept for legacy payloads. */}
+          {(f.labTrends || []).some((t) => (t.tests || []).some((x) => (x.readings || []).length)) ? (
+            <>
+              <SubHeader>Laboratory Results (NABL format)</SubHeader>
+              <FullLabTrends file={f} />
+            </>
+          ) : null}
           {(f.labReports || []).length > 0 ? (
+            (f.labReports || []).some((r) => r.full) ? (
+              <>
+                <SubHeader>Lab & Imaging Reports</SubHeader>
+                <FullDiagnosticReports file={f} />
+              </>
+            ) : (
             <>
               <SubHeader>Lab & Imaging Reports</SubHeader>
               <MiniTable
@@ -2052,6 +1995,7 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
                 widths={["28%", "16%", "56%"]}
               />
             </>
+            )
           ) : null}
         </>
       ) : null}
@@ -2062,6 +2006,12 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
       {(f.consents || []).length > 0 ? (
         <>
           <SectionHeader nabh="NABH PRE.1">Consent Forms</SectionHeader>
+          {/* R7hr(DOCS-FULL 3/6) — full consent records (risks/language/
+              biometric/refusal trail) when raw docs rode the receipt;
+              signed-status register kept for legacy payloads. */}
+          {f.consents.some((c) => c.full) ? (
+            <FullConsentSection file={f} />
+          ) : (
           <MiniTable
             headers={["Form", "Signed", "Signed by", "Witness", "Signed at"]}
             rows={f.consents.map((c) => [
@@ -2075,6 +2025,7 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
             ])}
             widths={["32%", "12%", "20%", "20%", "16%"]}
           />
+          )}
         </>
       ) : null}
 
@@ -2084,6 +2035,13 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
       {(f.dietPlans || []).length > 0 ? (
         <>
           <SectionHeader nabh="NABH COP.4">Dietetic Care</SectionHeader>
+          {/* R7hr(DOCS-FULL 4/6) — full meal-by-meal plans (allergen banner,
+              anchors, targets) when raw docs rode the receipt; register row
+              kept for legacy payloads. */}
+          {f.dietPlans.some((dp) => dp.full) ? (
+            <FullDietSection file={f} />
+          ) : (
+          <>
           <MiniTable
             headers={["Date", "Diet", "Kcal", "Restrictions", "Assigned by"]}
             rows={f.dietPlans.map((dp) => [
@@ -2100,6 +2058,8 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
               <em>{dp.templateName || "Diet"} ({fmtDate(dp.at)}): {dp.notes}</em>
             </Para>
           ))}
+          </>
+          )}
         </>
       ) : null}
 
@@ -2225,16 +2185,23 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
         <>
           <SectionHeader nabh="NABH AAC.11">Discharge Summary</SectionHeader>
 
-          {f.discharge?.summary ? (
-            <Para>{cleanSentence(f.discharge.summary)}</Para>
-          ) : null}
-
           <Para>
             {fullName} was <strong>discharged</strong>
             {f.admission?.dischargeDate ? <> on <strong>{fmtDate(f.admission.dischargeDate, true)}</strong></> : null}
             {f.discharge?.condition ? <> in <strong>{f.discharge.condition.toLowerCase()}</strong> condition</> : null}.
-            {dxFinal ? <> Final diagnosis: <strong>{dxFinal}</strong>{f.admission?.icd10 ? <> (ICD-10 {f.admission.icd10})</> : null}.</> : null}
+            {/* R7hr(re-audit) — the full section prints its own Final
+                Diagnosis; only append it to the intro on the legacy path. */}
+            {(!f.discharge?.full && dxFinal) ? <> Final diagnosis: <strong>{dxFinal}</strong>{f.admission?.icd10 ? <> (ICD-10 {f.admission.icd10})</> : null}.</> : null}
           </Para>
+
+          {/* R7hr(DOCS-FULL, owner 2026-07-12) — when the raw DischargeSummary
+              doc rode the receipt, print the FULL standalone-level summary via
+              the shared section; legacy payloads keep the old digest below. */}
+          {f.discharge?.full ? <FullDischargeSection file={f} /> : (
+          <>
+          {f.discharge?.summary ? (
+            <Para>{cleanSentence(f.discharge.summary)}</Para>
+          ) : null}
 
           {dischargeMeds.length > 0 ? (
             <>
@@ -2327,6 +2294,8 @@ const NarrativeTheme = ({ settings = {}, file, events = [], receipt = {}, viewer
               </Para>
             </>
           ) : null}
+          </>
+          )}
 
           <Para style={{ marginTop: 6 }}>
             <em>

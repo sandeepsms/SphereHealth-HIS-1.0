@@ -97,8 +97,12 @@ async function recordDispense({
   const today = _istMidnight(new Date());
   // Refuse if the day has already been verified — append after verify is
   // a back-date attempt which would invalidate the signed daily total.
+  // R9-FIX(R9-041): verify is per-DRUG per-DAY (verifyBalance writes one VERIFY
+  // row per drug with NO batchId). The old check matched on batchId, so a
+  // batch-based dispense never found the batch-less VERIFY row and post-verify
+  // narcotic dispenses slipped through the day-lock. Match drug + day only.
   const verified = await ScheduleXEntry.findOne({
-    drugId, batchId: batchId || null, date: today, rowType: "VERIFY",
+    drugId, date: today, rowType: "VERIFY",
   }).lean();
   if (verified) {
     const e = new Error(`Day ${today.toISOString().slice(0,10)} already verified — cannot append new dispense`);
@@ -203,6 +207,86 @@ async function recordReceipt({ drugId, qty, receivedBy = "", receivedById = null
   return updated.toObject();
 }
 
+// ── recordReversal ───────────────────────────────────────────────
+// Adjust the running Schedule-X balance by a SIGNED delta. Used by the
+// reversal paths that move controlled stock back through the register:
+//   • sale return / cancel → +qty  (narcotic came back into the cabinet)
+//   • vendor return         → -qty  (narcotic left to the supplier)
+//
+// A decrement (delta < 0) is gated on `balance >= |delta|`, re-checked at
+// write time, so a concurrent dispense that crossed the threshold makes us
+// fail gracefully (null) rather than driving the register negative — which
+// is illegal under NDPS. An increment does NOT upsert: with no existing
+// balance doc there was never a receipt/dispense behind this drug, and
+// minting one here would fabricate controlled-substance stock. Absent /
+// under-balance doc → returns null so the caller can log the anomaly.
+//
+// R9-FIX(R9-043): this used to be balance-ONLY — it moved the running
+// Schedule-X balance but appended no ScheduleXEntry row, on the assumption
+// that the caller wrote the paper trail. In practice the callers (sale
+// return/cancel, vendor return) only wrote a generic pharmacy/audit row, NOT a
+// Schedule-X register row — so a narcotic could re-enter or leave the cabinet
+// with the statutory NDPS register showing a balance jump and NO matching
+// receive/dispense line. dailyBalance/verify then couldn't reconcile the day.
+// recordReversal now appends the register row itself, inside the same call, so
+// the balance and the register can never diverge again.
+async function recordReversal({ drugId, signedQty, actorName = "", actorById = null, remarks = "" } = {}) {
+  if (!drugId) {
+    const e = new Error("drugId required"); e.code = "ARG_MISSING"; throw e;
+  }
+  const delta = Number(signedQty);
+  if (!Number.isFinite(delta) || delta === 0) {
+    const e = new Error("signedQty must be a non-zero number"); e.code = "INVALID_QTY"; throw e;
+  }
+  const filter = { drugId };
+  if (delta < 0) filter.balance = { $gte: -delta };
+  const updated = await ScheduleXBalance.findOneAndUpdate(
+    filter,
+    {
+      $inc: { balance: delta },
+      $set: {
+        lastUpdatedBy:   actorName || "",
+        lastUpdatedById: actorById || null,
+        lastUpdatedAt:   new Date(),
+      },
+    },
+    { new: true }, // no upsert — never mint a balance doc on a reversal
+  );
+  if (!updated) return null; // absent / under-balance → nothing moved, no row
+
+  // Append the matching statutory register row. delta>0 = stock came BACK into
+  // the cabinet (RECEIVE); delta<0 = stock left (DISPENSE, e.g. vendor return).
+  const closing = Number(updated.balance || 0);
+  const opening = closing - delta;
+  const drug = await Drug.findById(drugId).select("name").lean();
+  try {
+    await ScheduleXEntry.create({
+      date: _istMidnight(new Date()),
+      drugId,
+      drugName: drug?.name || "(unknown)",
+      openingBalance: Math.max(0, opening),
+      received:  delta > 0 ? delta : 0,
+      dispensed: delta < 0 ? -delta : 0,
+      closingBalance: Math.max(0, closing),
+      dispensedBy: actorName || "",
+      dispensedById: actorById || null,
+      rowType: delta > 0 ? "RECEIVE" : "DISPENSE",
+      remarks: remarks || (delta > 0 ? "Reversal — stock returned to Schedule-X cabinet" : "Reversal — Schedule-X stock issued out"),
+    });
+  } catch (createErr) {
+    // Compensation: undo the balance move if the register-row write failed, so
+    // the two can't silently disagree (mirrors recordDispense).
+    try {
+      await ScheduleXBalance.findOneAndUpdate({ drugId }, { $inc: { balance: -delta } });
+    } catch (compErr) {
+      console.error("[ScheduleX] reversal compensation restore failed for drugId",
+        String(drugId), "delta", delta, ":", compErr.message);
+    }
+    throw createErr;
+  }
+  return updated.toObject();
+}
+
 // ── dailyBalance ─────────────────────────────────────────────────
 // Returns one summary object per Schedule-X drug for the given day:
 // { drugId, drugName, opening, received, dispensed, closing, rows[] }
@@ -304,9 +388,22 @@ async function verifyBalance(date, { verifierId, verifierName } = {}) {
   return { day, verifyRows, summary };
 }
 
+// ── currentBalance ───────────────────────────────────────────────
+// R9-FIX(R9-044): read the running Schedule-X register balance for a drug
+// (0 if no balance doc yet). Used by the dispense pre-flight so an
+// insufficient-register dispense is blocked BEFORE stock leaves the shelf,
+// instead of consuming stock and only flagging a remark.
+async function currentBalance(drugId) {
+  if (!drugId) return 0;
+  const doc = await ScheduleXBalance.findOne({ drugId }).select("balance").lean();
+  return doc ? Number(doc.balance || 0) : 0;
+}
+
 module.exports = {
   recordDispense,
   recordReceipt,
+  recordReversal,
+  currentBalance,
   dailyBalance,
   verifyBalance,
 };

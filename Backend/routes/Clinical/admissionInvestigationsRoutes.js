@@ -22,6 +22,9 @@ router.get("/", requireAction("patient-file.read"), async (req, res) => {
     const data = await getAdmissionInvestigations({
       uhid: req.query.uhid,
       admissionId: req.query.admissionId,
+      // R9-FIX(R9-056): the discharge summary passes verifiedOnly=1 so only
+      // released (VERIFIED) results are baked into the finalized document.
+      verifiedOnly: req.query.verifiedOnly === "1" || req.query.verifiedOnly === "true",
     });
     res.json({ success: true, data });
   } catch (e) {

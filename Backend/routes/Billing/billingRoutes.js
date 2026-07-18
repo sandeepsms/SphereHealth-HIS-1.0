@@ -73,6 +73,17 @@ router.post("/:billId/tpa-deny",           vBill, requireAction("tpa.claim"),   
 // REJECTED claim re-submits via tpa-preauth-submit (ALLOWED_FROM covers it).
 router.post("/:billId/tpa-query",                vBill, requireAction("tpa.claim"), ctrl.tpaQueryRaise);
 router.post("/:billId/tpa-query/:queryId/reply", vBill, requireAction("tpa.claim"), ctrl.tpaQueryReply);
+// R7hr(TPA-P3) — claim-pack documents (scanned pre-auth/approval/POD, PDF or
+// image, ≤5 files ×5 MB via safeUpload → uploads/tpa-docs/) + dispatch log.
+const path = require("path");
+const fs = require("fs");
+const { safeUpload } = require("../../middleware/safeUpload");
+const TPA_DOCS_DIR = path.join(__dirname, "..", "..", "uploads", "tpa-docs");
+try { fs.mkdirSync(TPA_DOCS_DIR, { recursive: true }); } catch (_) { /* exists */ }
+const uploadTpaDoc = safeUpload({ destination: TPA_DOCS_DIR, allowedKinds: ["image", "document"] });
+router.post  ("/:billId/tpa-document", vBill, requireAction("tpa.claim"), uploadTpaDoc.array("files", 5), ctrl.tpaDocumentUpload);
+router.delete("/:billId/tpa-document", vBill, requireAction("tpa.claim"), ctrl.tpaDocumentDelete);
+router.post  ("/:billId/tpa-dispatch", vBill, requireAction("tpa.claim"), ctrl.tpaDispatchRecord);
 // R7z: short-pay reconciliation — TPA settles less than approved, this
 // endpoint posts the actual remittance + handles the shortfall (default:
 // bump patientPayableAmount; alt: write off via extraDiscount).
@@ -86,6 +97,11 @@ router.get("/uhid/:UHID/summary", requireAction("billing.read"), ctrl.getUhidSum
 // R7hr(billing-audit P1.3) — previous PENDING dues (rule 1: surface prior
 // billing at the next visit only when still unpaid).
 router.get("/uhid/:UHID/previous-dues", requireAction("billing.read"), ctrl.getPreviousDues);
+// R7hr(CLAIM-P1.2) — canonical claim-form data for a bill's episode.
+router.get("/:billId/claim-data", requireAction("billing.read"), ctrl.getClaimData);
+// R7hr(CLAIM-P4.2) — streamed PDF of the insurer's claim form (overlay onto an
+// uploaded official template if present, else a generated standard-format form).
+router.get("/:billId/insurer-form.pdf", requireAction("billing.read"), ctrl.getInsurerForm);
 // Front-desk bulk actions across every outstanding bill for a UHID.
 // collect-all distributes one lump-sum FIFO; bulk-settle applies a
 // uniform % or proportional ₹ discount. Both writes are audited

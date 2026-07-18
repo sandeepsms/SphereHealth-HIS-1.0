@@ -8,6 +8,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 const billingService = require("../../services/Billing/billingService");
+const sendErr = require("../../utils/sendErr");
 const BillingService = require("../../services/Billing/billingService");
 
 // ── GET /api/billing/uhid/:UHID ───────────────────────────────
@@ -57,6 +58,71 @@ exports.getBillsByUHID = async (req, res) => {
   }
 };
 
+// R7hr(CLAIM-P1.2) — GET /api/billing/:billId/claim-data
+// Canonical claim-form payload (hospital+patient+scheme+admission+category
+// bill breakup+preauth+docs). Every claim printable maps its fields off
+// this; the frontend picks the template by patient.payerScheme.
+exports.getClaimData = async (req, res, next) => {
+  try {
+    const { buildClaimData } = require("../../services/Billing/claimFormService");
+    const data = await buildClaimData(req.params.billId);
+    res.json({ success: true, data });
+  } catch (e) {
+    res.status(e.status || 500).json({ success: false, message: e.message });
+  }
+};
+
+// R7hr(CLAIM-P4.2) — GET /api/billing/:billId/insurer-form.pdf?insurerCode=CODE
+// Streams the filled insurer claim form as a PDF. When the hospital has an
+// uploaded official blank template for that insurer (CLAIM-P4.3), the engine
+// overlays claim data onto THAT pdf; otherwise it generates a standard-format
+// branded form. Either way the fill comes from buildClaimData(billId).
+exports.getInsurerForm = async (req, res) => {
+  try {
+    const { fillInsurerForm } = require("../../services/Billing/insurerFormService");
+    let insurerCode = (req.query.insurerCode || "").trim();
+
+    // R7hr(CLAIM-P5) — fall back to the patient's REGISTERED insurer when the
+    // caller omits ?insurerCode (the IPD ledger "Company Form" button never
+    // passed it, so uploaded templates were silently never used from there).
+    if (!insurerCode) {
+      try {
+        const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+        const Patient = require("../../models/Patient/patientModel");
+        const bill = await PatientBill.findById(req.params.billId).select("patient").lean();
+        if (bill?.patient) {
+          const pat = await Patient.findById(bill.patient).select("insurerCode").lean();
+          insurerCode = (pat?.insurerCode || "").trim();
+        }
+      } catch { /* fall through — generated standard form */ }
+    }
+
+    // CLAIM-P4.3 — look up an uploaded official template for this insurer (if
+    // the model/collection exists). Soft: any failure falls back to generated.
+    let template = null;
+    try {
+      const InsurerFormTemplate = require("../../models/Billing/insurerFormTemplateModel");
+      if (insurerCode) {
+        const doc = await InsurerFormTemplate.findOne({
+          insurerCode: insurerCode.toUpperCase(), formType: req.query.formType || "CLAIM", isActive: true,
+        }).sort({ version: -1 }).lean();
+        if (doc && doc.pdf && doc.pdf.length) {
+          template = { bytes: doc.pdf.buffer || doc.pdf, fieldMap: doc.fieldMap || [] };
+        }
+      }
+    } catch { /* model not present / no template — use generated form */ }
+
+    const { bytes, filename } = await fillInsurerForm(req.params.billId, insurerCode, { template });
+    const buf = Buffer.from(bytes);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `inline; filename="${filename}"`);
+    res.setHeader("Content-Length", buf.length);
+    res.send(buf);
+  } catch (e) {
+    res.status(e.status || 500).json({ success: false, message: e.message });
+  }
+};
+
 // ── GET /api/billing/uhid/:UHID/previous-dues ─────────────────
 // R7hr(billing-audit P1.3) — rule 1: surface previous PENDING dues at the
 // next visit (registration + billing banner). Query params scope out the
@@ -70,7 +136,7 @@ exports.getPreviousDues = async (req, res) => {
     });
     res.json({ success: true, data });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -244,7 +310,7 @@ exports.deleteDraftBill = async (req, res) => {
       message: "Draft bill deleted",
     });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -525,7 +591,7 @@ exports.checkDaycare = async (req, res) => {
     );
     res.json({ success: true, data });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -535,7 +601,7 @@ exports.getSummary = async (req, res) => {
     const data = await billingService.getBillingSummary();
     res.json({ success: true, data });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -820,7 +886,7 @@ exports.getRevenueBreakdown = async (req, res, next) => {
       return res.status(e.status).json({ success: false, message: e.message });
     }
     console.error("[billing] getRevenueBreakdown error:", e);
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -998,7 +1064,7 @@ exports.getAging = async (req, res, next) => {
     res.json({ success: true, ...payload });
   } catch (e) {
     console.error("[billing] getAging error:", e);
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -1056,7 +1122,7 @@ exports.listBills = async (req, res) => {
       pagination: { total, page: Number(page), limit: Number(limit), pages: Math.ceil(total / Number(limit)) },
     });
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    sendErr(res, e);
   }
 };
 
@@ -1574,6 +1640,20 @@ exports.tpaApprove = async (req, res, next) => {
         message: "SAME_ACTOR — TPA approval must be done by a different user than the preauth submitter",
       });
     }
+    // R9-FIX(R9-038): validate the approved amount — a finite, non-negative
+    // number that cannot exceed the bill total. Previously any value (negative,
+    // NaN silently falling back, or far above the bill) was accepted, over-
+    // crediting the insurer against the claim with no relation to what was billed.
+    if (req.body.approvedAmount !== undefined && req.body.approvedAmount !== null && req.body.approvedAmount !== "") {
+      const appr = Number(req.body.approvedAmount);
+      const billTotal = Number(bill.netAmount || bill.grandTotal || 0);
+      if (!Number.isFinite(appr) || appr < 0) {
+        return res.status(400).json({ success: false, code: "INVALID_APPROVED_AMOUNT", message: "approvedAmount must be a non-negative number." });
+      }
+      if (billTotal > 0 && appr > billTotal + 0.5) {
+        return res.status(400).json({ success: false, code: "APPROVED_EXCEEDS_BILL", message: `Approved amount (${appr}) cannot exceed the bill total (${billTotal}).` });
+      }
+    }
     const _priorTpa     = bill.tpaClaimStatus;
     const _priorApprAmt = Number(bill.tpaApprovedAmount || 0);
     // R7ap-F26/D7-10: VersionError retry — concurrent cashier-payment vs
@@ -1987,6 +2067,118 @@ exports.tpaQueryReply = async (req, res, next) => {
   } catch (e) { next(e); }
 };
 
+// R7hr(TPA-P3) — POST /api/billing/:billId/tpa-document (multipart "files")
+// Attach scanned claim-pack documents (pre-auth letters, query replies,
+// PODs). Files land via safeUpload under uploads/tpa-docs/; only the
+// server-derived paths are stored, re-validated through filterSafeUrls.
+// Atomic $push — same partial-select rationale as tpaQueryRaise.
+exports.tpaDocumentUpload = async (req, res, next) => {
+  try {
+    const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+    const { filterSafeUrls } = require("../../utils/urlValidator");
+    const files = req.files || [];
+    if (!files.length) return res.status(400).json({ success: false, message: "No files uploaded" });
+    const label = String(req.body?.label || "").trim().slice(0, 80);
+    const by = req.user?.fullName || req.user?.employeeId || "TPA Desk";
+    const docs = filterSafeUrls(files.map((f) => `/uploads/tpa-docs/${f.filename}`))
+      .map((url) => ({ url, label, uploadedBy: by }));
+    const bill = await PatientBill.findOneAndUpdate(
+      { _id: req.params.billId, paymentType: { $in: ["TPA", "CORPORATE"] } },
+      { $push: { tpaDocuments: { $each: docs } } },
+      { new: true, select: "UHID patient billNumber tpaDocuments" },
+    );
+    if (!bill) {
+      const exists = await PatientBill.exists({ _id: req.params.billId });
+      return res.status(exists ? 400 : 404).json({ success: false, message: exists ? "Documents apply to TPA/Corporate claims only" : "Bill not found" });
+    }
+    try {
+      const { emit } = require("../../models/Billing/BillingAudit");
+      await emit({
+        event: "TPA_DOC_ATTACHED", UHID: bill.UHID, patientId: bill.patient,
+        billId: bill._id, billNumber: bill.billNumber,
+        actorName: req.user?.fullName, actorId: req.user?._id,
+        reason: `${docs.length} claim document(s) attached${label ? ` — ${label}` : ""}`,
+      }, { req });
+    } catch (_) { /* audit best-effort */ }
+    res.status(201).json({ success: true, data: bill.tpaDocuments });
+  } catch (e) { next(e); }
+};
+
+// R7hr(TPA-P3) — DELETE /api/billing/:billId/tpa-document  Body: { docId }
+exports.tpaDocumentDelete = async (req, res, next) => {
+  try {
+    const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+    const docId = String(req.body?.docId || req.query?.docId || "");
+    if (!docId) return res.status(400).json({ success: false, message: "docId required" });
+    const before = await PatientBill.findById(req.params.billId).select("tpaDocuments UHID patient billNumber").lean();
+    if (!before) return res.status(404).json({ success: false, message: "Bill not found" });
+    const doc = (before.tpaDocuments || []).find((d) => String(d._id) === docId);
+    if (!doc) return res.status(404).json({ success: false, message: "Document not found on this claim" });
+    const bill = await PatientBill.findOneAndUpdate(
+      { _id: req.params.billId },
+      { $pull: { tpaDocuments: { _id: docId } } },
+      { new: true, select: "tpaDocuments" },
+    );
+    // best-effort unlink, confined to our own tpa-docs dir
+    if (/^\/uploads\/tpa-docs\/[a-zA-Z0-9._-]+$/.test(doc.url || "")) {
+      const fs = require("fs"), path = require("path");
+      fs.unlink(path.join(__dirname, "..", "..", doc.url.replace(/^\//, "")), () => {});
+    }
+    try {
+      const { emit } = require("../../models/Billing/BillingAudit");
+      await emit({
+        event: "TPA_DOC_REMOVED", UHID: before.UHID, patientId: before.patient,
+        billId: before._id, billNumber: before.billNumber,
+        actorName: req.user?.fullName, actorId: req.user?._id,
+        reason: `Claim document removed${doc.label ? ` — ${doc.label}` : ""}`,
+      }, { req });
+    } catch (_) { /* audit best-effort */ }
+    res.json({ success: true, data: bill.tpaDocuments });
+  } catch (e) { next(e); }
+};
+
+// R7hr(TPA-P3) — POST /api/billing/:billId/tpa-dispatch
+// Body: { mode, courierName, awbNo, sentTo, remarks }. Logs a claim-pack
+// dispatch (courier AWB is what the desk chases on "kuch nahi mila").
+exports.tpaDispatchRecord = async (req, res, next) => {
+  try {
+    const PatientBill = require("../../models/PatientBillModel/PatientBillModel");
+    const MODES = ["COURIER", "EMAIL", "PORTAL", "HAND_DELIVERY"];
+    const mode = String(req.body?.mode || "COURIER").toUpperCase();
+    if (!MODES.includes(mode)) return res.status(400).json({ success: false, message: `mode must be one of ${MODES.join(", ")}` });
+    if (mode === "COURIER" && !String(req.body?.awbNo || "").trim()) {
+      return res.status(400).json({ success: false, message: "awbNo required for courier dispatch — that's the number you chase" });
+    }
+    const entry = {
+      mode,
+      courierName: String(req.body?.courierName || "").trim().slice(0, 80),
+      awbNo:       String(req.body?.awbNo || "").trim().slice(0, 60),
+      sentTo:      String(req.body?.sentTo || "").trim().slice(0, 120),
+      remarks:     String(req.body?.remarks || "").trim().slice(0, 300),
+      dispatchedBy: req.user?.fullName || req.user?.employeeId || "TPA Desk",
+    };
+    const bill = await PatientBill.findOneAndUpdate(
+      { _id: req.params.billId, paymentType: { $in: ["TPA", "CORPORATE"] } },
+      { $push: { tpaDispatchLog: entry } },
+      { new: true, select: "UHID patient billNumber tpaDispatchLog" },
+    );
+    if (!bill) {
+      const exists = await PatientBill.exists({ _id: req.params.billId });
+      return res.status(exists ? 400 : 404).json({ success: false, message: exists ? "Dispatch applies to TPA/Corporate claims only" : "Bill not found" });
+    }
+    try {
+      const { emit } = require("../../models/Billing/BillingAudit");
+      await emit({
+        event: "TPA_DISPATCHED", UHID: bill.UHID, patientId: bill.patient,
+        billId: bill._id, billNumber: bill.billNumber,
+        actorName: req.user?.fullName, actorId: req.user?._id,
+        reason: `Claim pack dispatched via ${mode}${entry.awbNo ? ` — AWB ${entry.awbNo}` : ""}${entry.sentTo ? ` to ${entry.sentTo}` : ""}`,
+      }, { req });
+    } catch (_) { /* audit best-effort */ }
+    res.status(201).json({ success: true, data: bill.tpaDispatchLog });
+  } catch (e) { next(e); }
+};
+
 // POST /api/billing/:billId/tpa-deny  Body: { reason }
 // NOTE: the bill schema's tpaClaimStatus enum is
 // [NOT_APPLICABLE, PENDING, SUBMITTED, APPROVED, REJECTED, PARTIAL_APPROVED]
@@ -2005,6 +2197,20 @@ exports.tpaDeny = async (req, res, next) => {
       const ALLOWED = ["PENDING", "SUBMITTED", "APPROVED", "PARTIAL_APPROVED", "NOT_APPLICABLE"];
       if (!ALLOWED.includes(b.tpaClaimStatus)) {
         const err = new Error(`Cannot deny — claim is in '${b.tpaClaimStatus}' state`);
+        err.status = 409; throw err;
+      }
+      // R9-FIX(R9-036): the status guard alone is ineffective for the very case
+      // its comment claims to fix. Settlement doesn't change tpaClaimStatus — an
+      // APPROVED claim stays "APPROVED" after the insurer remits — so an already
+      // SETTLED claim (a positive TPA_CLAIM payment on the bill) still passed the
+      // guard and deny wiped tpaApprovedAmount, orphaning real money received.
+      // Block deny outright once any TPA remittance has landed.
+      const { toNum: _toNumDeny } = require("../../utils/money");
+      const _tpaSettled = (b.payments || []).some(
+        (p) => p.paymentMode === "TPA_CLAIM" && _toNumDeny(p.amount) > 0,
+      );
+      if (_tpaSettled) {
+        const err = new Error("Cannot deny — the TPA has already remitted against this claim (settled). Reverse the TPA payment first.");
         err.status = 409; throw err;
       }
       _priorTpa     = b.tpaClaimStatus;
@@ -2121,14 +2327,23 @@ exports.tpaSettle = async (req, res, next) => {
       // Unwrap Decimal128 to plain number for arithmetic.
       const toN = (v) => v == null ? 0 : (typeof v === "object" && v.toString ? Number(v.toString()) : Number(v));
       const approved = toN(bill.tpaApprovedAmount) || toN(bill.tpaPayableAmount);
-      const shortfall = Math.max(0, approved - settledAmount);
-      const overpay   = Math.max(0, settledAmount - approved);
+      // R9-FIX(R9-035): cap against the CUMULATIVE settled total, not this
+      // remittance alone. The old per-call check (settledAmount vs approved)
+      // let a claim approved ₹1L be settled ₹1L repeatedly, each with a distinct
+      // UTR — double-crediting the bill. Sum prior TPA_CLAIM payments (excluding
+      // voided) and reject if the running total would exceed the approved amount.
+      const priorSettled = (bill.payments || [])
+        .filter((p) => p.paymentMode === "TPA_CLAIM" && !p.voidedAt)
+        .reduce((acc, p) => acc + toN(p.amount), 0);
+      const cumulative = priorSettled + settledAmount;
+      const shortfall = Math.max(0, approved - cumulative);
+      const overpay   = Math.max(0, cumulative - approved);
 
       // Reject suspiciously large overpayments — likely a typo. Tiny
       // overpayments (≤ ₹10 rounding) we accept silently.
       if (overpay > 10) {
         const err = new Error(
-          `Settled amount ₹${settledAmount} exceeds approved ₹${approved} by ₹${overpay}. ` +
+          `Cumulative TPA settlement ₹${cumulative} (prior ₹${priorSettled} + this ₹${settledAmount}) exceeds approved ₹${approved} by ₹${overpay}. ` +
           `Re-approve the higher amount via /tpa-approve first, then settle.`,
         );
         err.status = 400; throw err;
@@ -2255,7 +2470,10 @@ exports.tpaSettle = async (req, res, next) => {
               // (the common TPA case) silently dropped the patient
               // liability bump. Now: rebase percent to the post-move
               // share of the line total so subsequent recalc agrees.
-              const lineTotal = toN(item.netAmount) || (itemTpa + itemPt);
+              // R8-FIX(#34): tax-INCLUSIVE lineTotal — recalcTotals re-derives
+              // tpaShare = (net+tax)*tpaPercent/100, so rebasing tpaPercent off
+              // the tax-EXCLUSIVE netAmount would skew the split on taxable lines.
+              const lineTotal = (toN(item.netAmount) + toN(item.taxAmount)) || (itemTpa + itemPt);
               if (lineTotal > 0) {
                 item.tpaPercent = Math.max(0, Math.min(100,
                   Number(((item.tpaPayableAmount / lineTotal) * 100).toFixed(2)),
@@ -2268,10 +2486,20 @@ exports.tpaSettle = async (req, res, next) => {
             }
             bill.markModified("billItems");
           } else {
-            bill.extraDiscount = priorExtra + shortfall;
-            bill.extraDiscountReason = (bill.extraDiscountReason || "") +
-              ` | TPA short-pay ₹${shortfall.toFixed(2)} (no per-line split — collected from patient at desk)`;
-            bill.extraDiscountBy = settledBy;
+            // R9-FIX(R9-037): shortfallTo=PATIENT with NO per-line TPA share to
+            // move used to add the shortfall to extraDiscount — but
+            // extraDiscount REDUCES the patient's payable (recalcTotals: net =
+            // gross - disc + tax - extra), so "route to patient" silently became
+            // a WRITE-OFF (revenue quietly lost) despite the remark claiming it
+            // was "collected from patient at desk". There is no bill-level
+            // surcharge lever (recalcTotals re-derives patientPayable from the
+            // line items, so a direct bump would revert on next save), so we
+            // cannot honestly raise the patient share here. Reject and make the
+            // operator choose the correct route.
+            const err = new Error(
+              "Bill has no per-line TPA split — the shortfall cannot be routed to the patient. " +
+              "Re-settle with shortfallTo=WRITEOFF to absorb it, or correct the bill's per-line TPA split first.");
+            err.status = 400; throw err;
           }
           bill.tpaClaimStatus = "PARTIAL_APPROVED";
           bill.remarks = (bill.remarks || "") +
@@ -3134,7 +3362,10 @@ exports.getHospitalGstRegister = async (req, res, next) => {
     // GSTR-1 net (outward − CDNR) was hand-computed by the accountant
     // every month. Now the API returns gross + reversed + net.
     const cnAggP = CreditNote.aggregate([
-      { $match: { creditNoteDate: { $gte: from, $lte: to } } },
+      // R9-FIX(R9-025): only APPROVED CNs reverse output tax in the register —
+      // PENDING_APPROVAL / REJECTED must not (maker-checker parity with the
+      // GSTR-1/3B exporters).
+      { $match: { creditNoteDate: { $gte: from, $lte: to }, status: "APPROVED" } },
       { $group: {
           _id: null,
           count:        { $sum: 1 },

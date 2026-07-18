@@ -253,6 +253,7 @@ export default function DischargeQueue() {
             setGateRow(null);
             load();
             printGatePass({ ...gateRow, dischargeWorkflow: updated });
+            mintAndPrintFeedbackSlip(gateRow);   // R7hr(FDBK-X1) — QR slip rides the discharge docs
           }}
           userName={user?.fullName || user?.name || "Receptionist"}
         />
@@ -502,6 +503,42 @@ function IssueGatePassModal({ admission, onClose, onIssued, userName }) {
       </div>
     </div>
   );
+}
+
+/* ─────────── Feedback QR slip at discharge ───────────
+   R7hr(FDBK-X1): gate-pass issuance is the terminal discharge moment —
+   mint a public feedback link and auto-print the QR slip alongside the
+   gate pass (NABH PRE.3). Best-effort: a feedback failure must never
+   block discharge (same contract as ClearBillModal's chained receipt
+   prints). Fired ONLY from onIssued — the manual "Gate Pass" reprint
+   button deliberately does not re-mint (every generate-link call
+   creates a fresh pending PatientFeedback row). */
+const FEEDBACK_VISIT_TYPE = { "Day Care": "Daycare", "Emergency": "Emergency" };
+async function mintAndPrintFeedbackSlip(adm) {
+  try {
+    const visitType  = FEEDBACK_VISIT_TYPE[adm.admissionType] || "IPD";
+    const department = adm.departmentId?.departmentName || adm.department || "";
+    const { data } = await axios.post(`${API_ENDPOINTS.BASE}/feedback/generate-link`, {
+      UHID: adm.UHID,
+      patientName: adm.patientName,
+      contactNumber: adm.patientId?.contactNumber || "",
+      admissionId: adm._id,
+      visitType,
+      department,
+      ward: adm.wardName || "",
+    });
+    const d = data?.data || data || {};
+    if (!d.path) return;
+    openPrint("feedback-slip", {
+      url: `${window.location.origin}${d.path}`,
+      patientName: adm.patientName,
+      UHID: adm.UHID,
+      visitType,
+      department,
+      date: new Date().toISOString(),
+      validUntil: d.expiresAt,
+    });
+  } catch (_) { /* never block discharge on feedback issues */ }
 }
 
 /* ─────────── Print Gate Pass ─────────── */

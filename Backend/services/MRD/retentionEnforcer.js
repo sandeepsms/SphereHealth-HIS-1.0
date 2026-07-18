@@ -24,10 +24,13 @@
 
 const mongoose = require("mongoose");
 
-// Retention floors in days. 8 years / 5 years per NABH IMS.3.
+// Retention floors in days. 8 years / 5 years per NABH IMS.3; medico-legal
+// (MLC / POCSO) records are held far longer — 12 years (practically the
+// register is treated as permanent, so this is the archive-queue trigger).
 const FLOORS = {
   bills: 8 * 365,
   clinical: 5 * 365,
+  medicolegal: 12 * 365,
 };
 
 // Candidate collections + fields. The cron uses the model name to look
@@ -57,6 +60,25 @@ const TARGETS = [
     model: "DischargeSummary",
     floorDays: FLOORS.clinical,
     dateField: "createdAt",
+    legalHoldField: "legalHold",
+  },
+  // #138 — core clinical episode record. In-patient records held 8y for
+  // medico-legal linkage; a legalHold flag excludes a record from the purge
+  // candidate count entirely.
+  {
+    label: "Admission",
+    model: "Admission",
+    floorDays: FLOORS.bills,
+    dateField: "admissionDate",
+    legalHoldField: "legalHold",
+  },
+  // #138 — medico-legal register. 12y floor (POCSO / IPC); legalHold-aware.
+  {
+    label: "MLCReport",
+    model: "MLCReport",
+    floorDays: FLOORS.medicolegal,
+    dateField: "createdAt",
+    legalHoldField: "legalHold",
   },
   {
     label: "ConsentForm",
@@ -131,6 +153,9 @@ async function runRetentionReview() {
     const cutoff = new Date(now - t.floorDays * 86400000);
     try {
       const filter = { [t.dateField]: { $lt: cutoff } };
+      // A record under legal hold (litigation / open MLC) is never a purge
+      // candidate — exclude it from the count so the queue is actionable.
+      if (t.legalHoldField) filter[t.legalHoldField] = { $ne: true };
       // Cap counts at 1M to avoid expensive `countDocuments` on huge
       // collections; the goal is a directional figure for the
       // admin queue, not a precise audit.
@@ -198,12 +223,20 @@ async function startupSelfTest() {
     'ScheduleXEntry',
     'PharmacyDrugBatch',
     'PharmacyVendorReturn',
+    'Admission',
+    'MLCReport',
   ];
   const results = [];
   for (const name of KNOWN_MODELS) {
     const Model = mongoose.modelNames().includes(name) ? mongoose.model(name) : null;
     if (!Model) { results.push({ name, ok: false, reason: 'model-not-registered' }); continue; }
-    try { await Model.find({}).limit(0).lean(); results.push({ name, ok: true }); }
+    // R9-FIX(R9-102): `.limit(1)`, NOT `.limit(0)`. In MongoDB a limit of 0
+    // means NO LIMIT — the old probe streamed all 12 collections in full into
+    // heap on every boot (a mature site: ~400k PatientBill + ~1.2M MAR rows),
+    // and index.js awaits this before serving, so it directly added minutes to
+    // startup and spiked memory. We only need to prove the model is registered
+    // and its collection is queryable — one document does that in O(1).
+    try { await Model.find({}).limit(1).lean(); results.push({ name, ok: true }); }
     catch (e) { results.push({ name, ok: false, reason: e.message }); }
   }
   return results;

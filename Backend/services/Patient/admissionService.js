@@ -5,6 +5,7 @@
 //      When patient.isActive=false, their active admissions stay, bed stays Occupied
 
 const mongoose = require("mongoose");
+const { safeRegex } = require("../../utils/queryGuards"); // R8-FIX(#50): ReDoS/regex-injection guard
 const Admission = require("../../models/Patient/admissionModel");
 const Bed = require("../../models/bedMgmt/bedsModel");
 const Patient = require("../../models/Patient/patientModel");
@@ -142,6 +143,12 @@ class AdmissionService {
     const useTx = !!session && (session.client?.s?.options?.replicaSet ||
                                 session.client?.options?.replicaSet);
 
+    // R9-FIX(R9-091): only the non-tx rollback that frees the bed must know
+    // whether THIS attempt actually occupied it. If the bed-CAS below FAILED
+    // (we lost the race to another patient), the unconditional rollback used to
+    // free that other patient's bed. This flag gates the rollback on our own
+    // successful occupancy.
+    let _bedCasSucceeded = false;
     const run = async (s) => {
       let bedData = {};
       if (data.bedId) {
@@ -162,6 +169,7 @@ class AdmissionService {
             `Bed ${bedCheck.bedNumber} is not available (current status: ${bedCheck.status}).`,
           );
         }
+        _bedCasSucceeded = true; // R9-FIX(R9-091): we won the bed — rollback may now free it
 
         bedData = {
           bedId: bed._id,
@@ -231,10 +239,23 @@ class AdmissionService {
             // flag so the dischargeSummary finalize endpoint demands an
             // explicit senior-cosign acknowledgement at sign-off.
             mustCosign: await (async () => {
-              if (!data.attendingDoctorId) return false;
+              if (!data.attendingDoctorId && !data.attendingDoctorUserId) return false;
               try {
+                // attendingDoctorId is a Doctor._id — the designation lives on
+                // the LINKED User (Doctor.loginUserId -> User.doctorDetails).
+                // Pre-fix this did User.findById(attendingDoctorId) against a
+                // Doctor._id, always missed, so mustCosign never fired. Resolve
+                // the User id (prefer the one the caller passed, else hop via
+                // Doctor.loginUserId) then read the designation. (D7)
+                const Doctor = require("../../models/Doctor/doctorModel");
                 const User = require("../../models/User/userModel");
-                const u = await User.findById(data.attendingDoctorId).select("doctorDetails.designation").lean();
+                let userId = data.attendingDoctorUserId || null;
+                if (!userId) {
+                  const d = await Doctor.findById(data.attendingDoctorId).select("loginUserId").lean();
+                  userId = d?.loginUserId || null;
+                }
+                if (!userId) return false;
+                const u = await User.findById(userId).select("doctorDetails.designation").lean();
                 return u?.doctorDetails?.designation === "Junior Resident";
               } catch (_) { return false; }
             })(),
@@ -247,6 +268,21 @@ class AdmissionService {
             erType:        data.erType || "",
             modeOfArrival: data.modeOfArrival || "",
             broughtBy:     data.broughtBy || "",
+            // NABH COP.10/11 — vulnerable-patient flags at admission auto-build
+            // the special-care checklist so nursing can action + evidence it.
+            vulnerability: (() => {
+              const flags = Array.isArray(data.vulnerabilityFlags) ? data.vulnerabilityFlags
+                : (data.vulnerability && Array.isArray(data.vulnerability.flags) ? data.vulnerability.flags : []);
+              if (!flags.length) return { flags: [], specialCareChecklist: [] };
+              const { buildSpecialCareChecklist } = require("./vulnerabilityChecklist");
+              return {
+                flags,
+                identifiedAt: new Date(),
+                identifiedByName: data.vulnerabilityIdentifiedBy || data.admittedByName || "",
+                notes: data.vulnerability?.notes || "",
+                specialCareChecklist: buildSpecialCareChecklist(flags),
+              };
+            })(),
             status: "Active",
           },
         ],
@@ -274,10 +310,12 @@ class AdmissionService {
         try {
           admission = await run(null);
         } catch (err) {
-          // No-transaction fallback: revert the bed allocation if it
-          // succeeded before the failure. Best-effort — the catch swallows
-          // rollback errors so the original cause still surfaces.
-          if (data.bedId) {
+          // No-transaction fallback: revert the bed allocation ONLY if THIS
+          // attempt actually occupied it (R9-FIX(R9-091)). Without the flag, a
+          // failure that was the bed-CAS itself losing the race would free the
+          // WINNER's bed. Best-effort — the catch swallows rollback errors so
+          // the original cause still surfaces.
+          if (data.bedId && _bedCasSucceeded) {
             await Bed.findByIdAndUpdate(data.bedId, {
               $set: { status: "Available", currentAdmission: null },
             }).catch(logErr("admission", `rollback bed ${data.bedId} on create failure`));
@@ -298,6 +336,24 @@ class AdmissionService {
         { $set: { convertedToAdmission: admission._id } },
       ).catch(logErr("admission", `OPD→IPD reverse-link ${convertedFromOpdId}→${admission._id}`));
     }
+
+    // R8-FIX(#49): increment the patient's IPD/Daycare/Services visit counter so
+    // returning-patient admissions are counted (symmetric mirror of cancelAdmission's
+    // decrement). OPD is counted in OPDService.createOPDVisit and Emergency in
+    // emergencyService, so those admissionTypes are skipped to avoid a double count.
+    // Best-effort + non-blocking — visit-count is decorative, never fails an admission.
+    try {
+      const patientService = require("./patientService");
+      if (admission?.patientId && typeof patientService.updateVisitCount === "function") {
+        const at = admission.admissionType;
+        const visitType =
+          (at === "Day Care" || at === "Daycare") ? "Daycare"
+          : (at === "Services") ? "Services"
+          : (at === "OPD" || at === "Emergency") ? null
+          : "IPD";
+        if (visitType) await patientService.updateVisitCount(admission.patientId, visitType);
+      }
+    } catch (_) { /* visit-count is decorative — never block admission */ }
 
     return admission;
   }
@@ -326,10 +382,21 @@ class AdmissionService {
     try {
       const DoctorOrder = require("../../models/Doctor/DoctorOrderModel");
       const ACTIVE = ["Pending", "Acknowledged", "Active", "InProgress", "OnHold", "Modified"];
+      // R8-FIX(#22): scope the gate to THIS admission (admissionId +
+      // admissionNumber/ipdNo mirrors), not the whole UHID — otherwise an open
+      // procedure from a different (e.g. prior) admission of the same patient
+      // blocks a legitimate discharge of the current admission. admissionNumber
+      // is sparse/nullable, so only add the string-mirror branches when present.
+      const admScope = [{ admissionId: admission._id }];
+      if (admission.admissionNumber) {
+        admScope.push({ ipdNo: admission.admissionNumber });
+        admScope.push({ admissionNumber: admission.admissionNumber });
+      }
       const activeOT = await DoctorOrder.findOne({
         UHID: admission.UHID,
         orderType: "Procedure",
         status: { $in: ACTIVE },
+        $or: admScope,
       }).select("_id orderDetails.procedureName status").lean();
       if (activeOT && !dischargeData.allowOverride) {
         const err = new Error(
@@ -673,6 +740,15 @@ class AdmissionService {
       if (admission.status === "Cancelled") return admission;
       throw new Error(`Cannot cancel — admission status is "${admission.status}"`);
     }
+    // R9-FIX(R9-023): a legal hold is a preservation obligation. The retention
+    // sweep honoured it, but cancel/soft-delete did not — so a hold could be
+    // quietly undone by cancelling the admission (which cascades bed release,
+    // order cancellation, bill voiding). Refuse hard, and NOT force-overridable:
+    // "force" is for operational cleanup, a legal hold outranks it.
+    if (admission.legalHold) {
+      const err = new Error(`Admission is under legal hold${admission.legalHoldReason ? ` (${admission.legalHoldReason})` : ""} and cannot be cancelled`);
+      err.status = 423; throw err;
+    }
 
     // Lazy loads to dodge circular requires (autoBilling/billing both
     // import this service in some code paths).
@@ -742,8 +818,15 @@ class AdmissionService {
 
     // ── DOCTOR ORDERS → Cancelled ──────────────────────────────────
     try {
+      // R9-FIX(R9-019): DoctorOrders link to an admission via admissionId
+      // (ObjectId) / ipdNo / admissionNumber — NOT via `visitId` set to the
+      // admission _id string (that field never carries it), so the old query
+      // matched nothing and open orders survived a cancelled admission.
       const openOrders = await DoctorOrder.find({
-        visitId: String(admission._id),
+        $or: [
+          { admissionId: admission._id },
+          ...(admission.admissionNumber ? [{ ipdNo: admission.admissionNumber }, { admissionNumber: admission.admissionNumber }] : []),
+        ],
         status:  { $in: ["Pending", "Acknowledged", "Active", "InProgress"] },
       });
       for (const o of openOrders) {
@@ -901,7 +984,12 @@ class AdmissionService {
 
     const run = async (s) => {
       const newBed = await Bed.findOneAndUpdate(
-        { _id: newBedId, status: "Available" },
+        // R9-FIX(R9-022): the dirty-bed guard was enforced on admit (L160) but
+        // MISSING from every transfer path — a patient could be moved onto a
+        // bed that was freed but not yet cleaned (housekeeping.state
+        // CleaningPending/InProgress), an infection-control breach the admit
+        // guard specifically prevents. Mirror the admit predicate here.
+        { _id: newBedId, status: "Available", "housekeeping.state": { $nin: ["CleaningPending", "CleaningInProgress"] } },
         { $set: { status: "Occupied", currentAdmission: admissionId } },
         { new: true, session: s || undefined },
       );
@@ -909,6 +997,9 @@ class AdmissionService {
       if (!newBed) {
         const check = await Bed.findById(newBedId).lean();
         if (!check) throw new Error("New bed not found");
+        const hk = check.housekeeping?.state;
+        if (check.status === "Available" && ["CleaningPending", "CleaningInProgress"].includes(hk))
+          throw new Error(`New bed ${check.bedNumber} is awaiting housekeeping (${hk}) — cannot transfer until cleaned`);
         throw new Error(
           `New bed ${check.bedNumber} is not available (status: ${check.status})`,
         );
@@ -956,13 +1047,18 @@ class AdmissionService {
         let oldBedFreed = false;
         try {
           const newBed = await Bed.findOneAndUpdate(
-            { _id: newBedId, status: "Available" },
+            // R9-FIX(R9-022): mirror the admit-path dirty-bed guard on the
+            // no-transaction path too.
+            { _id: newBedId, status: "Available", "housekeeping.state": { $nin: ["CleaningPending", "CleaningInProgress"] } },
             { $set: { status: "Occupied", currentAdmission: admissionId } },
             { new: true },
           );
           if (!newBed) {
             const check = await Bed.findById(newBedId).lean();
             if (!check) throw new Error("New bed not found");
+            const hk = check.housekeeping?.state;
+            if (check.status === "Available" && ["CleaningPending", "CleaningInProgress"].includes(hk))
+              throw new Error(`New bed ${check.bedNumber} is awaiting housekeeping (${hk}) — cannot transfer until cleaned`);
             throw new Error(
               `New bed ${check.bedNumber} is not available (status: ${check.status})`,
             );
@@ -1015,6 +1111,19 @@ class AdmissionService {
       session?.endSession();
     }
 
+    // R9-FIX(R9-020): the billing re-tier (future-day bed-item re-stamp +
+    // same-day trigger void + package tier sync) is now a reusable method, so
+    // the handover-based transfer path (bedTransferController.completeHandover)
+    // gets it too. Previously a bed change performed via handover kept billing
+    // the OLD tariff/package tier — only this direct transferBed path re-tiered.
+    await this.reTierBillingAfterTransfer(admission, reason);
+    return admission;
+  }
+
+  // Re-tier billing after a bed move — shared by transferBed AND the handover
+  // completion path. `admission` must already be persisted with its new
+  // bedId/roomId/wardId; `reason` is stamped onto any voided triggers.
+  async reTierBillingAfterTransfer(admission, reason) {
     // ── R7bd-A-9 / A1-HIGH-10 — re-stamp future bed-day items ─────
     // After a bed transfer, if any Draft/Generated bill carries
     // bed-charge line items, the per-day price should change from the
@@ -1034,6 +1143,17 @@ class AdmissionService {
       const PatientBillM   = require("../../models/PatientBillModel/PatientBillModel");
       const today = new Date(); today.setHours(0, 0, 0, 0);
       const BED_PREFIXES = /^(BED-|IPD-RM-|IPD-ICU-|IPD-NUR-)/;
+      // R9-FIX(R9-021): getDateKey lets us void the SAME-DAY BillingTrigger that
+      // would otherwise block re-accrual. Bed-day charges keep a stable
+      // serviceCode across tiers (price comes from a per-category lookup), so
+      // the daily dedup — keyed on (admissionId, serviceCode, dateKey) — treats
+      // the OLD-tier trigger as "already charged today" and NEVER re-fires the
+      // new tier. Zeroing the bill item alone therefore lost that day's charge
+      // permanently. Collect each zeroed (serviceCode, dateKey) and void its
+      // matching trigger so the next accrual/flush re-charges at the new rate.
+      let getDateKey = null;
+      try { ({ getDateKey } = require("../../services/Billing/autoBillingService")); } catch (_) { /* voiding is best-effort */ }
+      const voidPairs = []; // [{ serviceCode, dateKey }]
       const bills = await PatientBillM.find({
         admission: admission._id,
         billStatus: { $in: ["DRAFT", "GENERATED"] },
@@ -1053,10 +1173,39 @@ class AdmissionService {
           item.quantity = 0;
           item.markModified?.("quantity");
           changed = true;
+          if (getDateKey && code) voidPairs.push({ serviceCode: code, dateKey: getDateKey(itemDate) });
         }
         if (changed) {
           try { await bill.save(); }
           catch (e) { console.warn("[transferBed] re-stamp save failed:", bill._id, e.message); }
+        }
+      }
+      // Void the exact (serviceCode, dateKey) triggers we just zeroed so the
+      // dedup no longer suppresses re-accrual. Match only triggers still in a
+      // dedup-blocking status; leave already-billed history untouched.
+      if (voidPairs.length) {
+        try {
+          const BillingTrigger = require("../../models/Billing/BillingTrigger");
+          const seen = new Set();
+          const or = [];
+          for (const p of voidPairs) {
+            const k = `${p.serviceCode}|${p.dateKey}`;
+            if (seen.has(k) || !p.dateKey) continue;
+            seen.add(k);
+            or.push({ serviceCode: p.serviceCode, dateKey: p.dateKey });
+          }
+          if (or.length) {
+            await BillingTrigger.updateMany(
+              {
+                admissionId: admission._id,
+                status: { $in: ["completed", "billed", "pending", "pending-review", "queued", "applied"] },
+                $or: or,
+              },
+              { $set: { status: "voided", voidReason: `Bed transfer re-tier (${reason || "transfer"})`, voidedAt: new Date() } },
+            );
+          }
+        } catch (e) {
+          console.warn("[transferBed] trigger void for re-accrual skipped:", e.message);
         }
       }
     } catch (e) {
@@ -1122,6 +1271,12 @@ class AdmissionService {
     const bedFilter = filters.bedId || filters.bed;
     if (bedFilter && mongoose.isValidObjectId(String(bedFilter)))
       query.bedId = new mongoose.Types.ObjectId(String(bedFilter));
+
+    // R9-FIX(R9-082): ward scope (used by the nurse ward-restriction — see
+    // admissionController.getAllAdmissions). Filters admissions to a single ward.
+    const wardFilter = filters.wardId;
+    if (wardFilter && mongoose.isValidObjectId(String(wardFilter)))
+      query.wardId = new mongoose.Types.ObjectId(String(wardFilter));
 
     // ✅ patientId filter — handle gracefully (don't throw 400)
     const patFilter = filters.patientId || filters.patient;
@@ -1235,6 +1390,14 @@ class AdmissionService {
     const bedFilter = filters.bedId || filters.bed;
     if (bedFilter && mongoose.isValidObjectId(String(bedFilter)))
       query.bedId = new mongoose.Types.ObjectId(String(bedFilter));
+
+    // R7hr-D6 — honour the Doctor-scope $or the controller stamps
+    // (attendingDoctorId OR treatmentTeam.doctorId). The named-key copy
+    // above never merged it, so any Doctor with ipd.read saw EVERY active
+    // inpatient (PHI over-exposure). Admin / Accountant callers pass no
+    // $or -> whole-census view unchanged. Array guard neutralises any
+    // stray query-string ?$or= for non-scoped roles.
+    if (Array.isArray(filters.$or) && filters.$or.length) query.$or = filters.$or;
 
     const admissions = await Admission.find(query)
       .populate(
@@ -1503,6 +1666,24 @@ class AdmissionService {
     delete safe.attendingDoctorId;
     delete safe.treatmentTeam;
     delete safe.dischargeWorkflow;
+    // R9-FIX(R9-018): these are compliance locks / gates owned by dedicated,
+    // gated flows — the generic admission patch must never clear them. legalHold
+    // (retention exclusion, its own setter), mustCosign (NABH COP.7 senior-
+    // cosign requirement derived from the attending doctor's designation),
+    // initialAssessment / nurseInitialAssessment (the IA-complete gate), and the
+    // MLC flags (owned by the MLC flow). Without this a Doctor/Receptionist could
+    // clear mustCosign to self-finalize discharge or drop a legal hold.
+    delete safe.legalHold;
+    delete safe.legalHoldReason;
+    delete safe.legalHoldBy;
+    delete safe.legalHoldByName;
+    delete safe.legalHoldAt;
+    delete safe.mustCosign;
+    delete safe.initialAssessment;
+    delete safe.nurseInitialAssessment;
+    delete safe.isMLC;
+    delete safe.mlcNumber;
+    delete safe.actualDischargeDate;
     const admission = await Admission.findByIdAndUpdate(
       id,
       { $set: safe },
@@ -1568,7 +1749,7 @@ class AdmissionService {
 
   async searchAdmissions(searchTerm, opts = {}) {
     if (!searchTerm?.trim()) throw new Error("Search term is required");
-    const regex = { $regex: searchTerm.trim(), $options: "i" };
+    const regex = safeRegex(searchTerm); // R8-FIX(#50): escape + length cap (safeRegex trims internally)
     const query = {
       $or: [
         { UHID: regex },
@@ -1632,7 +1813,11 @@ class AdmissionService {
   async checkDoctorAccess(admissionId, callerOrUserId) {
     const admission = await Admission.findById(admissionId)
       .select("attendingDoctorId attendingDoctor patientName UHID status")
-      .populate("attendingDoctorId", "fullName firstName lastName");
+      // R8-FIX(#41): attendingDoctorId stores a Doctor._id but the schema ref
+      // is "User" — a plain populate resolves against User, finds nothing, nulls
+      // the field, and forces isOwner false. Force model:"Doctor" (mirrors
+      // getMyIPDPatients) so ownerId carries the real Doctor._id.
+      .populate({ path: "attendingDoctorId", model: "Doctor", select: "personalInfo.fullName personalInfo.firstName personalInfo.lastName professional.registrationNumber" });
     if (!admission) throw new Error("Admission not found");
     const ownerId = String(admission.attendingDoctorId?._id || admission.attendingDoctorId || "");
 
@@ -1666,7 +1851,7 @@ class AdmissionService {
   async getAdmissionsByDoctor(doctorName) {
     if (!doctorName) throw new Error("Doctor name is required");
     return Admission.find({
-      attendingDoctor: { $regex: doctorName.trim(), $options: "i" },
+      attendingDoctor: safeRegex(doctorName), // R8-FIX(#50)
       status: "Active",
     })
       .populate("patientId", "fullName UHID contactNumber")
@@ -1708,6 +1893,14 @@ class AdmissionService {
       // Idempotent — already soft-deleted.
       return { message: "Admission already deleted (soft)", admission };
     }
+    // R9-FIX(R9-023): legal hold blocks soft-delete outright — even with
+    // force=true. A hold means the admission (and every artefact hanging off
+    // it) must be preserved and unaltered for litigation/audit; the retention
+    // sweep already skips held rows, so delete must too or the two disagree.
+    if (admission.legalHold) {
+      const err = new Error(`Admission is under legal hold${admission.legalHoldReason ? ` (${admission.legalHoldReason})` : ""} and cannot be deleted`);
+      err.status = 423; throw err;
+    }
 
     // Probe blocking conditions if !force.
     if (!force) {
@@ -1720,7 +1913,13 @@ class AdmissionService {
           billStatus: { $nin: ["DRAFT", "CANCELLED", "REFUNDED"] },
         }),
         DoctorOrder.exists({
-          visitId: String(admission._id),
+          // R9-FIX(R9-019): link via admissionId/ipdNo, not visitId=_id string
+          // (which never matched → the "active doctor order" delete-blocker
+          // never fired, letting an admission with open orders be deleted).
+          $or: [
+            { admissionId: admission._id },
+            ...(admission.admissionNumber ? [{ ipdNo: admission.admissionNumber }, { admissionNumber: admission.admissionNumber }] : []),
+          ],
           status:  { $in: ["Pending", "Acknowledged", "Active", "InProgress"] },
         }),
         MAR.exists({ admissionId: admission._id, status: "ACTIVE" }),

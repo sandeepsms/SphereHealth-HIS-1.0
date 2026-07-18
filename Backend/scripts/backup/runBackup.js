@@ -98,10 +98,11 @@ function acquireLock() {
 }
 function releaseLock() { try { if (lockFd != null) fs.closeSync(lockFd); fs.unlinkSync(LOCK); } catch (_) {} }
 
-(async () => {
-  if (!acquireLock()) { log("another backup run is in progress (lock held) — exiting without action."); process.exit(0); }
+async function run(opts = {}) {
+  if (!acquireLock()) { log("another backup run is in progress (lock held) — skipping this run."); return { ok: true, skipped: "lock-held" }; }
 
-  const mode = String(opt("mode", "nightly"));
+  try {
+  const mode = String(opts.mode || opt("mode", "nightly"));
   const isMonthly = mode === "monthly";
   const subdir = isMonthly ? "monthly" : "nightly";
   const name = isMonthly ? `sphere_${ymStamp()}.shbak.gz` : `sphere_${stamp()}.shbak.gz`;
@@ -127,9 +128,15 @@ function releaseLock() { try { if (lockFd != null) fs.closeSync(lockFd); fs.unli
     cleanup();
     throw new Error(`backup too small (${res.totalDocs} docs, ${res.collections.length} collections, floor ${MIN_DOCS}/${MIN_COLLS}) — likely wrong DB / auth failure. NOT archiving or pruning.`);
   }
-  if (!ALLOW_SHRINK && prev && prev.ok && prev.totalDocs && res.totalDocs < prev.totalDocs * 0.5) {
+  // R9-FIX(R9-103): read the last-GOOD doc count from either a successful prior
+  // status (prev.ok) OR the preserved lastGoodTotalDocs carried on a failure
+  // status. Pre-fix, a single failed run overwrote last-backup.json with a bare
+  // {ok:false} (no totalDocs), so this guard saw prev.ok=false, skipped, and the
+  // NEXT run could archive+prune a gutted backup unchecked.
+  const _shrinkBaseline = prev ? (prev.ok ? prev.totalDocs : prev.lastGoodTotalDocs) : null;
+  if (!ALLOW_SHRINK && _shrinkBaseline && res.totalDocs < _shrinkBaseline * 0.5) {
     cleanup();
-    throw new Error(`backup has ${res.totalDocs} docs vs last good ${prev.totalDocs} (>50% drop) — refusing to archive/prune. Set BACKUP_ALLOW_SHRINK=1 if this drop is real.`);
+    throw new Error(`backup has ${res.totalDocs} docs vs last good ${_shrinkBaseline} (>50% drop) — refusing to archive/prune. Set BACKUP_ALLOW_SHRINK=1 if this drop is real.`);
   }
 
   // 3) Atomic rename into place + sidecar; verify the on-disk OFFLINE copy
@@ -165,7 +172,7 @@ function releaseLock() { try { if (lockFd != null) fs.closeSync(lockFd); fs.unli
 
   // 5) MONTHLY: real restore-drill — restore into a SEPARATE drill DB and
   //    confirm the ACTUAL doc count in the restored DB (not file-read counts).
-  if (isMonthly || flag("verify")) {
+  if (isMonthly || (opts.verify != null ? !!opts.verify : flag("verify"))) {
     const liveDb = dbNameOf(MONGO_URI), drillDb = dbNameOf(VERIFY_URI);
     if (!drillDb || drillDb === liveDb || !/drill|verify/i.test(drillDb)) {
       throw new Error(`UNSAFE restore-drill target — BACKUP_VERIFY_URI db "${drillDb}" must differ from the live DB "${liveDb}" and contain "drill"/"verify". Refusing to wipe.`);
@@ -195,11 +202,29 @@ function releaseLock() { try { if (lockFd != null) fs.closeSync(lockFd); fs.unli
   try { fs.writeFileSync(path.join(OFFLINE, "last-backup.json"), JSON.stringify(status, null, 2)); } catch (_) {}
 
   log(`=== ${mode.toUpperCase()} backup COMPLETE ===`);
-  releaseLock();
-  process.exit(0);
-})().catch((e) => {
-  log(`BACKUP FAILED: ${e.stack || e.message}`);
-  try { fs.mkdirSync(OFFLINE, { recursive: true }); fs.writeFileSync(path.join(OFFLINE, "last-backup.json"), JSON.stringify({ ok: false, error: e.message, at: new Date().toISOString() }, null, 2)); } catch (_) {}
-  releaseLock();
-  process.exit(2);
-});
+  return status;
+  } catch (e) {
+    log(`BACKUP FAILED: ${e.stack || e.message}`);
+    // R9-FIX(R9-103): preserve the last-GOOD doc-count baseline through a
+    // failure so the >50%-shrink guard stays armed on the next run.
+    try {
+      fs.mkdirSync(OFFLINE, { recursive: true });
+      const _p = readJson(path.join(OFFLINE, "last-backup.json"));
+      const _lastGoodDocs = _p ? (_p.ok ? _p.totalDocs : _p.lastGoodTotalDocs) : null;
+      const _lastGoodAt   = _p ? (_p.ok ? _p.at        : _p.lastGoodAt)        : null;
+      fs.writeFileSync(path.join(OFFLINE, "last-backup.json"), JSON.stringify({ ok: false, error: e.message, at: new Date().toISOString(), lastGoodTotalDocs: _lastGoodDocs ?? null, lastGoodAt: _lastGoodAt ?? null }, null, 2));
+    } catch (_) {}
+    throw e;
+  } finally {
+    releaseLock();
+  }
+}
+
+// CLI entry point — preserves the standalone / PowerShell-scheduled behaviour
+// (`node runBackup.js --mode=nightly|--mode=monthly|--verify`): exit 0 on
+// success, exit 2 on failure so Task Scheduler / an OS cron alerts on non-zero.
+if (require.main === module) {
+  run().then(() => process.exit(0)).catch(() => process.exit(2));
+}
+
+module.exports = { run };

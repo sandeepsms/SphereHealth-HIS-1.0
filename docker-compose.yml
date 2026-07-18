@@ -43,9 +43,23 @@ services:
       # Per-hospital DB lives inside this hospital's own mongo container.
       MONGO_URI: mongodb://${MONGO_USER}:${MONGO_PASSWORD}@mongo:27017/${HOSPITAL_SLUG}?authSource=admin
       JWT_SECRET: ${JWT_SECRET}
+      # R8-FIX(#33) — NABH register tamper-evidence (D19) HMAC key. Backend
+      # fail-fasts in production without it; provision-hospital.sh generates it.
+      REGISTER_HMAC_SECRET: ${REGISTER_HMAC_SECRET}
       # Same-origin via the nginx proxy; also list the public URL for safety.
       CORS_ORIGINS: ${PUBLIC_URL}
       HOSPITAL_TZ: ${HOSPITAL_TZ:-Asia/Kolkata}
+      # D2 — in-container nightly backup (index.js cron → scripts/backup/*,
+      # tool-free EJSON, no mongodump). Write verified archives onto the
+      # persistent backend-backups volume so they survive container recreate.
+      BACKUP_OFFLINE_DIR: /app/backups
+      # Off-site copy is MANDATORY unless this opt-out is set. Fresh installs
+      # default to OFFLINE-ONLY so the nightly backup SUCCEEDS out of the box;
+      # for real disaster recovery, mount an off-site path into the container,
+      # set BACKUP_SYNCED_DIR to it, and set BACKUP_ALLOW_OFFLINE_ONLY=0
+      # (see deploy/DEPLOY.md → Backups).
+      BACKUP_ALLOW_OFFLINE_ONLY: "${BACKUP_ALLOW_OFFLINE_ONLY:-1}"
+      BACKUP_SYNCED_DIR: ${BACKUP_SYNCED_DIR:-}
     volumes:
       - backend-uploads:/app/uploads     # PHI files — MUST persist
       - backend-backups:/app/backups     # DB backup archives

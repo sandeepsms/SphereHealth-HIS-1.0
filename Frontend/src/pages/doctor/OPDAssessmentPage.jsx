@@ -12,17 +12,13 @@ import axios from "axios";
 import { toast } from "react-toastify";
 import API_ENDPOINTS from "../../config/api";
 import { openPrint } from "../../Components/print/openPrint";
-// R7fq Track C: shared print shell — replaces the legacy
-// openPrint("opd-prescription", payload) routing with direct
-// buildPrintShellHtml() calls so the SGRH-style header / patient strip /
-// signature zone / footer all come from one source of truth. The R7bt
-// fixes (full payload — HOPI / vitals / chronic / allergies / drugs /
-// investigations / advice) are preserved inside bodyHtml.
-import { buildPrintShellHtml } from "@/templates/PrintShell";
 import FingerprintConsentModal from "../../Components/clinical/FingerprintConsentModal";
 import DrugAutocomplete, { parseStrength, drugDisplayName } from "../../Components/clinical/DrugAutocomplete";
 import ServiceAutocomplete from "../../Components/clinical/ServiceAutocomplete";
+import Icd10Picker from "../../Components/clinical/Icd10Picker";   // R7hr(ICD-P1.3)
 import InfusionPanel from "../../Components/clinical/InfusionPanel";
+import AmbientScribe from "../../Components/scribe/AmbientScribe";
+import { opdFromNote } from "../../Components/scribe/scribeApply";
 import { useHospitalSettings } from "../../context/HospitalSettingsContext";
 // R7ar-P1-14/D4-aq-02: centralised Decimal128 unwrap.
 import { toMoney } from "../../utils/money";
@@ -590,7 +586,7 @@ export default function OPDAssessmentPage() {
     setSaving(true);
     try {
       const user = userPre;
-      await axios.post(`${API_ENDPOINTS.OPD}/${visitNumber}/assessment`, {
+      const _assessmentBody = {
         // ...soap already includes the 6 new diagnosis fields
         // (provisionalDiagnosis + ICD, workingDiagnosis + ICD, finalDiagnosis + ICD)
         // because they all live inside the soap object — no separate
@@ -664,6 +660,9 @@ export default function OPDAssessmentPage() {
           duration:     m.duration    || "",
           instructions: m.instructions || "",
           mealStatus:   m.mealStatus  || "",
+          // D9 — carry a per-row allergy override forward so a drug the doctor
+          // already justified in the Add-med step isn't re-prompted at save.
+          ...(m._allergyOverrideReason ? { _allergyOverrideReason: m._allergyOverrideReason } : {}),
         })),
         ...(signature
           ? {
@@ -671,7 +670,57 @@ export default function OPDAssessmentPage() {
               doctorSignedAt:       new Date().toISOString(),
             }
           : {}),
-      });
+      };
+      // D8/D9 — post the assessment, resolving the two typed 409s the backend
+      // can now return: OPD_ASSESSMENT_SIGNED (the record is signed → needs an
+      // amendment reason, recorded append-only) and ALLERGY_COLLISION (a
+      // prescribed drug matches a recorded allergy → needs a documented
+      // per-drug override reason). We retry with the doctor-supplied reason(s)
+      // instead of failing the save.
+      const _rxOverrides = {};      // drugName(lower) -> override reason
+      // eslint-disable-next-line no-constant-condition
+      for (;;) {
+        const _body = {
+          ..._assessmentBody,
+          prescribedMedications: (_assessmentBody.prescribedMedications || []).map((r) => {
+            const _ov = _rxOverrides[(r.medicineName || "").toLowerCase()];
+            return _ov ? { ...r, _allergyOverrideReason: _ov } : r;
+          }),
+        };
+        try {
+          await axios.post(`${API_ENDPOINTS.OPD}/${visitNumber}/assessment`, _body);
+          break;
+        } catch (_e) {
+          const _code = _e.response?.data?.code;
+          if (_code === "OPD_ASSESSMENT_SIGNED" && !_assessmentBody.amendReason) {
+            const _reason = window.prompt(
+              "This assessment is already signed and locked. Enter a reason to record this amendment (or Cancel to leave it unchanged):",
+            );
+            if (!_reason || !_reason.trim()) {
+              toast.info("Amendment cancelled — the signed assessment was left unchanged.");
+              return;
+            }
+            _assessmentBody.amendReason = _reason.trim();
+            continue;
+          }
+          if (_code === "ALLERGY_COLLISION") {
+            const _d = _e.response.data || {};
+            const _key = (_d.drugName || "").toLowerCase();
+            if (_key && !_rxOverrides[_key]) {
+              const _reason = window.prompt(
+                `Allergy alert: ${_d.drugName} matches the patient's "${_d.allergen}" allergy.\n\nEnter an override reason to prescribe anyway, or Cancel to abort and remove it:`,
+              );
+              if (!_reason || !_reason.trim()) {
+                toast.warn("Save cancelled — remove the flagged medication or provide an override reason.");
+                return;
+              }
+              _rxOverrides[_key] = _reason.trim();
+              continue;
+            }
+          }
+          throw _e;   // unknown error / already-overridden → fall to outer catch
+        }
+      }
       // Push meds + investigations as DoctorOrders (bulk)
       const baseOrder = {
         UHID: visit?.UHID || uhid, visitId: visitNumber, visitType: "OPD",
@@ -758,13 +807,33 @@ export default function OPDAssessmentPage() {
       // available — the final source-of-truth is the bulk POST in
       // handleSave(). Keep the optimistic UI; surface failures via toast
       // (R7az-D4-HIGH-5: was silently swallowed pre-fix).
+      const _medToAdd = { ...newMed };
       try { await axios.post(`${API_ENDPOINTS.OPD}/${visitNumber}/prescription`, newMed); }
       catch (e) {
-        if (e.response?.status && e.response?.status >= 500) {
+        // D9 — the OPD Rx now runs the drug-allergy gate. On a 409 collision,
+        // prompt for a documented override reason and retry; stamp it on the
+        // local row so the later assessment save carries it too (no re-prompt).
+        if (e.response?.data?.code === "ALLERGY_COLLISION") {
+          const _d = e.response.data || {};
+          const _reason = window.prompt(
+            `Allergy alert: ${_d.drugName || newMed.name} matches the patient's "${_d.allergen}" allergy.\n\nEnter an override reason to add it anyway, or Cancel to skip:`,
+          );
+          if (!_reason || !_reason.trim()) {
+            toast.warn("Medication not added — it matches a recorded allergy.");
+            return;   // finally { setIsAddingMed(false) } still runs
+          }
+          _medToAdd._allergyOverrideReason = _reason.trim();
+          try { await axios.post(`${API_ENDPOINTS.OPD}/${visitNumber}/prescription`, { ...newMed, _allergyOverrideReason: _reason.trim() }); }
+          catch (e2) {
+            if (e2.response?.status && e2.response?.status >= 500) {
+              toast.warn("Could not sync override to server immediately — will save on next Save click.");
+            }
+          }
+        } else if (e.response?.status && e.response?.status >= 500) {
           toast.warn("Could not sync to server immediately — will save on next Save click.");
         }
       }
-      setMeds(p => [...p, { ...newMed }]);
+      setMeds(p => [...p, _medToAdd]);
       // Reset must mirror the initial state — including mealStatus, else
       // the new field stays sticky across rows.
       setNewMed({ name: "", dose: "", frequency: "", mealStatus: "", duration: "", route: "Oral" });
@@ -1592,6 +1661,23 @@ export default function OPDAssessmentPage() {
           </div>
         </div>
         <div style={{ display: "flex", gap: 10 }}>
+          {/* AI Clinical Documentation Assistant — dictate the consult, review a
+              structured draft, apply into the fields below (fill-empty; never
+              overwrites what the doctor typed). Doctor still Saves + signs. */}
+          <AmbientScribe
+            surface="opd"
+            context={{ age: visit?.age, sex: visit?.gender || visit?.sex }}
+            style={{ background: "rgba(255,255,255,.15)", color: "#fff", border: "1.5px solid rgba(255,255,255,.6)" }}
+            onApply={(note) => {
+              const f = opdFromNote(note);
+              setSoap((p) => { const q = { ...p }; Object.entries(f.soapPatch).forEach(([k, v]) => { if (v && !String(q[k] || "").trim()) q[k] = v; }); return q; });
+              setHopi((h) => { const q = { ...h }; Object.entries(f.hopiPatch).forEach(([k, v]) => { if (k === "associatedSymptoms") { if (Array.isArray(v) && v.length && !(q.associatedSymptoms || []).length) q.associatedSymptoms = v; } else if (v && !String(q[k] || "").trim()) q[k] = v; }); return q; });
+              if (f.chronic && !String(chronic.others || "").trim() && !(chronic.conditions || []).length) setChronic(f.chronic);
+              if (f.medRows.length) setMeds((p) => { const have = new Set(p.map((m) => String(m.name || m.medicineName || "").toLowerCase())); return [...p, ...f.medRows.filter((r) => r.name && !have.has(r.name.toLowerCase()))]; });
+              if (f.investRows.length) setInvests((p) => { const have = new Set(p.map((i) => String(i.name || "").toLowerCase())); return [...p, ...f.investRows.filter((r) => r.name && !have.has(r.name.toLowerCase()))]; });
+              toast.success("AI draft applied — review each field, then Save.");
+            }}
+          />
           <button onClick={handlePrint} style={{
             background: "rgba(255,255,255,.15)", color: "#fff",
             border: "1.5px solid rgba(255,255,255,.6)", padding: "11px 20px", borderRadius: 10,
@@ -2556,10 +2642,13 @@ export default function OPDAssessmentPage() {
                   <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#8b5cf6", flexShrink: 0 }} />
                   <span style={{ fontSize: 10, fontWeight: 700, color: "#5b21b6", textTransform: "uppercase", letterSpacing: ".6px" }}>ICD-10 Code</span>
                 </div>
-                <input
+                {/* R7hr(ICD-P1.3) — typeahead off the 74k CMS master; picking
+                    a code also fills the official description alongside. */}
+                <Icd10Picker
                   value={soap.icd10Code}
-                  onChange={e => setSoap(p => ({ ...p, icd10Code: e.target.value }))}
-                  placeholder="e.g. J18.9"
+                  onChange={v => setSoap(p => ({ ...p, icd10Code: v }))}
+                  onPick={({ code, description }) => setSoap(p => ({ ...p, icd10Code: code, icd10Description: description }))}
+                  placeholder="e.g. J18.9 or pneumonia"
                   style={{ width: "100%", border: "1.5px solid #c4b5fd", borderRadius: 8, padding: "9px 12px", fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 700, color: "#5b21b6", outline: "none", background: "#faf5ff", boxSizing: "border-box", letterSpacing: ".5px" }}
                 />
               </div>

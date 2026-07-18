@@ -34,6 +34,10 @@ SphereBackups/
 # back into the working tree.
 .token*.json
 .token*.txt
+# R9-EXTRA: broaden to catch mangled dev token dumps whose names lack the
+# leading dot (e.g. a redirect that produced "C:Spherehealth.token.txt").
+*token*.txt
+*token*.json
 .*.out
 *.out
 .*_audit_parsed.txt

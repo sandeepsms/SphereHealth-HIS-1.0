@@ -46,92 +46,11 @@ const HOSPITAL_GSTIN = process.env.HOSPITAL_GSTIN || "";
 // carries CGST+SGST (intra) or IGST (inter). Getting it wrong corrupts
 // GSTR-1 *and* shifts ITC eligibility for the customer downstream.
 //
-// Pre-R7bm both `hospitalStateCode` and `placeOfSupply` were compared
-// as raw strings — so "29" vs "29 " vs "29-KA" vs "Karnataka" all
-// looked different and would mis-classify the supply. The helpers
-// below normalise both sides through the same pipeline + cross-check
-// against the official GSTN 2-digit state-code map.
-//
-// Reference: GST State Code List as notified by GSTN (1..38, with 99
-// reserved for "Other Territory" / OIDAR).
+// R9-FIX(R9-033): the map + normaliser now live in utils/gstState.js so
+// gstService, gstr3bExporter and PatientBill.recalcTotals share the SAME
+// canonicalisation instead of comparing raw strings (they used to drift).
 // ─────────────────────────────────────────────────────────────────────
-const GST_STATE_CODE_MAP = {
-  "JAMMU AND KASHMIR": "01", "JAMMU & KASHMIR": "01", "J&K": "01",
-  "HIMACHAL PRADESH": "02", "HP": "02",
-  "PUNJAB": "03",
-  "CHANDIGARH": "04",
-  "UTTARAKHAND": "05", "UTTRAKHAND": "05",
-  "HARYANA": "06",
-  "DELHI": "07",
-  "RAJASTHAN": "08",
-  "UTTAR PRADESH": "09", "UP": "09",
-  "BIHAR": "10",
-  "SIKKIM": "11",
-  "ARUNACHAL PRADESH": "12",
-  "NAGALAND": "13",
-  "MANIPUR": "14",
-  "MIZORAM": "15",
-  "TRIPURA": "16",
-  "MEGHALAYA": "17",
-  "ASSAM": "18",
-  "WEST BENGAL": "19", "WB": "19",
-  "JHARKHAND": "20",
-  "ODISHA": "21", "ORISSA": "21",
-  "CHATTISGARH": "22", "CHHATTISGARH": "22",
-  "MADHYA PRADESH": "23", "MP": "23",
-  "GUJARAT": "24",
-  "DAMAN AND DIU": "25", "DAMAN & DIU": "25",
-  "DADRA AND NAGAR HAVELI": "26", "DADRA & NAGAR HAVELI": "26",
-  "MAHARASHTRA": "27",
-  "ANDHRA PRADESH (BEFORE)": "28",
-  "KARNATAKA": "29", "KA": "29",
-  "GOA": "30",
-  "LAKSHADWEEP": "31",
-  "KERALA": "32",
-  "TAMIL NADU": "33", "TN": "33",
-  "PUDUCHERRY": "34", "PONDICHERRY": "34",
-  "ANDAMAN AND NICOBAR ISLANDS": "35", "ANDAMAN & NICOBAR": "35",
-  "TELANGANA": "36",
-  "ANDHRA PRADESH": "37", "AP": "37",
-  "LADAKH": "38",
-  "OTHER TERRITORY": "97", "FOREIGN COUNTRY": "96", "OIDAR": "99",
-};
-
-/**
- * Normalise a state value (string) into the canonical 2-digit GST
- * state code. Accepts:
- *   - "29", "29 ", "29-KA", "29-Karnataka", "29|KA" → "29"
- *   - "Karnataka", "karnataka", "KA"               → "29"
- *   - anything that already matches \d{2}          → kept verbatim
- * Returns "" when the input cannot be resolved — caller asserts.
- */
-function normalizeGstStateCode(raw) {
-  if (raw == null) return "";
-  let s = String(raw).trim().toUpperCase();
-  if (!s) return "";
-  // Prefix-digit form: "29-KA", "29|KA", "29 KA", "29Karnataka"
-  const prefixMatch = s.match(/^(\d{2})\b/);
-  if (prefixMatch) {
-    const code = prefixMatch[1];
-    if (Number(code) >= 1 && Number(code) <= 99) return code;
-  }
-  // Pure name lookup (with separators removed): "WEST BENGAL", "TAMIL_NADU"
-  const nameKey = s.replace(/[_\-]+/g, " ").replace(/\s+/g, " ").trim();
-  if (GST_STATE_CODE_MAP[nameKey]) return GST_STATE_CODE_MAP[nameKey];
-  // Strip non-letters and retry
-  const lettersKey = s.replace(/[^A-Z]/g, "");
-  for (const [k, v] of Object.entries(GST_STATE_CODE_MAP)) {
-    if (k.replace(/[^A-Z]/g, "") === lettersKey) return v;
-  }
-  // Fall-through: numeric-only string of arbitrary length — keep last
-  // two digits if they look like a valid code, otherwise unresolved.
-  const digits = s.replace(/\D/g, "");
-  if (digits.length >= 2) {
-    const code = digits.slice(0, 2);
-    if (Number(code) >= 1 && Number(code) <= 99) return code;
-  }
-  return "";
-}
+const { GST_STATE_CODE_MAP, normalizeGstStateCode } = require("../../utils/gstState");
 
 const HOSPITAL_STATE_CODE = normalizeGstStateCode(HOSPITAL_STATE_CODE_RAW) || "29";
 
@@ -238,7 +157,11 @@ async function _bucketPatientBills(periodStart, periodEnd) {
       posRaw,
       { invoiceRef: b.billNumber || String(b._id) },
     );
-    const taxable = netAmount; // netAmount is post-discount + pre-tax in this model
+    // R9-FIX(R9-029): bill-level netAmount is TAX-INCLUSIVE
+    // (PatientBillModel.recalcTotals: netAmount = gross - disc + tax - extra +
+    // roundOff), so the taxable base is netAmount MINUS the tax — the old
+    // `taxable = netAmount` overstated GSTR-1 B2C turnover by the full tax.
+    const taxable = netAmount - taxAmount;
     // R7bh-F6: invoice-level rate derived from the dominant taxPercent in
     // billItems (or 0 if no taxable items). Simpler than GSTN's per-line
     // schedule, but the HSN section below carries the per-rate granular
@@ -283,7 +206,7 @@ async function _bucketPatientBills(periodStart, periodEnd) {
     const invoice = {
       invoiceNumber: b.billNumber || `BILL-${b._id}`,
       invoiceDate: (b.billGeneratedAt || b.billDate || new Date()).toISOString().slice(0, 10),
-      invoiceValue: Number((netAmount + taxAmount).toFixed(2)),
+      invoiceValue: Number(netAmount.toFixed(2)), // R9-FIX(R9-029): netAmount is already tax-inclusive — adding taxAmount double-counted the tax
       placeOfSupply,
       reverseCharge: "N",
       invoiceType: "Regular",
@@ -320,23 +243,35 @@ async function _bucketPatientBills(periodStart, periodEnd) {
     } else {
       // B2C aggregation by state + rate (GSTN allows one row per
       // place-of-supply/rate combo).
-      const k = `${placeOfSupply}-${dominantRate}`;
-      const cur = b2cMap.get(k) || {
-        placeOfSupply,
-        rate: dominantRate,
-        taxableValue: 0,
-        cgstAmount: 0,
-        sgstAmount: 0,
-        igstAmount: 0,
-        cessAmount: 0,
-        invoiceCount: 0,
-      };
-      cur.taxableValue += taxable;
-      cur.cgstAmount += cgst;
-      cur.sgstAmount += sgst;
-      cur.igstAmount += igst;
-      cur.invoiceCount += 1;
-      b2cMap.set(k, cur);
+      // R9-FIX(R9-032): split by the ACTUAL per-rate taxable (ratesByItem),
+      // not a single dominantRate. A mixed-rate hospital bill previously
+      // dumped its whole taxable under the dominant rate, misreporting GST per
+      // slab (R8 fixed this for pharmacy only, leaving hospital bills wrong).
+      const rateEntries = Object.entries(ratesByItem).filter(([, v]) => v > 0);
+      // Fallback: a bill with no per-item rate detail still books one row.
+      const entries = rateEntries.length ? rateEntries : [[String(dominantRate), taxable]];
+      for (const [rateStr, rateTaxable] of entries) {
+        const r = Number(rateStr);
+        const k = `${placeOfSupply}-${r}`;
+        const cur = b2cMap.get(k) || {
+          placeOfSupply, rate: r,
+          taxableValue: 0, cgstAmount: 0, sgstAmount: 0, igstAmount: 0, cessAmount: 0,
+          invoiceCount: 0,
+        };
+        cur.taxableValue += rateTaxable;
+        if (intraState) {
+          cur.cgstAmount += (rateTaxable * r) / 200;
+          cur.sgstAmount += (rateTaxable * r) / 200;
+        } else {
+          cur.igstAmount += (rateTaxable * r) / 100;
+        }
+        b2cMap.set(k, cur);
+      }
+      // Count the invoice once (against its dominant-rate bucket) so the b2c
+      // invoiceCount reflects invoices, not per-rate sub-rows.
+      const domKey = `${placeOfSupply}-${dominantRate}`;
+      if (b2cMap.has(domKey)) b2cMap.get(domKey).invoiceCount += 1;
+      else if (entries.length) { const [r0] = entries; const kk = `${placeOfSupply}-${Number(r0[0])}`; if (b2cMap.has(kk)) b2cMap.get(kk).invoiceCount += 1; }
     }
   }
   return { b2b, b2cl, b2c: [...b2cMap.values()], hsn: [...hsnMap.values()] };
@@ -380,8 +315,13 @@ async function _bucketPharmacySales(periodStart, periodEnd, hsnMap) {
     let dominantTax = -1;
     const ratesByItem = {};
     for (const it of s.items || []) {
-      const r = Number(it.gstPercent ?? it.taxPercent ?? 0);
-      const v = toNum(it.taxableValue ?? it.netAmount ?? it.sellingPrice);
+      // R8-CRIT — pharmacy SALE_ITEM stores the rate as `gstRate` and the
+      // pre-tax base as `taxableAmount` (netAmount is tax-INCLUSIVE). Reading
+      // the non-existent gstPercent/taxableValue made every pharmacy line
+      // resolve to rate 0 and an inflated (tax-inclusive) base — zeroing all
+      // pharmacy output GST on GSTR-1 and mislabelling taxable supplies exempt.
+      const r = Number(it.gstRate ?? it.gstPercent ?? it.taxPercent ?? 0);
+      const v = toNum(it.taxableAmount ?? it.taxableValue ?? it.grossAmount ?? it.sellingPrice);
       ratesByItem[r] = (ratesByItem[r] || 0) + v;
       if (v > dominantTax) {
         dominantTax = v;
@@ -446,27 +386,35 @@ async function _bucketPharmacySales(periodStart, periodEnd, hsnMap) {
     } else if (invoice.invoiceValue > B2CL_THRESHOLD && !intraState) {
       b2cl.push(invoice);
     } else {
-      const k = `${placeOfSupply}-${dominantRate}`;
-      const cur = b2cMap.get(k) || {
-        placeOfSupply,
-        rate: dominantRate,
-        taxableValue: 0,
-        cgstAmount: 0,
-        sgstAmount: 0,
-        igstAmount: 0,
-        cessAmount: 0,
-        invoiceCount: 0,
-      };
-      cur.taxableValue += taxable;
-      const gstAtRate = (taxable * Number(dominantRate)) / 100;
-      if (intraState) {
-        cur.cgstAmount += gstAtRate / 2;
-        cur.sgstAmount += gstAtRate / 2;
-      } else {
-        cur.igstAmount += gstAtRate;
+      // R8-CRIT — emit one B2C(S) row PER GST rate. The previous code keyed the
+      // whole sale on a single `dominantRate` applied to the sale-level taxable,
+      // so a mixed-rate basket (e.g. 5% + 18%) was declared entirely at one rate
+      // — understating (or, when the largest line was exempt, zeroing) output tax.
+      let counted = false;
+      for (const [rate, rTaxable] of Object.entries(ratesByItem)) {
+        const rr = Number(rate);
+        const k = `${placeOfSupply}-${rr}`;
+        const cur = b2cMap.get(k) || {
+          placeOfSupply,
+          rate: rr,
+          taxableValue: 0,
+          cgstAmount: 0,
+          sgstAmount: 0,
+          igstAmount: 0,
+          cessAmount: 0,
+          invoiceCount: 0,
+        };
+        cur.taxableValue += rTaxable;
+        const gstAtRate = (rTaxable * rr) / 100;
+        if (intraState) {
+          cur.cgstAmount += gstAtRate / 2;
+          cur.sgstAmount += gstAtRate / 2;
+        } else {
+          cur.igstAmount += gstAtRate;
+        }
+        if (!counted) { cur.invoiceCount += 1; counted = true; }
+        b2cMap.set(k, cur);
       }
-      cur.invoiceCount += 1;
-      b2cMap.set(k, cur);
     }
   }
   return { b2b, b2cl, b2c: [...b2cMap.values()] };
@@ -479,10 +427,31 @@ async function _bucketPharmacySales(periodStart, periodEnd, hsnMap) {
  * originalBillNumber + originalBillDate.
  */
 async function _bucketCreditNotes(periodStart, periodEnd) {
+  // R9-FIX(R9-030): only an APPROVED credit note reverses output tax. The
+  // maker-checker (a CN is born PENDING_APPROVAL and an Accountant approves it)
+  // was cosmetic here — PENDING_APPROVAL and even REJECTED CNs still reduced
+  // GSTR-1 output tax, so a cashier could suppress GST liability at will.
   const cns = await CreditNote.find({
     creditNoteDate: { $gte: periodStart, $lt: periodEnd },
+    status: "APPROVED",
   }).lean();
-  return cns.map((c) => ({
+
+  // R8-FIX(#2): a CANCELLED numbered invoice is already reversed by EXCLUSION
+  // from outward supply (_bucketPatientBills: billStatus $nin [DRAFT,CANCELLED]).
+  // The cancel-time credit note (reasonCode "07") would then reverse the SAME
+  // tax a second time in this CDNR section → output tax under-reported. Drop
+  // such cancel-CNs when the original bill's GST period is still OPEN (the
+  // exclusion is the single, complete reversal). Keep them when the period is
+  // LOCKED/filed — the frozen outward can only be reversed via a current-month
+  // CDNR. Refund/write-off CNs (original bill NOT cancelled) are never dropped.
+  // R9-FIX(R9-031): the open-period cancel-CN skip is now a shared helper
+  // (./_creditNoteSkip), used by BOTH GSTR-1 and GSTR-3B so the two returns
+  // can never drift on cancel-CN handling again (the original R8-FIX(#2) lived
+  // only here).
+  const { openPeriodCancelCnSkipSet } = require("./_creditNoteSkip");
+  const skip = await openPeriodCancelCnSkipSet(cns);
+
+  return cns.filter((c) => !skip.has(String(c._id))).map((c) => ({
     creditNoteNumber: c.creditNoteNumber || c.cnNumber || `CN-${c._id}`,
     creditNoteDate: (c.creditNoteDate || c.createdAt).toISOString().slice(0, 10),
     originalInvoiceNumber: c.originalBillNumber || "",
@@ -827,7 +796,7 @@ async function buildGSTR1JSON(period) {
   return {
     // GSTN portal preamble
     gstin: HOSPITAL_GSTIN,
-    fp: period.replace("-", ""), // GSTN expects "MMYYYY" — derived below
+    fp: period.slice(5, 7) + period.slice(0, 4), // R8-FIX(#18): GSTN filing period MMYYYY (period validated YYYY-MM)
     filingPeriod: period,
     schemaVersion: "GSTR1-v2.1",
     generatedAt: new Date().toISOString(),

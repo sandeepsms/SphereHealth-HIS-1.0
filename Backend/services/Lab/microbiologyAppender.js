@@ -129,7 +129,51 @@ async function appendStep({
     signedById:  stepKind === "FINAL" ? signedById : null,
     signedAt:    stepKind === "FINAL" ? new Date() : null,
   });
+
+  // #134 — SSI auto-surveillance. A positive surgical-site / wound culture in a
+  // patient who had surgery within the 90-day SSI window is a surgical-site
+  // infection. Fire-and-forget; a surveillance-emit failure never affects the
+  // lab result write.
+  try { await _maybeEmitSSI({ orderItemId, UHID, stepKind, payload }); }
+  catch (e) { console.warn("[microbiologyAppender] SSI auto-emit failed:", e.message); }
+
   return row.toObject();
+}
+
+// Emit an SSI HAI-surveillance row when an ID/SUSCEPTIBILITY step reports an
+// organism from a surgical-site/wound specimen AND the UHID has an OT row in
+// the last 90 days. Deterministic sourceRef (per orderItemId) so retries no-op.
+const _SSI_SPECIMEN_RE = /wound|pus|surgical|surgic|tissue|abscess|incision|drain/i;
+async function _maybeEmitSSI({ orderItemId, UHID, stepKind, payload }) {
+  if (!UHID) return;
+  if (stepKind !== "ID" && stepKind !== "SUSCEPTIBILITY") return;
+  const organism = String(payload?.organism || "").trim();
+  if (!organism) return;
+  const specimen = String(payload?.specimenType || payload?.sampleType || payload?.source || "").trim();
+  if (!_SSI_SPECIMEN_RE.test(specimen)) return; // not a surgical-site specimen
+
+  const mongoose = require("mongoose");
+  const OTRegister = mongoose.models.OTRegister || require("../../models/Compliance/OTRegisterModel");
+  const since = new Date(Date.now() - 90 * 24 * 3600 * 1000);
+  const ot = await OTRegister.findOne({ UHID: String(UHID).toUpperCase(), occurredAt: { $gte: since } })
+    .sort({ occurredAt: -1 }).select("admissionId patientId patientName surgeryName occurredAt").lean();
+  if (!ot) return; // no recent surgery → not attributable as SSI
+
+  const { emitHAISurveillance } = require("../Compliance/nabhRegisterEmitter");
+  await emitHAISurveillance({
+    UHID: String(UHID).toUpperCase(),
+    patientId: ot.patientId || null,
+    patientName: ot.patientName || "",
+    admissionId: ot.admissionId || null,
+    HAIType: "SSI",
+    onsetDate: new Date(),
+    cultureSent: true,
+    organismIsolated: organism,
+    outcome: "",
+    status: "Open",
+    sourceRef: `SSI:MicroStep:${orderItemId}`,
+    autoTriggeredFrom: "microbiologyAppender.ssi",
+  });
 }
 
 // ── compileSteps ────────────────────────────────────────────────

@@ -13,10 +13,8 @@ import {
   renderDoctorNabhExtras,
   renderNursingNabhExtras,
 } from "../../Components/clinical/iaNabhRenderers";
-
-const escapeHtml = (s) =>
-  String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;"); // R7hr-251 (audit) — single-quoted attribute contexts
+import { sigImgInline, sigImgPanel } from "../../utils/signatureImg";  // R7hr(DEFER-13) — shared, hardened (data:/uploads only)
+import { escapeHtml } from "../../utils/htmlEscape";  // R7hr(DEDUP) — shared 5-char escaper (was inline ×4)
 
 const ISO_RX = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
 
@@ -145,6 +143,28 @@ const _grid3 = (cells) => {
 };
 const _narr = (text) => text ? (_prose ? `<div class="pfx-line">${escapeHtml(String(text))}</div>` : `<div class="dfx-narr">${escapeHtml(String(text))}</div>`) : "";
 
+// R7hr-128-FIX — Render dilution sub-label (Vol mL / fluid / over min)
+// under the drug name when the doctor filled it on the parenteral
+// strip in PrescriptionPanel. Without this the meds card on patient
+// panel / Doctor Notes timeline / Complete File print silently drops
+// the dilution metadata even though the fan-out + DoctorOrder
+// already carry it. Smallest-diff: same 6 columns, only the Drug
+// cell grows by one sub-line when present.
+// R7hr(EMER-IA) — hoisted to module scope: the emergency builder renders
+// the same PrescriptionPanel / InfusionPanel row shapes as `initial`.
+const _medDilution = (m) => {
+  const vol = Number(m.dilutionVolume);
+  if (!Number.isFinite(vol) || vol <= 0) return "";
+  const fluid = (m.dilutionFluid || "NS 0.9%").toString();
+  const over = Number(m.infuseOverMinutes);
+  const overTxt = Number.isFinite(over) && over > 0 ? ` over ${over} min` : "";
+  return `<div style="font-size:10px;color:#0369a1;font-weight:600;margin-top:2px">💧 in ${vol} mL ${escapeHtml(fluid)}${escapeHtml(overTxt)}</div>`;
+};
+const _rxTable = (medsList) =>
+  `<table class="ndx-tbl"><tr><th>Drug</th><th>Dose</th><th>Route</th><th>Frequency</th><th>Duration</th><th>Notes</th></tr>${medsList.map(m => `<tr><td><strong>${escapeHtml(m.name || m.drug || "—")}</strong>${m.genericName ? `<div style="font-size:10px;color:#64748b">${escapeHtml(m.genericName)}</div>` : ""}${_medDilution(m)}</td><td>${escapeHtml(m.dose || "—")}</td><td>${escapeHtml(m.route || "—")}</td><td>${escapeHtml(m.frequency || "—")}</td><td>${escapeHtml(m.duration || "—")}</td><td>${escapeHtml([m.mealStatus, m.instructions, m.notes].filter(Boolean).join(" · ") || "—")}</td></tr>`).join("")}</table>`;
+const _infusionTable = (infList) =>
+  `<table class="ndx-tbl"><tr><th>Fluid</th><th>Volume</th><th>Rate</th><th>Duration</th><th>Route</th><th>Additives / Notes</th></tr>${infList.map(f => `<tr><td><strong>${escapeHtml(f.name || f.fluid || f.drug || "—")}</strong>${f.strength ? `<div style="font-size:10px;color:#64748b">${escapeHtml(f.strength)}</div>` : ""}</td><td>${escapeHtml(f.totalVolume ? `${f.totalVolume} ml` : f.volume || "—")}</td><td>${escapeHtml(f.rate ? `${f.rate} ml/hr` : "—")}</td><td>${escapeHtml(f.duration || "—")}</td><td>${escapeHtml(f.route || "—")}</td><td>${escapeHtml([f.additives, f.instructions, f.notes].filter(Boolean).join(" · ") || "—")}</td></tr>`).join("")}</table>`;
+
 // Per-type builders — compact equivalents of DoctorNotesPage TYPE_BUILDERS.
 // R7hr-100 — `opts` (default {}) is forwarded from the outer
 // buildDoctorNoteCardHtml(note, opts) so the `initial` builder can
@@ -170,6 +190,81 @@ const buildBuilder = (note, opts = {}) => {
       const ax = note.soap?.assessment ? _section("Assessment", "#d97706", _narr(note.soap.assessment)) : "";
       const pl = note.soap?.plan ? _section("Initial Plan", "#16a34a", _narr(note.soap.plan)) : "";
       return identity + cc + ax + pl;
+    },
+
+    emergency: () => {
+      // R7hr(EMER-IA) — Emergency Assessment (EmergencyAssessmentPage).
+      // The ER page used to POST its content under a `formData` key the
+      // backend never persisted, so these notes saved EMPTY. It now posts
+      // noteType "emergency" with everything under noteDetails.emergency.
+      // Top-level vitals + provisionalDiagnosis are rendered by the
+      // generic strips in the wrapper, so this builder skips both.
+      const e = nd.emergency || {};
+      const jp = (...parts) => parts.filter(Boolean).join(" · ");
+      const triageLabel = {
+        I: "Level I — Resuscitation", II: "Level II — Emergent",
+        III: "Level III — Urgent", IV: "Level IV — Less Urgent", V: "Level V — Non-Urgent",
+      }[e.triageLevel] || e.triageLevel;
+      const triage = _section("Triage & Arrival", "#dc2626", _grid([
+        _kv("Triage Category", triageLabel),
+        _kv("Triage Time", e.triageTime),
+        _kv("Arrival Mode", e.arrivalMode),
+        _kv("MLC", e.isMLC ? `Yes${e.mlcNumber ? ` — ${e.mlcNumber}` : ""}` : ""),
+        _kv("Chief Complaint", e.chiefComplaint, true),
+        _kv("Complaint Duration", e.complaintDuration),
+      ]));
+      const ab = e.abcde || {};
+      const abcdeRows = [
+        ["A — Airway", jp(ab.A?.patent === false ? "NOT patent" : (ab.A?.patent ? "Patent" : ""), ab.A?.intervention && `Intervention: ${ab.A.intervention}`, ab.A?.notes)],
+        ["B — Breathing", jp(ab.B?.rate && `Rate ${ab.B.rate}/min`, ab.B?.effort && `Effort: ${ab.B.effort}`, ab.B?.sounds && `Sounds: ${ab.B.sounds}`, ab.B?.notes)],
+        ["C — Circulation", jp(ab.C?.rhythm && `Rhythm: ${ab.C.rhythm}`, ab.C?.perfusion && `Perfusion: ${ab.C.perfusion}`, ab.C?.notes)],
+        ["D — Disability", jp(ab.D?.gcs && `GCS ${ab.D.gcs}`, ab.D?.pupils && `Pupils: ${ab.D.pupils}`, ab.D?.posture && `Posture: ${ab.D.posture}`, ab.D?.notes)],
+        ["E — Exposure", jp(ab.E?.temp, ab.E?.skin && `Skin: ${ab.E.skin}`, ab.E?.rash && "Rash present", ab.E?.trauma && "External trauma", ab.E?.notes)],
+      ].filter(r => r[1]);
+      const survey = abcdeRows.length
+        ? _section("Primary Survey (ABCDE)", "#ea580c",
+            `<table class="dfx-tbl"><tr><th style="width:32%">Component</th><th>Findings</th></tr>${abcdeRows.map(r => `<tr><td><strong>${escapeHtml(r[0])}</strong></td><td>${escapeHtml(r[1])}</td></tr>`).join("")}</table>`)
+        : "";
+      // GCS / pain / weight are captured on the ER vitals strip but have no
+      // slot in the top-level VitalsSchema — surface them here.
+      const ev = e.vitals || {};
+      const extraVitals = _section("Additional Vitals", "#dc2626", _grid3([
+        _kv("GCS", ev.gcs),
+        _kv("Pain Score", ev.painScore),
+        _kv("Weight", ev.weight ? `${ev.weight} kg` : ""),
+      ]));
+      const ge = e.generalExamination || {};
+      const genExam = _section("General Examination", "#0d9488", _grid3([
+        _kv("Consciousness", ge.consciousness),
+        _kv("Nutritional Status", ge.nutritionalStatus),
+        _kv("Pallor", ge.pallor), _kv("Icterus", ge.icterus), _kv("Cyanosis", ge.cyanosis),
+        _kv("Clubbing", ge.clubbing), _kv("Lymphadenopathy", ge.lymphadenopathy),
+        _kv("Pedal Edema", ge.pedalEdema),
+        _kv("Pain (VAS)", ge.painScoreVAS ? `${ge.painScoreVAS}/10` : ""),
+      ]));
+      const se = e.systemicExamination || {};
+      const sysExam = _section("Systemic Examination", "#475569", _grid([
+        _kv("Respiratory", jp(se.rs?.breathSounds && `Breath sounds: ${se.rs.breathSounds}`, se.rs?.addedSounds && `Added sounds: ${se.rs.addedSounds}`, se.rs?.percussionNote && `Percussion: ${se.rs.percussionNote}`, se.rs?.tracheaPosition && `Trachea: ${se.rs.tracheaPosition}`), true),
+        _kv("Cardiovascular", jp(se.cvs?.heartRhythm && `Rhythm: ${se.cvs.heartRhythm}`, se.cvs?.heartSounds && `Sounds: ${se.cvs.heartSounds}`, se.cvs?.murmur && `Murmur: ${se.cvs.murmur}`, se.cvs?.jvp && `JVP: ${se.cvs.jvp}`), true),
+        _kv("Abdomen", jp(se.abdomen?.tenderness && `Tenderness: ${se.abdomen.tenderness}`, fmtVal(se.abdomen?.organomegaly) && `Organomegaly: ${fmtVal(se.abdomen.organomegaly)}`, se.abdomen?.bowelSounds && `Bowel sounds: ${se.abdomen.bowelSounds}`, se.abdomen?.ascites && `Ascites: ${se.abdomen.ascites}`), true),
+        _kv("CNS", jp(se.cns?.motorSystem && `Motor: ${se.cns.motorSystem}${se.cns?.motorSide ? ` (${se.cns.motorSide})` : ""}`, se.cns?.tone && `Tone: ${se.cns.tone}`, se.cns?.reflexes && `Reflexes: ${se.cns.reflexes}`, se.cns?.speech && `Speech: ${se.cns.speech}`), true),
+      ]));
+      const hx = _section("History & Allergies", "#b45309", _grid([
+        _kv("Past Medical History", e.pmh, true),
+        _kv("Known Allergies", e.allergy, true),
+      ]));
+      const examNarr = e.exam ? _section("Clinical Examination Notes", "#475569", _narr(e.exam)) : "";
+      const meds = Array.isArray(e.medications) ? e.medications : [];
+      const rxHtml = meds.length ? _section("Emergency Medications", "#7c3aed", _rxTable(meds)) : "";
+      const infs = Array.isArray(e.infusions) ? e.infusions : [];
+      const infHtml = infs.length ? _section("IV Fluids / Infusions", "#0d9488", _infusionTable(infs)) : "";
+      const bed = e.dispositionBed;
+      const dispo = _section("Disposition", "#16a34a", _grid([
+        _kv("Decision", e.disposition),
+        _kv("Bed Allotted", bed?.bedNumber ? `Bed ${bed.bedNumber}` : ""),
+        _kv("Notes", e.dispNotes, true),
+      ]));
+      return triage + survey + extraVitals + genExam + sysExam + hx + examNarr + rxHtml + infHtml + dispo;
     },
 
     icu: () => {
@@ -223,6 +318,7 @@ const buildBuilder = (note, opts = {}) => {
       // position, technique, findings, bloodLoss, specimenType, postInstructions)
       // alongside the legacy aliases. Bools → readable text.
       const proc = _section(`Procedure — ${nd.procedureName || "—"}`, "#ea580c", _grid([
+        _kv("ICD-10-PCS", nd.pcsCode),               // R7hr(PCS-P1)
         _kv("Indication", nd.indication, true),
         _kv("Anatomical Site / Position", nd.anatomicalSite || nd.position),
         _kv("Operator / Surgeon", nd.operator || nd.surgeon),
@@ -756,24 +852,8 @@ const buildBuilder = (note, opts = {}) => {
                      : Array.isArray(docPayload.rxRows) ? docPayload.rxRows
                      : Array.isArray(docPayload.prescription) ? docPayload.prescription
                      : [];
-      // R7hr-128-FIX — Render dilution sub-label (Vol mL / fluid / over min)
-      // under the drug name when the doctor filled it on the parenteral
-      // strip in PrescriptionPanel. Without this the meds card on patient
-      // panel / Doctor Notes timeline / Complete File print silently drops
-      // the dilution metadata even though the fan-out + DoctorOrder
-      // already carry it. Smallest-diff: same 6 columns, only the Drug
-      // cell grows by one sub-line when present.
-      const _medDilution = (m) => {
-        const vol = Number(m.dilutionVolume);
-        if (!Number.isFinite(vol) || vol <= 0) return "";
-        const fluid = (m.dilutionFluid || "NS 0.9%").toString();
-        const over = Number(m.infuseOverMinutes);
-        const overTxt = (Number.isFinite(over) && over > 0) ? ` over ${over} min` : "";
-        return `<div style="font-size:10px;color:#0369a1;font-weight:600;margin-top:2px">💧 in ${vol} mL ${escapeHtml(fluid)}${escapeHtml(overTxt)}</div>`;
-      };
       const rxHtml = medsList.length
-        ? _section("Prescription / Medications", "#7c3aed",
-            `<table class="ndx-tbl"><tr><th>Drug</th><th>Dose</th><th>Route</th><th>Frequency</th><th>Duration</th><th>Notes</th></tr>${medsList.map(m => `<tr><td><strong>${escapeHtml(m.name || m.drug || "—")}</strong>${m.genericName ? `<div style="font-size:10px;color:#64748b">${escapeHtml(m.genericName)}</div>` : ""}${_medDilution(m)}</td><td>${escapeHtml(m.dose || "—")}</td><td>${escapeHtml(m.route || "—")}</td><td>${escapeHtml(m.frequency || "—")}</td><td>${escapeHtml(m.duration || "—")}</td><td>${escapeHtml([m.mealStatus, m.instructions, m.notes].filter(Boolean).join(" · ") || "—")}</td></tr>`).join("")}</table>`)
+        ? _section("Prescription / Medications", "#7c3aed", _rxTable(medsList))
         : "";
 
       const infList = Array.isArray(docPayload.infusions) ? docPayload.infusions
@@ -781,8 +861,7 @@ const buildBuilder = (note, opts = {}) => {
                     : Array.isArray(docPayload.ivFluids) ? docPayload.ivFluids
                     : [];
       const infusionHtml = infList.length
-        ? _section("IV Fluids / Infusions", "#0d9488",
-            `<table class="ndx-tbl"><tr><th>Fluid</th><th>Volume</th><th>Rate</th><th>Duration</th><th>Route</th><th>Additives / Notes</th></tr>${infList.map(f => `<tr><td><strong>${escapeHtml(f.name || f.fluid || f.drug || "—")}</strong>${f.strength ? `<div style="font-size:10px;color:#64748b">${escapeHtml(f.strength)}</div>` : ""}</td><td>${escapeHtml(f.totalVolume ? `${f.totalVolume} ml` : f.volume || "—")}</td><td>${escapeHtml(f.rate ? `${f.rate} ml/hr` : "—")}</td><td>${escapeHtml(f.duration || "—")}</td><td>${escapeHtml(f.route || "—")}</td><td>${escapeHtml([f.additives, f.instructions, f.notes].filter(Boolean).join(" · ") || "—")}</td></tr>`).join("")}</table>`)
+        ? _section("IV Fluids / Infusions", "#0d9488", _infusionTable(infList))
         : "";
 
       // Investigations + Plan + Advice (text fields — kept separate from
@@ -857,6 +936,7 @@ export function buildDoctorNoteCardHtml(note, opts = {}) {
 
   const TYPE_LABELS = {
     general: "General Note", admission: "Admission Note",
+    emergency: "Emergency Assessment",
     initial: "Initial Doctor Assessment", progress: "Progress Note",
     daily: "Daily Progress", icu: "ICU / Critical Care",
     procedure: "Procedure Note", consultation: "Consultation",
@@ -881,14 +961,19 @@ export function buildDoctorNoteCardHtml(note, opts = {}) {
 </div>` : "";
 
   // Vitals strip
+  // R7hr(ICU-VITALS): + BSL / GCS / Urine — captured by the Daily Progress
+  // and ICU vitals row, now that VitalsSchema actually persists them.
   const v = note.vitals;
-  const vitalsHtml = v && (v.bp || v.pulse || v.temp || v.spo2 || v.rr) ? (() => {
+  const vitalsHtml = v && (v.bp || v.pulse || v.temp || v.spo2 || v.rr || v.bsl || v.gcs || v.urine) ? (() => {
     const cells = [
       ["BP", v.bp ? `${v.bp.systolic || "—"}/${v.bp.diastolic || "—"} mmHg` : ""],
       ["Pulse", v.pulse ? `${v.pulse} /min` : ""],
       ["Temp", v.temp ? `${v.temp}°C` : ""],
       ["SpO₂", v.spo2 ? `${v.spo2}%` : ""],
       ["RR", v.rr ? `${v.rr} /min` : ""],
+      ["BSL", v.bsl ? `${v.bsl} mg/dL` : ""],
+      ["GCS", v.gcs ? String(v.gcs) : ""],
+      ["Urine", v.urine ? `${v.urine} mL/hr` : ""],
     ].filter(c => c[1]);
     if (!cells.length) return "";
     return `<div class="dfx-h" style="background:#dc262620;color:#dc2626;border-left:3px solid #dc2626">Vital Signs</div>
@@ -937,11 +1022,13 @@ ${parts.map(p => `<div style="margin-bottom:6px;border-left:3px solid ${p[1]};pa
     // (matching the Doctor Initial Assessment narrative), no card chrome — one
     // uppercase type title, the per-type body (helpers emit prose lines above),
     // and a single signed line. Reset the module flag before returning.
-    const pv = (v && (v.bp || v.pulse || v.temp || v.spo2 || v.rr)) ? (() => {
+    const pv = (v && (v.bp || v.pulse || v.temp || v.spo2 || v.rr || v.bsl || v.gcs || v.urine)) ? (() => {
       const cells = [
         v.bp ? `BP ${v.bp.systolic || "—"}/${v.bp.diastolic || "—"} mmHg` : "",
         v.pulse ? `Pulse ${v.pulse}/min` : "", v.temp ? `Temp ${v.temp}°C` : "",
         v.spo2 ? `SpO₂ ${v.spo2}%` : "", v.rr ? `RR ${v.rr}/min` : "",
+        v.bsl ? `BSL ${v.bsl} mg/dL` : "", v.gcs ? `GCS ${v.gcs}` : "",
+        v.urine ? `Urine ${v.urine} mL/hr` : "",
       ].filter(Boolean);
       return cells.length ? `<div class="pfx-line"><strong>Vitals:</strong> ${escapeHtml(cells.join(", "))}</div>` : "";
     })() : "";
@@ -956,10 +1043,7 @@ ${parts.map(p => `<div style="margin-bottom:6px;border-left:3px solid ${p[1]};pa
     // R7hr — the signer's digital-signature image (captured at sign time)
     // renders on EVERY signed line, on every surface. data:/uploads/https only.
     const _sigSrc = note.signature || note.signatureImage || "";
-    const _sigImg = (isSigned && typeof _sigSrc === "string"
-                     && (_sigSrc.startsWith("data:image/") || _sigSrc.startsWith("/uploads/") || /^https?:\/\//.test(_sigSrc)))
-      ? `<br/><img src="${escapeHtml(_sigSrc)}" alt="Signature" style="max-height:36px;max-width:200px;margin-top:4px;border:1px solid #e2e8f0;background:#fff;padding:2px;border-radius:3px"/>`
-      : "";
+    const _sigImg = isSigned ? sigImgInline(_sigSrc) : "";
     const psign = isSigned
       ? `<div class="pfx-sign">✓ <strong>${escapeHtml(typeLabel)} signed</strong> · By: <strong>${escapeHtml(note.doctorName || note.signedByName || "Doctor")}</strong>${_empId ? ` · Emp ${escapeHtml(_empId)}` : ""}${_reg ? ` · Reg ${escapeHtml(_reg)}` : ""} · ${escapeHtml(_when)}${_sigImg}</div>`
       : `<div class="pfx-sign">✎ Draft — not yet signed</div>`;
@@ -979,14 +1063,7 @@ ${parts.map(p => `<div style="margin-bottom:6px;border-left:3px solid ${p[1]};pa
   // looks like a real signed document, not just a text claim.
   const empIdShown = note.signedByEmpId || note.doctorEmpId || "";
   const sigSrc = note.signature || note.signatureImage || "";
-  const sigImgHtml = (isSigned && sigSrc && typeof sigSrc === "string"
-                     // R7hr-251 (audit: external img fetch) — only data:image/
-                     // and local /uploads/ signatures; never an attacker-set
-                     // http(s) URL (tracking pixel / SSRF-lite / referer leak).
-                     && (sigSrc.startsWith("data:image/")
-                         || sigSrc.startsWith("/uploads/")))
-    ? `<div style="margin-left:auto;text-align:center;flex:none"><img src="${escapeHtml(sigSrc)}" alt="Signature" style="max-height:38px;max-width:170px;border:1px solid #e2e8f0;background:#fff;padding:2px 8px;border-radius:5px"/><div style="font-size:8px;color:#94a3b8;letter-spacing:.5px;text-transform:uppercase;margin-top:2px">e-signature</div></div>`
-    : "";
+  const sigImgHtml = isSigned ? sigImgPanel(sigSrc) : "";
   // R7hr-222 — formal "authenticated" panel (presentation only; same fields:
   // signer name, emp id, MCI reg, signed timestamp, signature image).
   const sigHtml = isSigned
@@ -1005,19 +1082,20 @@ ${parts.map(p => `<div style="margin-bottom:6px;border-left:3px solid ${p[1]};pa
   // NABH sub-label and glyph drive a document-style letterhead band + a
   // left accent stripe. Critical events override the accent to red.
   const _accent = note.isCritical ? "#dc2626"
-    : ({ death: "#475569", icu: "#dc2626", procedure: "#7c3aed", operative: "#7c3aed",
-         preop: "#7c3aed", postop: "#7c3aed", discharge: "#0d9488", consultation: "#0891b2",
-         amendment: "#b45309", initial: "#4f46e5" }[note.noteType] || "#4f46e5");
+    : ({ death: "#475569", icu: "#dc2626", emergency: "#dc2626", procedure: "#7c3aed",
+         operative: "#7c3aed", preop: "#7c3aed", postop: "#7c3aed", discharge: "#0d9488",
+         consultation: "#0891b2", amendment: "#b45309", initial: "#4f46e5" }[note.noteType] || "#4f46e5");
   // Sub-label is a record CLASSIFICATION line under the type title — it must
   // add information, not repeat the title. NABH chapter tags only where the
   // codebase already asserts them; everything else → the generic discipline tag.
   const _sub = ({ initial: "Initial Assessment · NABH COP.2",
+    emergency: "Emergency Department Record",
     icu: "Critical Care · NABH COP.5", procedure: "Procedure Record · NABH COP.13",
     preop: "Pre-op Checklist · WHO / COP.13", death: "Death Summary · NABH COP.19",
     amendment: "Document Amendment · NABH IMS.2" }[note.noteType] || "Physician Record");
   const _icon = ({ initial: "🩺", admission: "🏥", progress: "📋", daily: "📋", general: "📝",
-    assessment: "📋", icu: "🫀", procedure: "🔧", operative: "🔧", preop: "✅", postop: "🩹",
-    consultation: "🤝", discharge: "📤", death: "🕊", amendment: "✍" }[note.noteType] || "🩺");
+    assessment: "📋", emergency: "🚨", icu: "🫀", procedure: "🔧", operative: "🔧", preop: "✅",
+    postop: "🩹", consultation: "🤝", discharge: "📤", death: "🕊", amendment: "✍" }[note.noteType] || "🩺");
 
   return COMPACT_GRID_CSS + `
 <div class="dfx-card" style="border:1px solid #e2e8f0;border-left:4px solid ${_accent};border-radius:10px;margin:10px 0;background:#fff;overflow:hidden">

@@ -24,6 +24,46 @@ class PatientService {
      CREATE — new patient + increment correct counter
   ══════════════════════════════════════════════ */
   async createPatient(patientData) {
+    // R8-FIX(#32): the atomic counter is the SOLE source of UHID — strip any
+    // client-supplied identity fields (mirrors updatePatient) so a crafted
+    // request can't pre-set/collide a UHID or impersonate a patientId/_id.
+    delete patientData.UHID;
+    delete patientData.patientId;
+    delete patientData._id;
+
+    // R9-FIX(R9-005): demographic duplicate guard. Same phone AND same
+    // normalised name is very likely the SAME human — creating a fresh record
+    // fragments their clinical history across two UHIDs (and every downstream
+    // bill/order/note). Block with a 409 that carries the existing candidate(s)
+    // so the desk reuses that record. Deliberately STRICT (phone + name, not
+    // phone alone) so a genuine namesake on a shared household mobile still
+    // registers. Bypass with forceCreate:true for a real re-registration.
+    const forceCreate = patientData.forceCreate === true || patientData.forceCreate === "true";
+    delete patientData.forceCreate;
+    if (!forceCreate && patientData.contactNumber && patientData.fullName) {
+      const _normName = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "");
+      const wantName = _normName(patientData.fullName);
+      if (wantName) {
+        const samePhone = await Patient.find({
+          contactNumber: String(patientData.contactNumber).trim(),
+          isActive: true,
+        }).select("UHID fullName contactNumber registrationType createdAt").lean();
+        const dupes = samePhone.filter((c) => _normName(c.fullName) === wantName);
+        if (dupes.length) {
+          const err = new Error(
+            `A patient with this name and phone already exists (UHID ${dupes.map((d) => d.UHID).join(", ")}). ` +
+            `Reuse the existing record, or resubmit with forceCreate:true to register a distinct new patient.`);
+          err.status = 409;
+          err.code = "DUPLICATE_PATIENT";
+          err.candidates = dupes.map((d) => ({
+            UHID: d.UHID, fullName: d.fullName, contactNumber: d.contactNumber,
+            registrationType: d.registrationType, registeredAt: d.createdAt,
+          }));
+          throw err;
+        }
+      }
+    }
+
     // Department/doctor are now optional at registration (Emergency walk-ins
     // and Services bills don't always have them pre-selected). Validate them
     // only when supplied.
@@ -60,10 +100,25 @@ class PatientService {
     // record (which itself $inc's the counter). Pre-setting to 1 there
     // would land the counter at 2 after the OPDService increment.
     const counterField = visitCounterField(patientData.registrationType);
-    const willDispatchVisit =
+    // R8-FIX(#49): do NOT pre-set the counter for types whose visit/admission
+    // record $inc's it downstream (else it lands at 2): OPD(+doctor) →
+    // OPDService.createOPDVisit; Emergency → emergencyService; IPD/Daycare →
+    // admissionService.createAdmission (increments). Only types with no
+    // downstream incrementer keep the pre-set.
+    // R9-FIX(R9-003): "Services" was wrongly included here — a Services
+    // registration is a pure walk-in (injection/dressing) that creates NO
+    // admission (confirmed: services flow has no admission), so
+    // createAdmission's Services increment NEVER fires for it. With the pre-set
+    // ALSO skipped, totalServicesVisits was stuck at 0 forever, under-reporting
+    // every services patient. Dropped it so the = 1 pre-set applies; a later
+    // explicit Services admission (a genuinely separate visit) still increments
+    // correctly to 2 via updateVisitCount.
+    const counterSetDownstream =
       (patientData.registrationType === "OPD" && patientData.doctor) ||
-       patientData.registrationType === "Emergency";
-    if (counterField && !willDispatchVisit) {
+      patientData.registrationType === "Emergency" ||
+      patientData.registrationType === "IPD" ||
+      patientData.registrationType === "Daycare";
+    if (counterField && !counterSetDownstream) {
       patientData[counterField] = 1;
     }
 
@@ -120,6 +175,10 @@ class PatientService {
           // — NOT the visit-CATEGORY ("OPD"/"IPD"/etc). First registration
           // is always First Visit; follow-ups go through their own form.
           visitType:      "First Visit",
+          // R8-CRIT — carry the receptionist's consult fee so the auto-created
+          // OPD visit bills it; the frontend's fee-bearing createOPDVisit call
+          // is deduped away, so without this the OPD-CON line was billed ₹0.
+          consultationFee: patientData.consultationFee,
           paymentType:    patient.paymentType || "GENERAL",
         });
       } catch (e) {
@@ -146,14 +205,9 @@ class PatientService {
       //
       // We still increment the visit counter here so the patient's
       // totalEmergencyVisits is accurate before any redirect.
-      try {
-        await this.updateVisitCount(patient._id, "Emergency");
-      } catch (e) {
-        try {
-          const { logErr } = require("../../utils/logErr");
-          logErr("patientService", `ER visit-count ${patient.UHID}`)(e);
-        } catch { console.error("[patientService] ER visit-count error:", e?.message); }
-      }
+      // R8-FIX(#48): removed the duplicate Emergency visit-count increment — the
+      // canonical +1 lives in emergencyService.createEmergencyVisit (single path
+      // for both new + returning ER patients); this site was double-counting (2/visit).
     }
 
     return patient;
@@ -195,7 +249,11 @@ class PatientService {
       ];
     }
 
-    const skip = (parseInt(page) - 1) * parseInt(limit);
+    // R9-FIX(R9-088): hard-cap the page size so a client can't dump the entire
+    // patient PHI collection with ?limit=999999 (the `search` sibling already
+    // caps at 50). 200 comfortably covers any real reception list page.
+    const _limit = Math.min(Math.max(parseInt(limit) || 50, 1), 200);
+    const skip = (parseInt(page) - 1) * _limit;
     // ── Sort order: today-first ──────────────────────────────────
     // Receptionist needs the people who walked in today at the top,
     // even if they registered months ago. So we sort by lastVisitDate
@@ -210,13 +268,13 @@ class PatientService {
       .populate("doctor", "personalInfo")
       .populate("tpa", "tpaName tpaCode")
       .sort({ lastVisitDate: -1, createdAt: -1 })
-      .limit(parseInt(limit))
+      .limit(_limit)
       .skip(skip);
 
     const count = await Patient.countDocuments(query);
     return {
       patients,
-      totalPages: Math.ceil(count / parseInt(limit)),
+      totalPages: Math.ceil(count / _limit),
       currentPage: parseInt(page),
       totalPatients: count,
     };
@@ -349,6 +407,23 @@ class PatientService {
     // ⭐ NEVER overwrite UHID / patientId
     delete updateData.UHID;
     delete updateData.patientId;
+
+    // R9-FIX(R9-001): patient archival goes through the Admin-only delete
+    // endpoint (which runs the dependency guard against active admissions /
+    // open bills). A generic PUT must NOT flip isActive, or a Receptionist
+    // could soft-archive any patient — including one with an open IPD bill —
+    // bypassing both the role gate and the guard.
+    delete updateData.isActive;
+    // R9-FIX(R9-002): ABHA identity is written only by the Admin-only
+    // abdm.write link flow (kyc-verified). Strip it from the generic patch so
+    // a Receptionist can't set/forge a patient's ABHA number/address or the
+    // KYC-verified flag.
+    delete updateData.abhaNumber;
+    delete updateData.abhaAddress;
+    delete updateData.abhaId;
+    delete updateData.abhaLinked;
+    delete updateData.abhaKycVerified;
+    delete updateData.abhaLinkedAt;
 
     // ⭐ Handle visit counter increment
     const incrementField = updateData._incrementVisit;

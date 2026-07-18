@@ -107,9 +107,16 @@ function buildPractitioner(name, regNo, hprId) {
 }
 
 // ── Condition (diagnosis) ────────────────────────────────────
+// The diagnosis carries BOTH terminologies when the note has them: ICD-10
+// (billing/classification) and SNOMED CT (clinical). A FHIR CodeableConcept
+// holds multiple codings for the same concept, so both are emitted side by
+// side — SNOMED was stored on the note but never exported.
 function buildCondition(note, patientUHID, encounterId) {
   const dx = note.finalDiagnosis || note.workingDiagnosis || note.provisionalDiagnosis;
   if (!dx) return null;
+  const coding = [];
+  if (note.icd10Code) coding.push({ system: "http://hl7.org/fhir/sid/icd-10", code: String(note.icd10Code), display: note.icd10Description || dx });
+  if (note.snomedCode) coding.push({ system: "http://snomed.info/sct", code: String(note.snomedCode), display: note.snomedDisplay || dx });
   return {
     resourceType: "Condition",
     id: id("condition", `${note._id}-dx`),
@@ -117,12 +124,7 @@ function buildCondition(note, patientUHID, encounterId) {
       system: "http://terminology.hl7.org/CodeSystem/condition-clinical",
       code: "active",
     }] },
-    code: codeable(
-      dx,
-      note.icd10Code ? "http://hl7.org/fhir/sid/icd-10" : undefined,
-      note.icd10Code || undefined,
-      note.icd10Description || dx,
-    ),
+    code: { text: dx, ...(coding.length ? { coding } : {}) },
     subject: ref("Patient", patientUHID),
     encounter: encounterId ? { reference: `Encounter/${encounterId}` } : undefined,
     recordedDate: isoOrNull(note.visitDate || note.createdAt),
@@ -204,8 +206,52 @@ function buildMedicationAdministration(order, admin, patientUHID, encounterId) {
   };
 }
 
+// ── Lab result Observation (per parameter) ──────────────────
+// FHIR interpretation codes — our result flags (N/H/L/HH/LL/A) map 1:1 onto
+// the HL7 v3 ObservationInterpretation code system.
+const _INTERP = { N: "Normal", H: "High", L: "Low", HH: "Critical high", LL: "Critical low", A: "Abnormal" };
+function interpretationOf(flag) {
+  const f = String(flag || "").toUpperCase();
+  if (!_INTERP[f]) return undefined;
+  return [codeable(_INTERP[f], "http://terminology.hl7.org/CodeSystem/v3-ObservationInterpretation", f, _INTERP[f])];
+}
+
+function buildLabObservation(order, item, r, patientUHID, encounterId) {
+  if (!r || r.value == null || r.value === "") return null;
+  const num = Number(r.value);
+  const loinc = item.loincCode;
+  const obsId = id("labobs", `${order._id}-${item.investigationCode || item.investigationName}-${r.parameterName}`);
+  const range = (r.refLow != null || r.refHigh != null)
+    ? [{
+        low:  r.refLow  != null ? { value: Number(r.refLow),  unit: r.unit || undefined } : undefined,
+        high: r.refHigh != null ? { value: Number(r.refHigh), unit: r.unit || undefined } : undefined,
+        text: r.normalRange || undefined,
+      }]
+    : (r.normalRange ? [{ text: r.normalRange }] : undefined);
+  return {
+    resourceType: "Observation",
+    id: obsId,
+    status: order.orderStatus === "COMPLETED" ? "final" : "preliminary",
+    category: [codeable("laboratory", "http://terminology.hl7.org/CodeSystem/observation-category", "laboratory")],
+    code: codeable(r.parameterName || item.investigationName,
+                   loinc ? "http://loinc.org" : undefined, loinc || undefined, item.loincDisplay || r.parameterName),
+    subject: ref("Patient", patientUHID),
+    encounter: encounterId ? { reference: `Encounter/${encounterId}` } : undefined,
+    effectiveDateTime: isoOrNull(r.resultedAt || order.completedAt || order.updatedAt || order.createdAt),
+    valueQuantity: Number.isFinite(num)
+      ? { value: num, unit: r.unit || undefined, system: r.unit ? "http://unitsofmeasure.org" : undefined }
+      : undefined,
+    valueString: !Number.isFinite(num) ? String(r.value) : undefined,
+    interpretation: interpretationOf(r.flag),
+    referenceRange: range,
+    method: r.method ? codeable(r.method) : undefined,
+  };
+}
+
 // ── DiagnosticReport (investigation) ────────────────────────
-function buildDiagnosticReport(order, patientUHID, encounterId) {
+// `obsRefs` are the lab Observations built for this order's results — the
+// report references them (was a dangling reference to never-built resources).
+function buildDiagnosticReport(order, patientUHID, encounterId, obsRefs = []) {
   return {
     resourceType: "DiagnosticReport",
     id: id("diagreport", order._id),
@@ -219,10 +265,9 @@ function buildDiagnosticReport(order, patientUHID, encounterId) {
     effectiveDateTime: isoOrNull(order.createdAt),
     issued: isoOrNull(order.completedAt || order.updatedAt),
     performer: order.doctorName ? [{ display: order.doctorName }] : undefined,
-    result: (order.items || []).map((it, i) => ({
-      display: `${it.investigationName} — ${it.resultStatus}`,
-      reference: `Observation/${id("observation", `${order._id}-${i}`)}`,
-    })),
+    result: obsRefs.length
+      ? obsRefs.map((o) => ({ reference: `Observation/${o.id}`, display: o.display }))
+      : (order.items || []).map((it) => ({ display: `${it.investigationName} — ${it.resultStatus}` })),
   };
 }
 
@@ -266,6 +311,77 @@ function buildAllergy(p, patientUHID) {
     verificationStatus: codeable("confirmed", "http://terminology.hl7.org/CodeSystem/allergyintolerance-verification", "confirmed"),
     patient: ref("Patient", patientUHID),
     code: codeable(p.knownAllergies),
+  };
+}
+
+// ── Discharge-summary resources ──────────────────────────────
+// The discharge summary was fetched by the controller but never emitted.
+// It carries the AAC-mandated content — final diagnoses (ICD-10), discharge
+// medications, procedures (ICD-10-PCS), and follow-up — so we surface each as
+// a proper FHIR resource.
+function buildDischargeCondition(dx, ds, idx, patientUHID, encounterId) {
+  const text = dx.description || dx.code || ds.finalDiagnosis;
+  if (!text) return null;
+  return {
+    resourceType: "Condition",
+    id: id("dxcond", `${ds._id}-${idx}`),
+    clinicalStatus: { coding: [{ system: "http://terminology.hl7.org/CodeSystem/condition-clinical", code: "resolved" }] },
+    category: [codeable("encounter-diagnosis", "http://terminology.hl7.org/CodeSystem/condition-category", "encounter-diagnosis")],
+    code: codeable(text, dx.code ? "http://hl7.org/fhir/sid/icd-10" : undefined, dx.code || undefined, dx.description || text),
+    subject: ref("Patient", patientUHID),
+    encounter: encounterId ? { reference: `Encounter/${encounterId}` } : undefined,
+    recordedDate: isoOrNull(ds.dischargeDate || ds.createdAt),
+  };
+}
+
+function buildDischargeMedication(med, ds, idx, patientUHID, encounterId) {
+  if (!med?.medicineName) return null;
+  return {
+    resourceType: "MedicationRequest",
+    id: id("dischmed", `${ds._id}-${idx}`),
+    status: "active",
+    intent: "order",
+    category: [codeable("discharge", "http://terminology.hl7.org/CodeSystem/medicationrequest-category", "discharge")],
+    medicationCodeableConcept: codeable(med.medicineName),
+    subject: ref("Patient", patientUHID),
+    encounter: encounterId ? { reference: `Encounter/${encounterId}` } : undefined,
+    authoredOn: isoOrNull(ds.dischargeDate || ds.createdAt),
+    dosageInstruction: [{
+      text: [med.dose, med.route, med.frequency, med.duration, med.remarks].filter(Boolean).join(" · "),
+      route: med.route ? codeable(med.route) : undefined,
+      timing: med.frequency ? { code: codeable(med.frequency) } : undefined,
+    }],
+  };
+}
+
+function buildProcedure(proc, ds, idx, patientUHID, encounterId) {
+  if (!proc?.procedureName) return null;
+  return {
+    resourceType: "Procedure",
+    id: id("procedure", `${ds._id}-${idx}`),
+    status: "completed",
+    code: codeable(proc.procedureName, proc.pcsCode ? "http://hl7.org/fhir/sid/icd-10-pcs" : undefined, proc.pcsCode || undefined, proc.procedureName),
+    subject: ref("Patient", patientUHID),
+    encounter: encounterId ? { reference: `Encounter/${encounterId}` } : undefined,
+    performedDateTime: isoOrNull(proc.date),
+    performer: proc.performedBy ? [{ actor: { display: proc.performedBy } }] : undefined,
+  };
+}
+
+function buildFollowUpCarePlan(ds, patientUHID, encounterId) {
+  if (!(ds.followUpInstructions || ds.followUpDate || ds.followUpDoctor)) return null;
+  return {
+    resourceType: "CarePlan",
+    id: id("careplan", `${ds._id}-followup`),
+    status: "active",
+    intent: "plan",
+    title: "Discharge Follow-up",
+    description: ds.followUpInstructions || undefined,
+    subject: ref("Patient", patientUHID),
+    encounter: encounterId ? { reference: `Encounter/${encounterId}` } : undefined,
+    created: isoOrNull(ds.dischargeDate || ds.createdAt),
+    period: ds.followUpDate ? { start: isoOrNull(ds.followUpDate) } : undefined,
+    author: ds.followUpDoctor ? [{ display: ds.followUpDoctor }] : undefined,
   };
 }
 
@@ -331,8 +447,36 @@ function buildBundle(file, hospital = {}) {
     }
   });
 
-  (file.investigations || []).forEach((i) => push(buildDiagnosticReport(i, uhid, encId)));
-  (file.consents       || []).forEach((c) => push(buildConsent(c, uhid)));
+  // Investigations → DiagnosticReport + the per-parameter lab Observations it
+  // references (with LOINC codes, values, reference ranges, H/L/critical flags).
+  (file.investigations || []).forEach((order) => {
+    const obsRefs = [];
+    (order.items || []).forEach((item) => {
+      (item.results || []).forEach((r) => {
+        const obs = buildLabObservation(order, item, r, uhid, encId);
+        if (obs) { push(obs); obsRefs.push({ id: obs.id, display: `${item.investigationName}: ${r.parameterName}` }); }
+      });
+    });
+    push(buildDiagnosticReport(order, uhid, encId, obsRefs));
+  });
+
+  (file.consents || []).forEach((c) => push(buildConsent(c, uhid)));
+
+  // Discharge summary → structured diagnoses / discharge meds / procedures /
+  // follow-up. Prefer the finalized summary; fall back to the most recent.
+  const dsList = Array.isArray(file.dischargeSummary)
+    ? file.dischargeSummary
+    : (file.dischargeSummary ? [file.dischargeSummary] : []);
+  const ds = dsList.find((d) => d.status === "finalized") || dsList[0];
+  if (ds) {
+    const coded = (Array.isArray(ds.codedDiagnoses) && ds.codedDiagnoses.length)
+      ? ds.codedDiagnoses
+      : (ds.finalDiagnosis ? [{ description: ds.finalDiagnosis, code: ds.icdCode }] : []);
+    coded.forEach((dx, i) => push(buildDischargeCondition(dx, ds, i, uhid, encId)));
+    (ds.medicationsOnDischarge || []).forEach((m, i) => push(buildDischargeMedication(m, ds, i, uhid, encId)));
+    (ds.proceduresDone || []).forEach((p, i) => push(buildProcedure(p, ds, i, uhid, encId)));
+    push(buildFollowUpCarePlan(ds, uhid, encId));
+  }
 
   return {
     resourceType: "Bundle",

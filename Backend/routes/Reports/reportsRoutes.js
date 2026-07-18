@@ -51,12 +51,23 @@ router.get("/inventory/abc-analysis",  requireAction("reports.financial"), dash.
 // ── Clinical ─────────────────────────────────────────────────────
 router.get("/patient-census",          requireAction("reports.clinical"),  dash.getPatientCensus);
 router.get("/bed-occupancy",           requireAction("reports.clinical"),  dash.getBedOccupancy);
-router.get("/lab-tat",                 requireAction("reports.clinical"),  dash.getLabTat);
+// R7hr(LAB-TAT tile): gate widened reports.clinical → lab.read so the lab
+// desk's own roles (Lab Technician / Radiologist / Nurse / MRD) can see
+// their TAT CQI on /investigation-orders. lab.read still includes
+// Admin + Doctor, so nobody lost access.
+router.get("/lab-tat",                 requireAction("lab.read"),          dash.getLabTat);
 // R7hr(NABH-P2.5) — IPD discharge TAT (doctor-approve → bill-clear →
 // gate-pass), the NABH CQI discharge-process indicator. FY/date-ranged.
 router.get("/discharge-tat",           requireAction("reports.clinical"),  dash.getDischargeTat);
 // R7hr(ER-P2) — ER door-to-triage/doctor/disposition TAT (NABH AAC.1 CQI).
 router.get("/er-tat",                  requireAction("reports.clinical"),  dash.getErTat);
+// NABH HIC.5 — HAI rate per 1000 device-days (CAUTI/CLABSI/VAP) + SSI per-100-surgeries.
+router.get("/hai-rate",                requireAction("reports.clinical"),  dash.getHaiRate);
+// NABH PSQ — QPS quality-indicator engine (mortality/readmission/HAI/med-error/falls + trend).
+router.get("/qps-indicators",          requireAction("reports.clinical"),  dash.getQpsIndicators);
+// R7hr(ER-P3/DC-P3) — statutory attendance registers (printable sources).
+router.get("/er-register",             requireAction("reports.clinical"),  dash.getErRegister);
+router.get("/dc-register",             requireAction("reports.clinical"),  dash.getDcRegister);
 // R7hr(TPA-P1) — TPA MIS: TAT, approval %, realization, stale-claims ageing.
 router.get("/tpa-mis",                 requireAction("tpa.claim"),         dash.getTpaMis);
 router.get("/diagnosis-frequency",     requireAction("reports.clinical"),  dash.getDiagnosisFrequency);

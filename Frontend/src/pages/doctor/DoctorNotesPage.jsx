@@ -63,6 +63,9 @@ import SignaturePad from "../../Components/signature/SignaturePad";
 // Pre-Op, Post-Op, Discharge, Consult, Emergency, Referral, Death etc.
 // all render with the same polished layout as Daily Progress.
 import TimelineNoteCard from "../../Components/notes/TimelineNoteCard";
+import Icd10Picker from "../../Components/clinical/Icd10Picker";   // R7hr(PCS-P1) — system="pcs" on the procedure form
+import AmbientScribe from "../../Components/scribe/AmbientScribe";
+import { ipdFromNote } from "../../Components/scribe/scribeApply";
 
 /* ── Design tokens (blue/indigo — doctor theme) ── */
 const C = {
@@ -180,6 +183,11 @@ const MODULES = [
   // the filter further down, not shown as a tile-card.
   { id: "general",     label: "General Note",          nabh: "IMS.1", description: "Free-text clinical narrative",
     icon: "pi-file",                border: "#cbd5e1", color: C.slate,  bg: "#f8fafc" },
+  // R7hr(re-audit) — print-only label so modDef() resolves the correct
+  // title for ER assessments (noteType "emergency", authored on the
+  // Emergency Assessment page); hidden from the picker by the filter below.
+  { id: "emergency",   label: "Emergency Assessment",  nabh: "AAC.1", description: "ER triage + initial doctor assessment",
+    icon: "pi-bolt",                border: C.redB,    color: C.red,    bg: C.redL    },
   { id: "initial",     label: "Initial Assessment",    nabh: "COP.1", description: "NABH COP.1 first-contact in-patient assessment",
     icon: "pi-id-card",             border: "#fcd34d", color: C.amber,  bg: C.amberL  },
   { id: "discharge",   label: "Discharge Summary",     nabh: "COP.21", description: "Final discharge summary",
@@ -245,19 +253,6 @@ function FL({ label, children, span }) {
   );
 }
 
-function SBARBox({ letter, title, color, value, onChange, placeholder }) {
-  return (
-    <div style={{ marginBottom: 10 }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 5 }}>
-        <span style={{ width: 24, height: 24, borderRadius: 6, background: color + "25", display: "flex", alignItems: "center", justifyContent: "center", fontWeight: 900, fontSize: 13, color }}>{letter}</span>
-        <label className="his-label" style={{ marginBottom: 0, color }}>{title}</label>
-      </div>
-      <textarea className="his-textarea" style={{ minHeight: 64, borderColor: color + "40" }} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder} />
-    </div>
-  );
-}
-
-/* ═══════════════════════════════════════════════════════════ */
 function DoctorNotesContent({ selectedPatient }) {
   const { user } = useAuth();
   const navigate = useNavigate();
@@ -428,9 +423,10 @@ function DoctorNotesContent({ selectedPatient }) {
 
   /* ICU-specific */
   const [icu, setIcu] = useState({ ventMode: "CPAP/PSV", fio2: "", peep: "", tv: "", ventRR: "", pip: "", map: "", cvp: "", rassScore: "0", bpsScore: "", dailyGoals: "", neuro: "Intact", cvs: "Stable", resp: "Supported", renal: "Adequate", gi: "Active", haem: "Normal", infective: "None", sedation: "", vasopressors: false, vasopressorDetail: "" });
+  // R7hr(PCS-P1) — pcsCode rides noteDetails alongside procedureName.
 
   /* Procedure-specific */
-  const [proc, setProc] = useState({ procedureName: "", indication: "", time: "", surgeon: "", assistant: "", anaesthesia: "None (Awake)", position: "Supine", consentObtained: true, technique: "", findings: "", complications: "None", bloodLoss: "Minimal (<50mL)", specimenSent: false, specimenType: "", postInstructions: "" });
+  const [proc, setProc] = useState({ procedureName: "", pcsCode: "", indication: "", time: "", surgeon: "", assistant: "", anaesthesia: "None (Awake)", position: "Supine", consentObtained: true, technique: "", findings: "", complications: "None", bloodLoss: "Minimal (<50mL)", specimenSent: false, specimenType: "", postInstructions: "" });
 
   /* Consultation-specific */
   const [consult, setConsult] = useState({ consultantName: "", speciality: "", consultantRegNo: "", referredBy: "", reason: "", clinicalSummary: "", investigations: "", findings: "", impression: "", recommendations: "", followUp: "" });
@@ -827,6 +823,16 @@ function DoctorNotesContent({ selectedPatient }) {
 
   /* ── Open a draft note for editing ── */
   const openEditModal = (note) => {
+    // R7hr(re-audit) — ER assessments (noteType "emergency") are authored on
+    // the Emergency Assessment page and store their content under
+    // noteDetails.emergency. This doctor-notes editor has no emergency form,
+    // so saving here would PUT an empty noteDetails and wipe the assessment.
+    // Redirect the doctor to the ER page instead of opening a lossy editor.
+    if (note.noteType === "emergency") {
+      toast.info("Edit this ER assessment from the Emergency Assessment page.");
+      navigate(`/emergency-assessment/${note.patientUHID || uhid || ""}`.replace(/\/$/, ""));
+      return;
+    }
     setEditingNote(note);
 
     // Restore basic form
@@ -1001,6 +1007,25 @@ function DoctorNotesContent({ selectedPatient }) {
   });
 
   const modDef = (id) => MODULES.find(m => m.id === id);
+
+  // R7hr(ICU-VITALS) — shared Objective Vitals row, rendered by the Daily
+  // Progress AND ICU modals (the ICU form previously captured no vitals at
+  // all — vent settings only). Plain render function, NOT a component:
+  // defining a component inside the page would remount the inputs on every
+  // keystroke and drop focus. Writes the shared `vitals` state that
+  // saveNote() already maps to the note's top-level vitals for every type.
+  const renderVitalsRow = () => (
+    <div style={{ background: "#f8fafc", border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px" }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>Objective Vitals (NABH COP.2)</div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8 }}>
+        {[{k:"bp_sys",l:"Systolic BP (mmHg)",p:"120"},{k:"bp_dia",l:"Diastolic BP (mmHg)",p:"80"},{k:"pulse",l:"Pulse (/min)",p:"80"},{k:"temp",l:"Temp (°F)",p:"98.6"},{k:"spo2",l:"SpO₂ (%)",p:"98"},{k:"rr",l:"RR (/min)",p:"16"},{k:"bsl",l:"BSL (mg/dL)",p:"110"},{k:"gcs",l:"GCS",p:"E4V5M6"},{k:"urine",l:"Urine (mL/hr)",p:"50"}].map(v => (
+          <FL key={v.k} label={v.l}>
+            <input type={v.k==="gcs"?"text":"number"} className="his-field" style={{ fontSize: 12 }} value={vitals[v.k]} placeholder={v.p} onChange={e => setVitals(p => ({ ...p, [v.k]: e.target.value }))} />
+          </FL>
+        ))}
+      </div>
+    </div>
+  );
 
   /* ── Stats ── */
   const totalNotes  = notes.length;
@@ -1685,7 +1710,7 @@ function DoctorNotesContent({ selectedPatient }) {
                     request ("hume nhi chahiye"). They likewise STAY in MODULES so
                     print headers + timeline labels for any existing notes of these
                     types still resolve. */}
-                {MODULES.filter(m => !["initial", "discharge", "general"].includes(m.id)).map(m => (
+                {MODULES.filter(m => !["initial", "discharge", "general", "emergency"].includes(m.id)).map(m => (
                     <button
                       key={m.id}
                       type="button"
@@ -2382,17 +2407,7 @@ function DoctorNotesContent({ selectedPatient }) {
               {/* ══ DAILY PROGRESS NOTE (SOAP) ══ */}
               {activeModal === "daily" && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                  {/* Vitals Row */}
-                  <div style={{ background: "#f8fafc", border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px" }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>Objective Vitals (NABH COP.2)</div>
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8 }}>
-                      {[{k:"bp_sys",l:"Systolic BP (mmHg)",p:"120"},{k:"bp_dia",l:"Diastolic BP (mmHg)",p:"80"},{k:"pulse",l:"Pulse (/min)",p:"80"},{k:"temp",l:"Temp (°F)",p:"98.6"},{k:"spo2",l:"SpO₂ (%)",p:"98"},{k:"rr",l:"RR (/min)",p:"16"},{k:"bsl",l:"BSL (mg/dL)",p:"110"},{k:"gcs",l:"GCS",p:"E4V5M6"},{k:"urine",l:"Urine (mL/hr)",p:"50"}].map(v => (
-                        <FL key={v.k} label={v.l}>
-                          <input type={v.k==="gcs"?"text":"number"} className="his-field" style={{ fontSize: 12 }} value={vitals[v.k]} placeholder={v.p} onChange={e => setVitals(p => ({ ...p, [v.k]: e.target.value }))} />
-                        </FL>
-                      ))}
-                    </div>
-                  </div>
+                  {renderVitalsRow()}
                   {/* SOAP */}
                   {[
                     {k:"subjective", l:"S — Subjective", c:C.blue, ph:"Patient's complaints today: pain, nausea, fever, functional status, how they feel…"},
@@ -2432,6 +2447,7 @@ function DoctorNotesContent({ selectedPatient }) {
                   <div style={{ background: C.redL, border: `1.5px solid #fca5a5`, borderRadius: 8, padding: "10px 14px", fontSize: 12, color: C.red, fontWeight: 700, display: "flex", alignItems: "center", gap: 8 }}>
                     <i className="pi pi-exclamation-triangle" style={{ fontSize: 13 }} /> ICU/HDU Critical Care Note — NABH COP.4 · Enhanced Monitoring Required
                   </div>
+                  {renderVitalsRow()}
                   {/* Ventilator */}
                   <div style={{ background: "#f8fafc", border: `1px solid ${C.border}`, borderRadius: 10, padding: "12px 14px" }}>
                     <div style={{ fontSize: 11, fontWeight: 700, color: C.red, textTransform: "uppercase", letterSpacing: ".6px", marginBottom: 10 }}>Ventilator Parameters</div>
@@ -2489,7 +2505,16 @@ function DoctorNotesContent({ selectedPatient }) {
               {activeModal === "procedure" && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                   <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 10 }}>
-                    <FL label="Procedure Name *"><input className="his-field" value={proc.procedureName} placeholder="e.g. Central venous line insertion" onChange={e=>setProc(p=>({...p,procedureName:e.target.value}))} /></FL>
+                    {/* R7hr(PCS-P1) — ICD-10-PCS typeahead; pick stamps pcsCode
+                        into noteDetails (Mixed) alongside procedureName. */}
+                    <FL label="Procedure Name *">
+                      <Icd10Picker system="pcs" className="his-field" style={{ width: "100%" }}
+                        value={proc.procedureName}
+                        placeholder="e.g. Central venous line insertion"
+                        onChange={(v)=>setProc(p=>({...p,procedureName:v, ...(p.pcsCode ? {pcsCode:""} : {})}))}
+                        onPick={({code, description})=>setProc(p=>({...p,procedureName:description,pcsCode:code}))} />
+                      {proc.pcsCode ? <div style={{ fontSize: 10, color: "#5b21b6", fontFamily: "'DM Mono', monospace", marginTop: 2 }}>PCS {proc.pcsCode}</div> : null}
+                    </FL>
                     <FL label="Indication *"><input className="his-field" value={proc.indication} placeholder="Reason for procedure" onChange={e=>setProc(p=>({...p,indication:e.target.value}))} /></FL>
                     <FL label="Time of Procedure *"><input type="time" className="his-field" value={proc.time} onChange={e=>setProc(p=>({...p,time:e.target.value}))} /></FL>
                   </div>
@@ -2801,6 +2826,23 @@ function DoctorNotesContent({ selectedPatient }) {
                 </div>
               </div>
               <div style={{ display: "flex", gap: 8 }}>
+                {/* AI Scribe — daily progress note only; fills SOAP/vitals/Dx/
+                    investigations + adds order rows (fill-empty). Doctor signs. */}
+                {activeModal === "daily" && (
+                  <AmbientScribe
+                    surface="ipd"
+                    context={{ age: selectedPatient?.age, sex: selectedPatient?.gender || selectedPatient?.sex }}
+                    onApply={(note) => {
+                      const f = ipdFromNote(note);
+                      setSoap((p) => { const q = { ...p }; Object.entries(f.soap).forEach(([k, v]) => { if (v && !String(q[k] || "").trim()) q[k] = v; }); return q; });
+                      setVitals((p) => { const q = { ...p }; Object.entries(f.vitals).forEach(([k, v]) => { if (v && !String(q[k] || "").trim()) q[k] = v; }); return q; });
+                      setDiag((p) => { const q = { ...p }; Object.entries(f.diag).forEach(([k, v]) => { if (v && !String(q[k] || "").trim()) q[k] = v; }); return q; });
+                      if (f.invxString) setInvx((p) => (String(p || "").trim() ? p : f.invxString));
+                      if (f.orderRows.length) setOrders((p) => [...p, ...f.orderRows]);
+                      toast.success("AI draft applied — review the note, then Sign.");
+                    }}
+                  />
+                )}
                 <button onClick={() => { setActiveModal(null); setEditingNote(null); }} className="his-btn--ghost">
                   Cancel
                 </button>

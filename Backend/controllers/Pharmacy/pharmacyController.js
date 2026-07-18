@@ -904,6 +904,19 @@ exports.dispense = async (req, res) => {
       if (d) drugMetaMap.set(key, d);
     }
 
+    // PHARM-audit fix: backfill item.drugName / hsnCode from the drug master
+    // when the client didn't send them — the sale-item schema requires
+    // drugName, and the server already holds the authoritative name here.
+    // Keeps thin API clients (indent bridges, integrations) working without
+    // each one re-shipping the drug master fields.
+    for (const it of items) {
+      const meta = drugMetaMap.get(String(it.drugId));
+      if (meta) {
+        if (!it.drugName) it.drugName = meta.name;
+        if (!it.hsnCode && meta.hsnCode) it.hsnCode = meta.hsnCode;
+      }
+    }
+
     // R7hr-12-S2 (D8-07): pre-resolve a top-level prescriber registration
     // number for the sale. Priority: explicit req.body.prescriberRegistrationNo
     // → Doctor master lookup by doctorName. The Doctor master fallback only
@@ -1180,6 +1193,45 @@ exports.dispense = async (req, res) => {
     // R7ct — bill-level GST split rollup, accumulated from per-item splits below.
     let totalCgst = 0, totalSgst = 0, totalIgst = 0;
     const consumedAll = []; // [{ batchId, qty }] across all items, for rollback
+
+    // R9-FIX(R9-044): NDPS pre-flight for Schedule-X drugs BEFORE the point of
+    // no return (fifoConsume / Sale.create). Previously the register call ran
+    // only AFTER the sale + stock consumption, so a failure (missing witness,
+    // day locked, insufficient register balance) left the narcotic dispensed
+    // and durable with the statutory register carrying only a "pending" remark
+    // — controlled stock off the shelf, no register line. Validate the
+    // deterministic gates up front and REJECT the whole dispense on failure, so
+    // nothing leaves the shelf that can't be registered.
+    {
+      const sxReq = items.filter((it) => drugMetaMap.get(String(it.drugId))?.schedule === "X");
+      if (sxReq.length > 0) {
+        const wName = req.body?.witnessName;
+        const wId   = req.body?.witnessId;
+        if (!wName || !wId) {
+          return res.status(400).json({ success: false, code: "WITNESS_REQUIRED",
+            message: "Schedule-X (narcotic) dispense requires a witness (NDPS two-person rule). Provide witnessName + witnessId." });
+        }
+        if (String(wId) === String(req.user?._id)) {
+          return res.status(409).json({ success: false, code: "WITNESS_SELF",
+            message: "The Schedule-X witness must be a different person from the dispenser (NDPS two-person rule)." });
+        }
+        // Per-drug register-balance pre-check (sum requested qty per drug).
+        const reqByDrug = new Map();
+        for (const it of sxReq) {
+          const k = String(it.drugId);
+          reqByDrug.set(k, (reqByDrug.get(k) || 0) + Number(it.quantity || 0));
+        }
+        for (const [k, needQty] of reqByDrug) {
+          const have = await scheduleXRegister.currentBalance(k);
+          if (have < needQty) {
+            const nm = drugMetaMap.get(k)?.name || "Schedule-X drug";
+            return res.status(409).json({ success: false, code: "INSUFFICIENT_REGISTER_BALANCE",
+              message: `Insufficient Schedule-X register balance for ${nm} — register shows ${have}, dispense requested ${needQty}. Reconcile the register before dispensing.` });
+          }
+        }
+      }
+    }
+
     try {
     for (const it of items) {
       const used = await fifoConsume(it.drugId, Number(it.quantity));
@@ -1210,7 +1262,11 @@ exports.dispense = async (req, res) => {
         // accept a client-supplied unitPrice. Pre-R7bh a malicious caller
         // could POST { unitPrice: 0.01 } and walk out with discounted stock.
         const unit  = Number(u.batch.salePrice || 0);
-        const gstR  = Number(it.gstRate ?? 12);
+        // D10 — same rule for the GST rate: ALWAYS use the batch's immutable
+        // stamped gstRate (memorialised from the HSN master at GRN, R7hr-50),
+        // never a client-supplied it.gstRate. A crafted client could otherwise
+        // bill a wrong-but-valid slab -> corrupt tax invoice + GSTR-1.
+        const gstR  = Number(u.batch.gstRate ?? 12);
         const discR = Math.max(0, Math.min(100, Number(it.discountPercent ?? discountPercent ?? 0) || 0)); // R7hr-241 (audit: unbounded line discount) — clamp 0–100%
         const gross = qty * unit;
         const discAmt = gross * discR / 100;
@@ -1411,6 +1467,14 @@ exports.dispense = async (req, res) => {
     // operator can reconcile manually) — the dispensed stock is already
     // consumed via fifoConsume.
     if (scheduleXItems.length > 0) {
+      // R8-FIX(#28): remember, per drug, how many units the register actually
+      // decremented. A dispense that fails the register call below (missing
+      // witness, day locked, insufficient register balance) registers 0 — the
+      // stock still leaves the shelf, but a later return/cancel must NOT credit
+      // the register for it (that would push the running balance above physical
+      // stock). We stamp the successfully-registered qty onto each sale line so
+      // the reversal paths can cap what they give back.
+      const registeredByDrug = new Map();
       for (const sx of scheduleXItems) {
         try {
           await scheduleXRegister.recordDispense({
@@ -1437,6 +1501,8 @@ exports.dispense = async (req, res) => {
             remarks:       `Sale ${sale.billNumber} — ${sx.drugName}` +
                            (sx.prescriberRegistrationNo ? ` (Rx Reg: ${sx.prescriberRegistrationNo})` : ""),
           });
+          const k = String(sx.drugId);
+          registeredByDrug.set(k, (registeredByDrug.get(k) || 0) + Number(sx.qty || 0));
         } catch (sxErr) {
           console.error("[Pharmacy] dispense: Schedule-X register failed for drug",
             String(sx.drugId), "sale", sale.billNumber, ":", sxErr.message);
@@ -1445,6 +1511,25 @@ exports.dispense = async (req, res) => {
             `Schedule-X register pending: ${sx.drugName} qty=${sx.qty} reason=${sxErr.code || sxErr.message}`;
           await sale.save().catch(() => {});
         }
+      }
+      // Stamp the registered qty onto the sale lines. scheduleXItems were built
+      // one-per-FIFO-batch-split, so a single drug's registered total may span
+      // several sale rows (batch splits) — distribute it across that drug's
+      // lines, capped at each line's own quantity, so Σ stamped == registered.
+      if (registeredByDrug.size > 0) {
+        const pool = new Map(registeredByDrug);
+        let stamped = false;
+        for (const item of sale.items) {
+          const k = String(item.drugId);
+          const remain = pool.get(k) || 0;
+          if (remain <= 0) continue;
+          const take = Math.min(Number(item.quantity || 0), remain);
+          if (take <= 0) continue;
+          item.scheduleXRegisteredQty = take;
+          pool.set(k, remain - take);
+          stamped = true;
+        }
+        if (stamped) await sale.save().catch(() => {});
       }
     }
 
@@ -1556,7 +1641,10 @@ exports.dispense = async (req, res) => {
       return res.status(status).json({ success: false, message: consumeErr.message });
     }
   } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
+    // PHARM-audit fix: route through sendErr so a Mongoose ValidationError
+    // (bad/missing item field from a client) returns 400 VALIDATION, not a
+    // 500 that reads like a server crash in the counter UI.
+    sendErr(res, e);
   }
 };
 
@@ -2585,7 +2673,13 @@ exports.collectCredit = async (req, res) => {
       if (!sale) {
         const e = new Error("Sale not found"); e.status = 404; throw e;
       }
-      if (sale.status !== "Completed") {
+      // R8-FIX(#15): accept every open-balance status — a Partial-Return or
+      // Supplemented sale can still owe money (residual balanceDue>0) and is
+      // reported as outstanding by the IPD discharge pharmacy-clearance gate
+      // (getOutstandingForAdmission OPEN_BALANCE_STATUSES). Rejecting them here
+      // left that balance permanently uncollectable and deadlocked discharge.
+      // Cancelled/Refunded/Hold stay rejected; balanceDue<=0 ALREADY_PAID below.
+      if (!["Completed", "Partial-Return", "Supplemented"].includes(sale.status)) {
         const e = new Error(`Cannot collect on a ${sale.status} sale`);
         e.status = 409; e.code = "SALE_NOT_COLLECTABLE"; throw e;
       }
@@ -2727,18 +2821,13 @@ exports.applyAdvanceToSale = async (req, res) => {
     // and abort it immediately. If it throws "Transaction numbers are only
     // allowed on a replica set member or mongos", we're on standalone.
     const session = await mongoose.startSession().catch(() => null);
-    let useTx = false;
-    if (session) {
-      try {
-        session.startTransaction();
-        await session.abortTransaction();
-        useTx = true;
-      } catch (_) {
-        // standalone Mongo — transactions unsupported; fall back to the
-        // OCC + retryVersionError path below.
-        useTx = false;
-      }
-    }
+    // R9-FIX(R9-042): detect replica-set from the connection topology, NOT by
+    // probing with an empty start/abort transaction. On standalone Mongo the
+    // empty probe does NOT throw (no command is sent for a transaction with no
+    // operations), so useTx was set true and the REAL session.withTransaction
+    // (doApply) below then 500'd on EVERY apply. Transactions require a replica
+    // set / mongos — mirror the admissionService topology check.
+    const useTx = !!session && !!(session.client?.s?.options?.replicaSet || session.client?.options?.replicaSet);
 
     // R7hr-12-S3 (D4-08): hoisted receipt-number cache so retries don't burn
     // PHM-COLL counter sequences. Shared via closure with doApply() below.
@@ -2750,7 +2839,11 @@ exports.applyAdvanceToSale = async (req, res) => {
       if (!sale) {
         const e = new Error("Sale not found"); e.status = 404; throw e;
       }
-      if (sale.status !== "Completed") {
+      // R8-FIX(#15): accept every open-balance status — mirror collectCredit +
+      // getOutstandingForAdmission so Partial-Return/Supplemented sales with
+      // residual balanceDue can be cleared via advance. Cancelled/Refunded/Hold
+      // stay rejected; balanceDue<=0 handled below.
+      if (!["Completed", "Partial-Return", "Supplemented"].includes(sale.status)) {
         const e = new Error(`Cannot apply advance on a ${sale.status} sale`);
         e.status = 409; e.code = "SALE_NOT_COLLECTABLE"; throw e;
       }
@@ -2916,12 +3009,26 @@ exports.applyAdvanceToSale = async (req, res) => {
         advanceSlices.push({ advId: adv._id, slice });
       }
 
+      // R9-FIX(R9-040): credit the sale by what was ACTUALLY debited from the
+      // advance pool this call, NOT the requested `toApply`. The idempotency
+      // skip above prevents re-debiting an advance that already carries an
+      // appliedTo[] row for this sale — but the sale credit here was
+      // unconditional, so a second (legitimately-distinct) apply booked revenue
+      // as collected while the same rupees stayed spendable/refundable. If
+      // nothing new was debited, this is an idempotent no-op — leave the sale
+      // untouched rather than double-crediting it.
+      const actuallyDebited = debitedAdvanceIds.reduce((acc, d) => acc + d.slice, 0);
+      if (actuallyDebited <= 0) {
+        return { sale: sale.toObject(), applied: 0, advanceRemaining: totalAvailable, slices: advanceSlices, idempotentNoop: true };
+      }
+      const finalPaid = Number(sale.amountPaid?.toString?.() ?? sale.amountPaid ?? 0) + actuallyDebited;
+      const finalBal  = round2(bal - actuallyDebited);
       // Now apply the sale-side mutation atomically with the advance saves.
-      sale.amountPaid = toDec(newPaid);
-      sale.balanceDue = toDec(newBal);
+      sale.amountPaid = toDec(finalPaid);
+      sale.balanceDue = toDec(finalBal);
       sale.collectionLog = sale.collectionLog || [];
       sale.collectionLog.push({
-        amount: toDec(toApply),
+        amount: toDec(actuallyDebited),
         mode: "Advance",
         txnRef: "",
         receiptNumber,
@@ -2931,7 +3038,7 @@ exports.applyAdvanceToSale = async (req, res) => {
         sourceAdvanceId: lastAdvId,
         notes: "Auto-applied from patient advance pool",
       });
-      if (newBal === 0) {
+      if (finalBal === 0) {
         const modes = new Set(sale.collectionLog.map(c => c.mode));
         sale.paymentMode = modes.size > 1 ? "Mixed" : "Advance";
       }
@@ -2979,8 +3086,8 @@ exports.applyAdvanceToSale = async (req, res) => {
 
       return {
         sale: sale.toObject(),
-        applied: toApply,
-        advanceRemaining: totalAvailable - toApply,
+        applied: actuallyDebited, // R9-FIX(R9-040): what was actually debited, not the request
+        advanceRemaining: totalAvailable - actuallyDebited,
         slices: advanceSlices,
       };
     };
@@ -3338,6 +3445,53 @@ exports.returnItems = async (req, res) => {
       console.error("[Pharmacy] returnItems → onPharmacyReturn cascade failed:", e.message);
     }
 
+    // R8-FIX(#28): credit the Schedule-X (NDPS) register back for returned
+    // narcotic lines — but only up to what each line actually registered at
+    // dispense (item.scheduleXRegisteredQty). A witness-less / register-failed
+    // dispense registered 0, so its return must NOT bump the register (that
+    // would push the running balance above physical stock). We consume the
+    // per-line registered qty as we reverse it, so repeated partial returns
+    // never over-credit. Best-effort: stock + refund already committed above.
+    try {
+      const schedCache = new Map(); // drugId -> schedule string
+      let sxChanged = false;
+      for (const ri of refundedItems) {
+        const retQty = Number(ri.quantity || 0);
+        if (!(retQty > 0) || !ri.drugId) continue;
+        const item = (sale.items || []).find((x) => String(x._id) === String(ri.saleItemId));
+        if (!item) continue;
+        const reg = Number(item.scheduleXRegisteredQty || 0);
+        if (reg <= 0) continue; // nothing registered for this line → nothing to reverse
+        const dk = String(ri.drugId);
+        if (!schedCache.has(dk)) {
+          const d = await Drug.findById(ri.drugId).select("schedule").lean();
+          schedCache.set(dk, d ? String(d.schedule || "") : "");
+        }
+        if (schedCache.get(dk) !== "X") continue;
+        const reverseQty = Math.min(retQty, reg);
+        if (reverseQty <= 0) continue;
+        const res = await scheduleXRegister.recordReversal({
+          drugId:    ri.drugId,
+          signedQty: reverseQty,
+          actorName: req.user?.fullName || req.user?.name || "System",
+          actorById: req.user?._id || null,
+        });
+        if (res === null) {
+          // No balance doc to credit — log, and do NOT consume the line's
+          // registered qty so a later reconciliation can still reverse it.
+          console.error("[Pharmacy] returnItems: Schedule-X reversal found no balance doc for drug",
+            String(ri.drugId), "sale", String(sale.billNumber || sale._id));
+          continue;
+        }
+        item.scheduleXRegisteredQty = reg - reverseQty;
+        sxChanged = true;
+      }
+      if (sxChanged) await sale.save().catch(() => {});
+    } catch (e) {
+      console.error("[Pharmacy] returnItems: Schedule-X register reversal failed for sale",
+        String(sale._id), ":", e.message);
+    }
+
     // B6-T05 — ClinicalAudit emit on partial / full return (NABH MOM.4 +
     // drug-control trail). Captures refund slip + amount + refund mode so
     // a register query can reconstruct the reversal trail per UHID.
@@ -3505,7 +3659,11 @@ exports.addItems = async (req, res) => {
         // R7bh-F4 / R7bg-10-CRIT-1: ALWAYS use the batch's salePrice — never
         // trust a client-supplied unitPrice on supplementary invoices either.
         const unit  = Number(u.batch.salePrice || 0);
-        const gstR  = Number(it.gstRate ?? 12);
+        // D10 — same rule for GST on supplementary invoices: use the batch's
+        // immutable stamped gstRate (R7hr-50), never a client-supplied
+        // it.gstRate, so a crafted supplement can't push a wrong slab into the
+        // GSTR-1 debit-note bucket.
+        const gstR  = Number(u.batch.gstRate ?? 12);
         const discR = Math.max(0, Math.min(100, Number(it.discountPercent ?? discountPercent ?? 0) || 0)); // R7hr-241 (audit: unbounded line discount) — clamp 0–100%
         const gross = qty * unit;
         const discAmt = gross * discR / 100;
@@ -3901,6 +4059,43 @@ exports.cancelSale = async (req, res) => {
         String(s._id), ":", creditErr.message);
     }
 
+    // 5b. R8-FIX(#28): credit the Schedule-X (NDPS) register back for the
+    //     cancelled narcotic lines. The status CAS at step 2 flips
+    //     Completed→Cancelled exactly once (a second cancel gets
+    //     ALREADY_CANCELLED and never reaches here), so this reversal fires
+    //     exactly once — no double-credit guard needed. We reverse each
+    //     line's STILL-registered qty (scheduleXRegisteredQty, already
+    //     decremented by any prior partial returns), mirroring the stock
+    //     restore above which only restores the un-returned portion.
+    //     Best-effort: the sale is already terminal + stock restored, so a
+    //     failure here only needs a manual register reconcile.
+    try {
+      const schedCache = new Map();
+      for (const it of s.items) {
+        const reg = Number(it.scheduleXRegisteredQty || 0);
+        if (reg <= 0 || !it.drugId) continue;
+        const dk = String(it.drugId);
+        if (!schedCache.has(dk)) {
+          const d = await Drug.findById(it.drugId).select("schedule").lean();
+          schedCache.set(dk, d ? String(d.schedule || "") : "");
+        }
+        if (schedCache.get(dk) !== "X") continue;
+        const res = await scheduleXRegister.recordReversal({
+          drugId:    it.drugId,
+          signedQty: reg,
+          actorName: cancelledByName,
+          actorById: cancelledById,
+        });
+        if (res === null) {
+          console.error("[Pharmacy] cancelSale: Schedule-X reversal found no balance doc for drug",
+            String(it.drugId), "sale", String(s.billNumber || s._id));
+        }
+      }
+    } catch (e) {
+      console.error("[Pharmacy] cancelSale: Schedule-X register reversal failed for sale",
+        String(s._id), ":", e.message);
+    }
+
     // 6. Audit on admin override (SOD breach).
     // R7hr-12-S3 (D8-08): use BILL_CANCELLED (the accurate enum slot) instead
     // of SHIFT_CLOSED (closest-bucket abuse). Pre-fix a surveyor or auditor
@@ -4121,6 +4316,32 @@ exports.recordVendorReturn = async (req, res) => {
         after:     { remaining: batch.remaining, vendorReturned: batch.vendorReturned, vendorReturnId: row._id },
       }, { req });
     } catch (_) { /* best-effort */ }
+
+    // R8-FIX(#28): a Schedule-X (NDPS) vendor return moves controlled stock
+    // OUT to the supplier — mirror it in the register by DECREMENTING the
+    // running balance. recordReversal gates the decrement on balance >= qty
+    // (re-checked at write time) so a concurrent dispense that already
+    // consumed the balance makes us log rather than drive the register
+    // negative. Best-effort: the physical batch deduction + debit note are
+    // already durable; a register mismatch here is a manual-reconcile item.
+    try {
+      const drugDoc = await Drug.findById(batch.drugId).select("schedule").lean();
+      if (drugDoc && String(drugDoc.schedule) === "X") {
+        const rev = await scheduleXRegister.recordReversal({
+          drugId:    batch.drugId,
+          signedQty: -qtyN,
+          actorName: req.user?.fullName || req.user?.employeeId || "Pharmacy",
+          actorById: req.user?._id || req.user?.id || null,
+        });
+        if (rev === null) {
+          console.error("[Pharmacy] recordVendorReturn: Schedule-X register underflow/absent for drug",
+            String(batch.drugId), "batch", String(batch.batchNo || batch._id), "qty", qtyN);
+        }
+      }
+    } catch (e) {
+      console.error("[Pharmacy] recordVendorReturn: Schedule-X register reversal failed for batch",
+        String(batch._id), ":", e.message);
+    }
 
     res.status(201).json({ success: true, data: row, batchAfter: batch });
   } catch (e) { sendErr(res, e); }
@@ -4453,9 +4674,7 @@ exports.searchHSN = async (req, res) => {
     const rows = await HSNMaster.find(where, "code description gstRate category")
       .sort({ code: 1 }).limit(25).lean();
     res.status(200).json({ success: true, data: rows });
-  } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
-  }
+  } catch (e) { sendErr(res, e); }
 };
 
 // GET /api/pharmacy/hsn/:code — exact code lookup. Returns 404 if not in
@@ -4468,9 +4687,7 @@ exports.getHSNByCode = async (req, res) => {
     const row = await HSNMaster.findOne({ code, isActive: true }).lean();
     if (!row) return res.status(404).json({ success: false, message: "HSN code not found in master", code });
     res.status(200).json({ success: true, data: row });
-  } catch (e) {
-    res.status(500).json({ success: false, message: e.message });
-  }
+  } catch (e) { sendErr(res, e); }
 };
 
 // POST /api/pharmacy/hsn — admin adds a new HSN entry when an invoice

@@ -31,6 +31,7 @@ function _normaliseDischargeArrays(data) {
   if (Array.isArray(data.procedures) && data.proceduresDone === undefined) {
     data.proceduresDone = data.procedures.map((p) => ({
       procedureName: p.procedureName || p.name || "",
+      pcsCode: p.pcsCode || "",                        // R7hr(PCS-P1)
       date: p.date || undefined, performedBy: p.performedBy || p.surgeon || "",
       notes: p.notes || [p.findings, p.complications && `Complications: ${p.complications}`].filter(Boolean).join(". "),
     })).filter((p) => p.procedureName);
@@ -167,6 +168,18 @@ class DischargeSummaryController {
   update = handle(async (req, res) => {
     const data = req.body;
     _normaliseDischargeArrays(data);
+    // R9-FIX(R9-063): the generic PUT must NEVER finalize. Strip the same
+    // lifecycle/attestation fields create() strips — otherwise a caller could
+    // PUT {status:"finalized", finalizedByName:"…"} onto a draft and mint an
+    // immutable, forged legal record, bypassing /finalize's consultant / JR
+    // co-sign / PROM-PREM / MCCD checks and the mortality/LAMA register emit.
+    // findOneAndUpdate bypasses the model's pre-save guard, so the strip is
+    // the only thing standing between a draft and a forged finalization here.
+    delete data.status;
+    delete data.finalizedBy;
+    delete data.finalizedByName;
+    delete data.finalizedByReg;
+    delete data.finalizedAt;
     if (data.admissionDate && data.dischargeDate) {
       const diff = new Date(data.dischargeDate) - new Date(data.admissionDate);
       // floor() to match create() — partial days don't add an LOS day (was ceil, inflated by 1).
@@ -207,7 +220,26 @@ class DischargeSummaryController {
 
   // PATCH /api/discharge-summary/:id/finalize
   finalize = handle(async (req, res) => {
-    const { finalizedByName, allowOverride, overrideReason } = req.body;
+    const { allowOverride, overrideReason } = req.body;
+    // R9-FIX(R9-067): ANY override must carry a documented reason — a single
+    // up-front rule covering every gate below. Previously only the nursing-
+    // handover gate required a reason; the PROM/PREM (patient-voice) and
+    // mandatory-content gates accepted `allowOverride: true` with NO reason, so
+    // a caller could silently skip the NABH-mandated patient survey with
+    // nothing recorded. Reject a reasonless override before any gate runs.
+    if (allowOverride && !String(overrideReason || "").trim()) {
+      return res.status(400).json({
+        success: false,
+        code: "OVERRIDE_REASON_REQUIRED",
+        message: "Override requires a documented reason (e.g. 'LAMA at 14:30, signed AMA form on file'). Set overrideReason.",
+      });
+    }
+    // R9-FIX(R9-066): the signing name is the AUTHENTICATED actor's, NEVER the
+    // request body's. Previously `finalizedByName` came from req.body, so a
+    // doctor could finalize under another doctor's name — and the /cosign SoD
+    // check compares the co-signer to finalizedByName, so a forged name also
+    // defeated the co-sign separation-of-duties.
+    const finalizedByName = req.user?.fullName || req.user?.employeeId || "Doctor";
 
     // R7bx item 8 — MCI Regulation 1.4.2 compliance. The discharge summary
     // is a Rx-signing path (carries Rx, advice, follow-up) — finalizing it
@@ -322,6 +354,99 @@ class DischargeSummaryController {
       }
     }
 
+    // ── Mandatory-content gate (NABH AAC.3 / #130) ────────────────
+    // A discharge summary must carry the AAC-mandated content before it
+    // locks: a final diagnosis, discharge medications, and follow-up
+    // advice. Pre-fix a summary could finalize (and become immutable) with
+    // blank diagnosis / no meds / no follow-up — the printable then showed
+    // em-dashes for mandated fields. Death/Expired and LAMA/DAMA/Absconded
+    // cases legitimately lack discharge meds + follow-up (patient left /
+    // deceased) so those two requirements are waived for them; the final
+    // diagnosis (or cause of death, gated above) is always required.
+    // Overridable via { allowOverride, overrideReason } like the gates above.
+    if (draftSummary) {
+      const dType = draftSummary.dischargeType || "";
+      const cond = draftSummary.conditionOnDischarge || "";
+      const isDeathCase = dType === "Death" || cond === "Expired";
+      const leftAgainstAdvice = ["LAMA", "DAMA", "Absconded"].includes(dType);
+      const missing = [];
+      if (!String(draftSummary.finalDiagnosis || "").trim() &&
+          !(Array.isArray(draftSummary.codedDiagnoses) && draftSummary.codedDiagnoses.length)) {
+        missing.push("final diagnosis");
+      }
+      if (!isDeathCase && !leftAgainstAdvice) {
+        if (!(Array.isArray(draftSummary.medicationsOnDischarge) && draftSummary.medicationsOnDischarge.length)) {
+          missing.push("discharge medications");
+        }
+        const hasFollowUp = !!(String(draftSummary.followUpInstructions || "").trim() ||
+          draftSummary.followUpDate || String(draftSummary.followUpDoctor || "").trim());
+        if (!hasFollowUp) missing.push("follow-up advice");
+      }
+      if (missing.length && !allowOverride) {
+        return res.status(409).json({
+          success: false,
+          code: "DISCHARGE_CONTENT_INCOMPLETE",
+          message: `Cannot finalize — the discharge summary is missing NABH-mandated content: ${missing.join(", ")}. Complete it, OR pass { allowOverride: true, overrideReason: "..." } with justification.`,
+          missing,
+        });
+      }
+      if (missing.length && allowOverride && !String(overrideReason || "").trim()) {
+        return res.status(400).json({
+          success: false,
+          code: "OVERRIDE_REASON_REQUIRED",
+          message: "Override requires a documented reason for the incomplete discharge content.",
+        });
+      }
+      // Stash for the CAS-update override-evidence block below.
+      req._contentGateOverridden = missing.length > 0 && allowOverride;
+      req._contentGateMissing = missing;
+    }
+
+    // R9-FIX(R9-064): run the primary-consultant + JR self-finalize SoD gates
+    // BEFORE the irreversible status flip. They previously ran AFTER the CAS
+    // write, so any 403/409 from them left the summary already `finalized`
+    // (immutable) — permanently locking a record the caller was NOT allowed to
+    // finalize. draftSummary (loaded above) carries the admissionId we need.
+    let _selfFinalizeAck = false;
+    let _isJRSelfFinalize = false;
+    if (draftSummary?.admissionId) {
+      const admissionForGate = await Admission.findById(draftSummary.admissionId)
+        .select("attendingDoctorId mustCosign").lean();
+      if (!admissionForGate) {
+        return res.status(404).json({ success: false, message: "Linked admission not found" });
+      }
+      if (req.user?.role === "Doctor") {
+        const callerDoctorId = String(req.doctorProfile?._id || "");
+        const attendingId    = String(admissionForGate.attendingDoctorId || "");
+        if (!callerDoctorId || !attendingId || callerDoctorId !== attendingId) {
+          return res.status(403).json({
+            success: false,
+            message: "Only the primary attending consultant (or an Admin) may finalize this discharge.",
+            code: "NOT_PRIMARY_CONSULTANT",
+          });
+        }
+        let designation = "";
+        try {
+          const u = await User.findById(req.user._id || req.user.id).select("doctorDetails.designation").lean();
+          designation = u?.doctorDetails?.designation || "";
+        } catch (_) { /* best-effort */ }
+        _isJRSelfFinalize = designation === "Junior Resident";
+        if (_isJRSelfFinalize && admissionForGate.mustCosign === true) {
+          // Hard gate — a JR must explicitly acknowledge senior co-sign will follow.
+          if (req.body?.requireSeniorCosign !== false) {
+            return res.status(409).json({
+              success: false,
+              code: "REQUIRE_SENIOR_COSIGN",
+              message:
+                "This admission is flagged mustCosign — a Junior Resident cannot finalize without senior co-sign. " +
+                "Resubmit with { requireSeniorCosign: false } to acknowledge that co-sign will be obtained, OR have a Senior Resident / Consultant finalize.",
+            });
+          }
+          _selfFinalizeAck = true;
+        }
+      }
+    }
+
     // runValidators added per audit C-07 — without it, the status flip
     // and the date/condition writes bypass the schema's enum/format
     // checks; a future bad value (e.g. status: "FINAL_GREATEST") would
@@ -338,6 +463,8 @@ class DischargeSummaryController {
         status: "finalized",
         finalizedByName: finalizedByName || "Doctor",
         finalizedAt: new Date(),
+        ...(_selfFinalizeAck ? { selfFinalizeAck: true } : {}), // R9-FIX(R9-064): JR ack folded into the atomic finalize
+
         // Record override (when used) for the NABH audit trail. Stored
         // on the discharge summary itself so the override evidence
         // travels with the discharge record.
@@ -346,6 +473,15 @@ class DischargeSummaryController {
           nursingHandoverOverrideReason: String(overrideReason || "").trim(),
           nursingHandoverOverrideAt: new Date(),
           nursingHandoverOverrideBy: finalizedByName || req.user?.fullName || "Doctor",
+        } : {}),
+        // NABH AAC.3 (#130) — when the mandatory-content gate was bypassed,
+        // stamp WHAT was missing + WHY so the auditor sees the justification.
+        ...(req._contentGateOverridden ? {
+          contentGateOverride: true,
+          contentGateOverrideReason: String(overrideReason || "").trim(),
+          contentGateMissing: req._contentGateMissing || [],
+          contentGateOverrideAt: new Date(),
+          contentGateOverrideBy: finalizedByName || req.user?.fullName || "Doctor",
         } : {}),
       },
       { new: true, runValidators: true }
@@ -373,7 +509,7 @@ class DischargeSummaryController {
         event: "DISCHARGE_SUMMARY_FINALIZED",
         UHID: summary.UHID,
         admissionId: summary.admissionId,
-        patientId: summary.patientId,
+        patientId: summary.patient,
         patientName: summary.patientName,
         targetType: "DischargeSummary",
         targetId: summary._id,
@@ -387,6 +523,24 @@ class DischargeSummaryController {
       });
     } catch (_) { /* silent */ }
 
+    // #136/#137 — IDSP notifiable-disease auto-raise. Scan the finalized
+    // summary's coded diagnoses (+ single icdCode) against the notifiable
+    // ICD-10 list; raise a NotifiableDiseaseRegister case (idempotent per
+    // admission+disease) so the IC officer can report it within the statutory
+    // window. Non-blocking — never rolls back the discharge.
+    try {
+      const { raiseNotifiableCases } = require("../../services/Compliance/notifiableDiseases");
+      const diags = Array.isArray(summary.codedDiagnoses) ? summary.codedDiagnoses.map((d) => ({ code: d.code, description: d.description })) : [];
+      if (summary.icdCode) diags.push({ code: summary.icdCode, description: summary.finalDiagnosis || "" });
+      const raised = await raiseNotifiableCases({
+        diagnoses: diags,
+        patient: { _id: summary.patient, UHID: summary.UHID, name: summary.patientName },
+        admission: { _id: summary.admissionId },
+        actor: req.user || {},
+      });
+      if (raised.length) console.log(`[dischargeFinalize] notifiable-disease raised: ${raised.map((r) => `${r.caseNumber}(${r.disease})`).join(", ")}`);
+    } catch (_) { /* silent — surveillance raise is best-effort */ }
+
     // R7bx-3 — Auto-populate NABH COP.18 Mortality register on a finalized
     // death discharge. Trigger discriminator (matching the model enum):
     //   conditionOnDischarge === "Expired"  OR  dischargeType === "Death"
@@ -397,9 +551,9 @@ class DischargeSummaryController {
       try {
         const { emitMortality } = require("../../services/Compliance/nabhRegisterEmitter");
         const Patient = require("../../models/Patient/patientModel");
-        const patient = summary.patientId
-          ? await Patient.findById(summary.patientId).select("_id UHID fullName name age gender sex").lean()
-          : { _id: summary.patientId, UHID: summary.UHID, fullName: summary.patientName, age: summary.age, sex: summary.gender };
+        const patient = summary.patient
+          ? await Patient.findById(summary.patient).select("_id UHID fullName name age gender sex").lean()
+          : { _id: summary.patient, UHID: summary.UHID, fullName: summary.patientName, age: summary.age, sex: summary.gender };
         const admission = summary.admissionId
           ? await Admission.findById(summary.admissionId).select("_id admissionNumber admissionDate attendingDoctor attendingDoctorId isMLC mlcNumber").lean()
           : null;
@@ -423,9 +577,9 @@ class DischargeSummaryController {
       try {
         const { emitLAMA } = require("../../services/Compliance/nabhRegisterEmitter");
         const Patient = require("../../models/Patient/patientModel");
-        const lamaPatient = summary.patientId
-          ? await Patient.findById(summary.patientId).select("_id UHID fullName name age gender sex").lean()
-          : { _id: summary.patientId, UHID: summary.UHID, fullName: summary.patientName, age: summary.age, sex: summary.gender };
+        const lamaPatient = summary.patient
+          ? await Patient.findById(summary.patient).select("_id UHID fullName name age gender sex").lean()
+          : { _id: summary.patient, UHID: summary.UHID, fullName: summary.patientName, age: summary.age, sex: summary.gender };
         const lamaAdmission = summary.admissionId
           ? await Admission.findById(summary.admissionId).select("_id admissionNumber admissionDate attendingDoctor attendingDoctorId").lean()
           : null;
@@ -464,6 +618,9 @@ class DischargeSummaryController {
     //   4. billClearedBy / billClearedAt remain null/undefined; only
     //      the cashier's explicit clearFinalBill action stamps them.
     if (summary.admissionId) {
+      // R9-FIX(R9-064): the primary-consultant + JR self-finalize SoD gates
+      // moved ABOVE the CAS status flip (they 403/409 there before anything is
+      // finalized). Here we only run the post-finalize side effects.
       const admission = await Admission.findById(summary.admissionId)
         .select("attendingDoctorId status dischargeWorkflow bedId admissionNumber mustCosign")
         .lean();
@@ -471,74 +628,21 @@ class DischargeSummaryController {
         return res.status(404).json({ success: false, message: "Linked admission not found" });
       }
 
-      // 1. Primary-consultant gate. Pre-R7az anybody with a Doctor role
-      //    could finalize any admission's discharge summary — including
-      //    a doctor who had nothing to do with the case.
-      if (req.user?.role === "Doctor") {
-        const callerDoctorId = String(req.doctorProfile?._id || "");
-        const attendingId    = String(admission.attendingDoctorId || "");
-        if (!callerDoctorId || !attendingId || callerDoctorId !== attendingId) {
-          return res.status(403).json({
-            success: false,
-            message: "Only the primary attending consultant (or an Admin) may finalize this discharge.",
-            code: "NOT_PRIMARY_CONSULTANT",
-          });
-        }
-      }
-
-      // R7bb-FIX-E-4 / D3-CRIT-4: SoD on Junior Resident self-finalize.
-      // Junior Residents must NOT discharge their own patients without
-      // senior co-sign (NABH COP.7 / institutional risk). Two paths:
-      //   • admission.mustCosign === true  → REQUIRE explicit
-      //     requireSeniorCosign:false ack in the body (the caller
-      //     attests they will obtain co-sign offline / via the pending
-      //     /cosign endpoint). Without the ack we 409.
-      //   • caller's designation === "Junior Resident" → emit a WARN
-      //     audit row noting "self-finalized by treating doctor" but
-      //     don't block. The admin gets a flag on the audit feed.
-      if (req.user?.role === "Doctor") {
-        // Look up the caller's designation off the User doc — req.user
-        // carries only `role`, not the doctorDetails subdoc.
-        let designation = "";
+      // WARN audit row for a JR self-finalize (non-blocking) — the blocking
+      // gate already ran pre-write; this only flags the audit feed.
+      if (_isJRSelfFinalize) {
         try {
-          const u = await User.findById(req.user._id || req.user.id)
-            .select("doctorDetails.designation").lean();
-          designation = u?.doctorDetails?.designation || "";
+          const { emit } = require("../../models/Billing/BillingAudit");
+          await emit({
+            event:     "SETTLEMENT_ADJUSTED",  // generic audit channel
+            actorId:   req.user._id || req.user.id,
+            actorName: req.user.fullName || req.user.employeeId,
+            actorRole: req.user.role,
+            admissionId: summary.admissionId,
+            reason:    `WARN_SELF_FINALIZE: Discharge summary ${summary._id} self-finalized by Junior Resident (treating doctor). Senior co-sign required.`,
+            after:     { discharge: "self-finalized", mustCosign: admission.mustCosign },
+          }, { req });
         } catch (_) { /* best-effort */ }
-        const isJR = designation === "Junior Resident";
-        if (isJR && admission.mustCosign === true) {
-          // Hard gate — must explicitly acknowledge that senior co-sign
-          // will follow. The cosign itself happens via a separate
-          // future endpoint that stamps cosignedBy on the summary.
-          if (req.body?.requireSeniorCosign !== false) {
-            return res.status(409).json({
-              success: false,
-              code: "REQUIRE_SENIOR_COSIGN",
-              message:
-                "This admission is flagged mustCosign — a Junior Resident cannot finalize without senior co-sign. " +
-                "Resubmit with { requireSeniorCosign: false } to acknowledge that co-sign will be obtained, OR have a Senior Resident / Consultant finalize.",
-            });
-          }
-          // Mark on the doc for the cosign endpoint to honour.
-          await DischargeSummary.findByIdAndUpdate(summary._id, {
-            $set: { selfFinalizeAck: true },
-          });
-        }
-        if (isJR) {
-          // WARN audit row — non-blocking.
-          try {
-            const { emit } = require("../../models/Billing/BillingAudit");
-            await emit({
-              event:     "SETTLEMENT_ADJUSTED",  // generic audit channel
-              actorId:   req.user._id || req.user.id,
-              actorName: req.user.fullName || req.user.employeeId,
-              actorRole: req.user.role,
-              admissionId: summary.admissionId,
-              reason:    `WARN_SELF_FINALIZE: Discharge summary ${summary._id} self-finalized by Junior Resident (treating doctor). Senior co-sign required.`,
-              after:     { discharge: "self-finalized", mustCosign: admission.mustCosign, designation },
-            }, { req });
-          } catch (_) { /* best-effort */ }
-        }
       }
 
       const now = new Date();
@@ -587,6 +691,123 @@ class DischargeSummaryController {
       success: true,
       data: summary,
       message: "Discharge summary finalized",
+    });
+  });
+
+  // POST /api/discharge-summary/:id/cosign
+  //
+  // R7bb-FIX-E-4 / D3-CRIT-4 reconciliation — senior co-sign of a
+  // Junior-Resident self-finalized discharge summary (NABH COP.7). The
+  // finalize path lets a JR self-finalize (WARN audit row + mustCosign
+  // acknowledgement) but the senior signature that CLOSES that SoD loop
+  // had no endpoint, so cosignedBy/cosignedByName/cosignedAt never got
+  // stamped. This stamps them from the AUTHENTICATED senior actor — NEVER
+  // from req.body (mirroring mlcController.finalize's co-sign) — and emits
+  // a ClinicalAudit row consistent with the finalize emit.
+  cosign = handle(async (req, res) => {
+    const existing = await DischargeSummary.findById(req.params.id)
+      .select("status finalizedByName cosignedAt cosignedByName UHID admissionId patient patientName")
+      .lean();
+    if (!existing) {
+      return res.status(404).json({ success: false, message: "Discharge summary not found" });
+    }
+    // Co-sign reconciles a COMPLETED self-finalize — a draft has nothing to
+    // co-sign yet.
+    if (existing.status !== "finalized") {
+      return res.status(409).json({
+        success: false,
+        code: "NOT_FINALIZED",
+        message: "Only a finalized discharge summary can be co-signed — finalize it first.",
+      });
+    }
+    if (existing.cosignedAt) {
+      return res.status(409).json({
+        success: false,
+        code: "ALREADY_COSIGNED",
+        message: `Discharge summary already co-signed by ${existing.cosignedByName || "a senior"} at ${existing.cosignedAt}.`,
+      });
+    }
+
+    // Senior-tier gate (NABH COP.7). Mirrors mlcController.finalize: only a
+    // Doctor with a senior designation (or Admin) may attest — a Junior
+    // Resident cannot co-sign, which is the whole point of the SoD.
+    if (req.user?.role !== "Doctor" && req.user?.role !== "Admin") {
+      return res.status(403).json({ success: false, message: "Only a senior Doctor / Admin can co-sign a discharge summary." });
+    }
+    if (req.user?.role === "Doctor") {
+      const u = await User.findById(req.user._id || req.user.id)
+        .select("doctorDetails.designation").lean();
+      const desig = u?.doctorDetails?.designation || "";
+      const SENIOR = new Set(["Consultant", "HOD", "Senior Resident", "Associate Professor", "Professor"]);
+      if (!SENIOR.has(desig)) {
+        return res.status(403).json({
+          success: false,
+          code: "DESIGNATION_REQUIRED",
+          message: `Co-sign requires a senior designation (Consultant / HOD / Senior Resident / Associate Professor / Professor); your designation is '${desig || "—"}'.`,
+        });
+      }
+    }
+
+    // Best-effort separation-of-duties — the co-signer should not be the
+    // same person who finalized. The finalize path persists only
+    // finalizedByName (no finalizer userId), so this is a name-level guard.
+    const actorName = req.user?.fullName || req.user?.employeeId || "";
+    if (actorName && existing.finalizedByName && actorName === existing.finalizedByName) {
+      return res.status(409).json({
+        success: false,
+        code: "SAME_ACTOR",
+        message: "SAME_ACTOR — a discharge summary must be co-signed by a different (senior) doctor than the one who finalized it.",
+      });
+    }
+
+    // Atomic CAS — stamp the co-sign only while still finalized + not yet
+    // co-signed. cosigned* are whitelisted past the model's finalized-
+    // immutability guard (post-finalize legal metadata, like mlrNumberSnapshot).
+    const summary = await DischargeSummary.findOneAndUpdate(
+      { _id: req.params.id, status: "finalized", cosignedAt: null },
+      {
+        $set: {
+          cosignedBy:     req.user?._id || req.user?.id || null,
+          cosignedByName: actorName || "Senior Doctor",
+          cosignedAt:     new Date(),
+        },
+      },
+      { new: true, runValidators: true },
+    );
+    if (!summary) {
+      // Race: co-signed by another user between the pre-check and the write.
+      return res.status(409).json({
+        success: false,
+        code: "ALREADY_COSIGNED",
+        message: "Discharge summary was co-signed by another user — refresh and try again.",
+      });
+    }
+
+    // R7bn-1 / D9-fix parity — ClinicalAudit emit on co-sign (signature
+    // event, 7y retention floor). Non-blocking, mirrors the finalize emit.
+    try {
+      const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+      emitClinicalAudit({
+        req,
+        event: "DISCHARGE_SUMMARY_COSIGNED",
+        UHID: summary.UHID,
+        admissionId: summary.admissionId,
+        patientId: summary.patient,
+        patientName: summary.patientName,
+        targetType: "DischargeSummary",
+        targetId: summary._id,
+        after: {
+          cosignedByName: summary.cosignedByName,
+          cosignedAt: summary.cosignedAt,
+          finalizedByName: summary.finalizedByName || "",
+        },
+      });
+    } catch (_) { /* silent */ }
+
+    return res.json({
+      success: true,
+      data: summary,
+      message: "Discharge summary co-signed",
     });
   });
 

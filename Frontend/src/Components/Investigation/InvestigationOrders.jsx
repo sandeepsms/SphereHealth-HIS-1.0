@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
+import axios from "axios";   // R7hr(LAB-TAT): interceptor-authed /reports call
 import { tpaService } from "../../Services/tpa/tpaService";
 import patientService from "../../Services/patient/patientService";
 import { Card } from "primereact/card";
@@ -178,6 +179,19 @@ export default function InvestigationOrders() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [summary, setSummary] = useState({});
+  // R7hr(LAB-TAT tile): collection→verify TAT over the last 30 days from
+  // /reports/lab-tat (gate lab.read — same roles as this page). The page's
+  // own fetch() calls carry no auth header, so this uses axios (global
+  // Bearer interceptor). 403/failure → null → tiles simply don't render.
+  const [labTat, setLabTat] = useState(null);
+  useEffect(() => {
+    axios.get(`${API}/reports/lab-tat`)
+      .then((r) => {
+        const d = r.data?.data || r.data || {};
+        setLabTat(d.overall?.count > 0 ? d.overall : null);
+      })
+      .catch(() => setLabTat(null));
+  }, []);
   // R7hr-314 — seed the status filter from ?status= so the Lab dashboard
   // tiles deep-link: Result Entry → ?status=SAMPLE_COLLECTED, Dispatch
   // Reports → ?status=COMPLETED (else the worklist opens unfiltered).
@@ -231,12 +245,17 @@ export default function InvestigationOrders() {
       if (filters.priority) params.append("priority", filters.priority);
       if (filters.fromDate) params.append("fromDate", filters.fromDate);
       if (filters.toDate) params.append("toDate", filters.toDate);
-      const res = await fetch(`${API}/investigation-orders?${params}`);
-      const data = await res.json();
+      // R9-FIX(R9-046): use the interceptor-authed axios instance, not raw
+      // fetch() — every call on this lab page was unauthenticated (no
+      // Authorization header), so the whole Investigation Orders surface only
+      // worked because these endpoints weren't enforcing auth. axios carries the
+      // bearer token via the global request interceptor.
+      const res = await axios.get(`${API}/investigation-orders?${params}`);
+      const data = res.data;
       setOrders(data.data || []);
       setTotal(data.total || 0);
     } catch (e) {
-      showToast("error", "Error", e.message);
+      showToast("error", "Error", e.response?.data?.message || e.message);
     } finally {
       setLoading(false);
     }
@@ -244,16 +263,16 @@ export default function InvestigationOrders() {
 
   const loadSummary = async () => {
     try {
-      const res = await fetch(`${API}/investigation-orders/summary`);
-      const data = await res.json();
+      const res = await axios.get(`${API}/investigation-orders/summary`); // R9-046: authed
+      const data = res.data;
       setSummary(data.data || {});
     } catch {}
   };
 
   const loadInvestigations = async () => {
     try {
-      const res = await fetch(`${API}/investigations?limit=300&isActive=true`);
-      const data = await res.json();
+      const res = await axios.get(`${API}/investigations?limit=300&isActive=true`); // R9-046: authed
+      const data = res.data;
       setInvestigations(
         (data.data || []).map((i) => ({
           label: `${i.investigationCode} — ${i.investigationName}`,
@@ -362,13 +381,8 @@ export default function InvestigationOrders() {
         notes: newOrder.notes || null,
       };
 
-      const res = await fetch(`${API}/investigation-orders`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message);
+      const res = await axios.post(`${API}/investigation-orders`, payload); // R9-046: authed
+      const data = res.data;
 
       showToast(
         "success",
@@ -380,7 +394,7 @@ export default function InvestigationOrders() {
       loadOrders();
       loadSummary();
     } catch (e) {
-      showToast("error", "Error", e.message);
+      showToast("error", "Error", e.response?.data?.message || e.message);
     } finally {
       setLoading(false);
     }
@@ -390,12 +404,12 @@ export default function InvestigationOrders() {
   const openDetail = async (id) => {
     setLoading(true);
     try {
-      const res = await fetch(`${API}/investigation-orders/${id}`);
-      const data = await res.json();
+      const res = await axios.get(`${API}/investigation-orders/${id}`); // R9-046: authed
+      const data = res.data;
       setSelOrder(data.data);
       setShowDetail(true);
     } catch (e) {
-      showToast("error", "Error", e.message);
+      showToast("error", "Error", e.response?.data?.message || e.message);
     } finally {
       setLoading(false);
     }
@@ -405,22 +419,16 @@ export default function InvestigationOrders() {
   const handleCollect = async (orderId) => {
     setLoading(true);
     try {
-      const res = await fetch(
+      await axios.post( // R9-046: authed
         `${API}/investigation-orders/${orderId}/collect-sample`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ collectedBy: "Lab Staff" }),
-        },
+        { collectedBy: "Lab Staff" },
       );
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message);
       showToast("success", "Sample Collected", "Sample collected successfully");
       await openDetail(orderId);
       loadOrders();
       loadSummary();
     } catch (e) {
-      showToast("error", "Error", e.message);
+      showToast("error", "Error", e.response?.data?.message || e.message);
     } finally {
       setLoading(false);
     }
@@ -430,19 +438,13 @@ export default function InvestigationOrders() {
   const handleVerify = async (orderId) => {
     setLoading(true);
     try {
-      const res = await fetch(`${API}/investigation-orders/${orderId}/verify`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ verifiedBy: "Pathologist" }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message);
+      await axios.post(`${API}/investigation-orders/${orderId}/verify`, { verifiedBy: "Pathologist" }); // R9-046: authed
       showToast("success", "Verified", "Results verified");
       await openDetail(orderId);
       loadOrders();
       loadSummary();
     } catch (e) {
-      showToast("error", "Error", e.message);
+      showToast("error", "Error", e.response?.data?.message || e.message);
     } finally {
       setLoading(false);
     }
@@ -452,22 +454,16 @@ export default function InvestigationOrders() {
   const handleCancel = async (orderId) => {
     setLoading(true);
     try {
-      const res = await fetch(`${API}/investigation-orders/${orderId}/cancel`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          cancelledBy: "Staff",
-          reason: "Cancelled by staff",
-        }),
+      await axios.post(`${API}/investigation-orders/${orderId}/cancel`, { // R9-046: authed
+        cancelledBy: "Staff",
+        reason: "Cancelled by staff",
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message);
       showToast("warn", "Cancelled", "Order cancelled");
       setShowDetail(false);
       loadOrders();
       loadSummary();
     } catch (e) {
-      showToast("error", "Error", e.message);
+      showToast("error", "Error", e.response?.data?.message || e.message);
     } finally {
       setLoading(false);
     }
@@ -482,6 +478,7 @@ export default function InvestigationOrders() {
       .map((item) => ({
         itemId: item._id,
         name: item.investigationName,
+        analyser: item.analyser || "", // R9-FIX(R9-047): NABL QC — which instrument ran it
         results: item.results?.length
           ? item.results
           : [
@@ -501,32 +498,34 @@ export default function InvestigationOrders() {
 
   const handleSaveResults = async () => {
     if (!selOrder) return;
+    // R9-FIX(R9-047): the analyser is mandatory for internal results (drives the
+    // NABL QC-release gate at verify). Catch it client-side for immediate
+    // feedback; the backend enforces it too.
+    const missingAnalyser = resultForms.find((f) => !String(f.analyser || "").trim());
+    if (missingAnalyser) {
+      return showToast("warn", "Analyser required", `Enter the analyser / equipment used for "${missingAnalyser.name}" (NABL QC traceability).`);
+    }
     setLoading(true);
     try {
-      const res = await fetch(
+      await axios.post( // R9-046: authed
         `${API}/investigation-orders/${selOrder._id}/enter-results`,
         {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            itemResults: resultForms.map((f) => ({
-              itemId: f.itemId,
-              results: f.results,
-              interpretation: f.interpretation,
-            })),
-            enteredBy: "Lab Technician",
-          }),
+          itemResults: resultForms.map((f) => ({
+            itemId: f.itemId,
+            analyser: f.analyser, // R9-047
+            results: f.results,
+            interpretation: f.interpretation,
+          })),
+          enteredBy: "Lab Technician",
         },
       );
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message);
       showToast("success", "Saved", "Results saved");
       setShowResults(false);
       await openDetail(selOrder._id);
       loadOrders();
       loadSummary();
     } catch (e) {
-      showToast("error", "Error", e.message);
+      showToast("error", "Error", e.response?.data?.message || e.message);
     } finally {
       setLoading(false);
     }
@@ -549,26 +548,20 @@ export default function InvestigationOrders() {
       return showToast("warn", "Required", "Enter lab name");
     setLoading(true);
     try {
-      const res = await fetch(
+      await axios.post( // R9-046: authed
         `${API}/investigation-orders/${selOrder._id}/enter-external-result`,
         {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            itemId: selExternalItem._id,
-            enteredBy: "Staff",
-            ...externalForm,
-          }),
+          itemId: selExternalItem._id,
+          enteredBy: "Staff",
+          ...externalForm,
         },
       );
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.message);
       showToast("success", "Saved", "External report saved");
       setShowExternal(false);
       await openDetail(selOrder._id);
       loadOrders();
     } catch (e) {
-      showToast("error", "Error", e.message);
+      showToast("error", "Error", e.response?.data?.message || e.message);
     } finally {
       setLoading(false);
     }
@@ -594,6 +587,11 @@ export default function InvestigationOrders() {
   const updateInterp = (fi, v) => {
     const u = [...resultForms];
     u[fi].interpretation = v;
+    setResultForms(u);
+  };
+  const updateAnalyser = (fi, v) => { // R9-FIX(R9-047)
+    const u = [...resultForms];
+    u[fi].analyser = v;
     setResultForms(u);
   };
 
@@ -650,6 +648,12 @@ export default function InvestigationOrders() {
           color="#10b981"
         />
         <SCard label="Urgent" val={summary.urgent} color="#dc2626" />
+        {labTat && (
+          <>
+            <SCard label="TAT Avg · 30d" val={`${labTat.avgMins}m`} color="#7c3aed" />
+            <SCard label="TAT Max · 30d" val={`${labTat.maxMins}m`} color="#64748b" />
+          </>
+        )}
       </div>
 
       {/* Filter Bar */}
@@ -1460,15 +1464,18 @@ export default function InvestigationOrders() {
                   severity="secondary"
                   size="small"
                   onClick={async () => {
-                    await fetch(
-                      `${API}/investigation-orders/${selOrder._id}/print`,
-                      {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ printedBy: "Staff" }),
-                      },
-                    );
-                    printReport(selOrder);
+                    // R9-FIX(R9-046): authed axios. Also honour the server's
+                    // R9-054 gate — markReportPrinted 409s unless every item is
+                    // VERIFIED, so only print on success.
+                    try {
+                      await axios.post(
+                        `${API}/investigation-orders/${selOrder._id}/print`,
+                        { printedBy: "Staff" },
+                      );
+                      printReport(selOrder);
+                    } catch (e) {
+                      showToast("error", "Cannot print", e.response?.data?.message || e.message);
+                    }
                   }}
                 />
               )}
@@ -1706,6 +1713,28 @@ export default function InvestigationOrders() {
                 {form.name}
               </div>
               <div style={{ padding: 14 }}>
+                {/* R9-FIX(R9-047): analyser is mandatory — drives the NABL
+                    QC-release gate at verify (a result off a QC-failed
+                    instrument must not be released). */}
+                <div style={{ marginBottom: 12 }}>
+                  <label
+                    style={{ fontWeight: 600, fontSize: 12, display: "block", marginBottom: 3 }}
+                  >
+                    Analyser / Equipment *{" "}
+                    <span style={{ fontWeight: 400, color: "var(--color-text-secondary)" }}>
+                      (NABL QC traceability)
+                    </span>
+                  </label>
+                  <InputText
+                    value={form.analyser}
+                    onChange={(e) => updateAnalyser(fi, e.target.value)}
+                    placeholder="e.g. Sysmex XN-1000, Cobas c311"
+                    style={{
+                      width: "100%",
+                      borderColor: String(form.analyser || "").trim() ? undefined : "#f59e0b",
+                    }}
+                  />
+                </div>
                 <div
                   style={{
                     display: "grid",

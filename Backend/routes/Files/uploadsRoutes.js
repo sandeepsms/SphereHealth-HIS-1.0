@@ -35,6 +35,7 @@ const path = require("path");
 const fs = require("fs");
 const express = require("express");
 const { authenticate } = require("../../middleware/auth");
+const { roleCan } = require("../../config/permissions"); // R8-FIX(#30): object-level authz on file serving
 
 const router = express.Router();
 
@@ -73,6 +74,31 @@ router.get(/.*/, (req, res) => {
     segments.some((s) => s === ".." || s === "." || s.startsWith("."))
   ) {
     return res.status(400).json({ success: false, message: "Bad file path." });
+  }
+
+  // 2.5. R8-FIX(#30) — object-level authorization. Files live under
+  //      uploads/<feature>/…; the first segment is the only owner signal the
+  //      path carries (no UHID encoded), so enforce the SAME read action the
+  //      feature's metadata router uses. Deny-by-default: an authenticated user
+  //      whose role can't read the feature's metadata must not fetch its files,
+  //      and an unmapped prefix is refused rather than served to everyone.
+  //      Pre-fix: any authenticated role could read any PHI file (BOLA/IDOR).
+  const FEATURE_READ_ACTION = {
+    "lab-records":  "lab.records.read",         // Admin/Doctor/Nurse/Lab Technician/Radiologist/MRD
+    "tpa-docs":     "billing.read",             // Admin/Accountant/Receptionist/TPA Coordinator
+    "incident":     "security.incident-report", // Admin/Security
+    "security":     "security.incident-report",
+    "visitor-pass": "reception.visitor-pass",   // Admin/Receptionist/Security
+    "visitor":      "reception.visitor-pass",
+    "compliance":   "compliance.read",          // Admin/Doctor/Nurse/MRD
+  };
+  const _action = FEATURE_READ_ACTION[segments[0]];
+  if (!_action || !roleCan(req.user.role, _action)) {
+    return res.status(403).json({
+      success: false,
+      code: "FILE_ACCESS_DENIED",
+      message: "You are not permitted to access this file.",
+    });
   }
 
   // 3. Extension whitelist — never serve types the write half wouldn't accept.

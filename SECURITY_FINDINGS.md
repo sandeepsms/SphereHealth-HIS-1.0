@@ -136,7 +136,7 @@ edit (A-15) remain open — listed in re-audit backlog.
 | -- | ----- | -------- | ----- | ------ | -------- | -------- |
 | G-01 | FHIR export endpoint has no consent gate | HIGH | routes/Clinical/patientFileRoutes.js, patientFileController.js:268 | **FIXED** | 2026-05-17 | `requireAction("patient.export")` gate added; controller-level consent check is BACKLOG round 2 |
 | G-02 | Phone + OTP logged in dev mode | HIGH | controllers/Clinical/twoFactorController.js:78 | **FIXED** | 2026-05-17 | Phone masked to ****1234; OTP redacted from logs (still in JSON dev response) |
-| G-03 | UHID logged via `console.log(UHID)` | MEDIUM | controllers/Doctorcontroller.js:34 | **FIXED** | 2026-05-17 | `console.log` removed, replaced with comment citing G-03 |
+| G-03 | UHID logged via `console.log(UHID)` | MEDIUM | ~~controllers/Doctorcontroller.js:34~~ (deleted) | **RESOLVED (file removed)** | 2026-07-18 | R9-090: the whole file was dead + unloadable (stray `n;` → ReferenceError, never `require`d by any route) — deleted outright, so the G-03 PHI-logging line no longer exists |
 | G-04 | No data-retention TTL or anonymization job | MEDIUM | scripts/, jobs/ (absent) | BACKLOG | — | Requires policy decision |
 | G-05 | Cookie security flags unverified | MEDIUM | middleware/auth.js | WONT-FIX | 2026-05-17 | JWT carried in `Authorization: Bearer` header, not cookies — flags not applicable |
 | G-06 | PHI redactor not applied to general `console.log` calls | MEDIUM | utils/phiRedactor.js | BACKLOG | — | Adoption pass — round 2 |

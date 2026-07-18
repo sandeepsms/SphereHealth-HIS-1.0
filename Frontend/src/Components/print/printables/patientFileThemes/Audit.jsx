@@ -21,6 +21,11 @@
 import React from "react";
 import PrintShell from "@/templates/PrintShell";
 import { fmtDate, fmtTime } from "./normalizeData";
+// R7hr(THEME-REG): coverage records + NABH registers — previously Narrative-only.
+import SharedRegisterSections from "./SharedRegisterSections";
+// R7hr(DOCS-FULL-FU): six full formal documents appendix (order sheet, MAR,
+// NABL labs, diagnostic reports, consents, diet, discharge).
+import SharedFormalDocSections from "./SharedFormalDocSections";
 
 /* ── helpers ─────────────────────────────────────────────────── */
 
@@ -681,8 +686,10 @@ const AuditTheme = ({ settings = {}, file, events = [] }) => {
         </>
       )}
 
-      {/* 12. CONSENT FORMS */}
-      {consentRows.length > 0 && (
+      {/* 12. CONSENT FORMS — R7hr(re-audit C3): suppress this compact
+          register when the full Consent Records appendix (DOCS-FULL) will
+          render the same consents, so they don't print twice. */}
+      {consentRows.length > 0 && !(f.consents || []).some((c) => c.full) && (
         <>
           <SectionHeading title="Consent Forms" nabh="PRE.4" />
           <MultiTable
@@ -699,8 +706,10 @@ const AuditTheme = ({ settings = {}, file, events = [] }) => {
         </>
       )}
 
-      {/* 13. DISCHARGE SUMMARY */}
-      {hasDischarge && (
+      {/* 13. DISCHARGE SUMMARY — R7hr(re-audit C3): suppress this compact
+          digest when the full Discharge Summary appendix (DOCS-FULL) rides,
+          so the discharge doesn't print twice. */}
+      {hasDischarge && !f.discharge?.full && (
         <>
           <SectionHeading title="Discharge Summary" nabh="AAC.7" />
           <FieldTable rows={dischargeRows} />
@@ -770,6 +779,8 @@ const AuditTheme = ({ settings = {}, file, events = [] }) => {
           may cross-reference each row against the cited NABH chapter.
         </div>
       </div>
+      <SharedRegisterSections file={file} />
+      <SharedFormalDocSections file={file} />
     </PrintShell>
   );
 };

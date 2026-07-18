@@ -128,11 +128,32 @@ MortalityRegisterSchema.index({ admissionId: 1, dateOfDeath: -1 });
 MortalityRegisterSchema.index({ dateOfDeath: -1 });
 MortalityRegisterSchema.index({ isMLC: 1, dateOfDeath: -1 });
 MortalityRegisterSchema.index({ preventableFlag: 1, dateOfDeath: -1 });
-// Idempotency: one mortality row per admission
+// Idempotency: one mortality row per admission.
+// R9-FIX(R9-069): admissionId has `default: null`, so the field ALWAYS exists —
+// and a `sparse` index only skips MISSING fields, not null values. So the old
+// unique+sparse index treated every null (deaths with NO admission: DOA, ER
+// deaths, brought-dead) as an indexed value and permitted only ONE of them —
+// the second null-admission death hit E11000 and silently failed to register,
+// a gap in a statutory NABH register. A PARTIAL index scoped to real ObjectId
+// admissionIds enforces one-row-per-admission while exempting nulls entirely
+// (mirrors DoctorNotesModel's partial-unique pattern). syncIndexes() in
+// config/db.js drops the old sparse index and builds this on boot.
 MortalityRegisterSchema.index(
   { admissionId: 1 },
-  { unique: true, sparse: true, name: "uniq_mortality_admission" },
+  {
+    unique: true,
+    name: "uniq_mortality_admission",
+    partialFilterExpression: { admissionId: { $type: "objectId" } },
+  },
 );
+
+// ── D19 — NABH register tamper-evidence ─────────────────────
+// Stamp a keyed HMAC-SHA256 integrity digest on every save so an out-of-band
+// edit of this surveyor-inspected register row is detectable. Non-blocking +
+// backward-compatible: legacy rows (no stored digest) verify as "unverified",
+// never "tampered". Keyed by env REGISTER_HMAC_SECRET.
+const { registerIntegrityPlugin } = require("../../utils/registerIntegrity");
+MortalityRegisterSchema.plugin(registerIntegrityPlugin);
 
 module.exports =
   mongoose.models.MortalityRegister ||

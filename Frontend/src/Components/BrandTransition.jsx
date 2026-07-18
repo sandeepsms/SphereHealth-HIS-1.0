@@ -223,6 +223,13 @@ const navSplash = {
     if (!this.enabled || typeof document === "undefined") return;
     clearTimeout(this.hideT); this.hideT = null;
     this.shownAt = Date.now();
+    // R7hr(DEFER-20): re-arm the safety timer BEFORE the rapid-double-nav
+    // early return. A first nav's hide() clears safetyT; if a second nav
+    // fired while the splash was still fading, the early return used to
+    // skip the re-arm — a hung chunk then trapped the user under the
+    // overlay with no 8s escape.
+    clearTimeout(this.safetyT);
+    this.safetyT = setTimeout(() => this.hide(0), this.maxShow);
     if (this.el) return;          // rapid double-nav — keep the splash up
     const line = pickLine(this.role);
     const el = document.createElement("div");
@@ -258,8 +265,6 @@ const navSplash = {
       </style>`;
     document.body.appendChild(el);
     this.el = el;
-    clearTimeout(this.safetyT);
-    this.safetyT = setTimeout(() => this.hide(0), this.maxShow);
   },
 
   // Fade out after honouring the minimum display time.
@@ -301,13 +306,20 @@ const navSplash = {
 };
 
 function ensureNavSignal() {
-  if (typeof window === "undefined" || window.__btNavSignalPatched) return;
+  if (typeof window === "undefined") return;
+  // R7hr(DEFER-20): the patched pushState survives HMR (window flag) but its
+  // closure used to capture THIS module instance's navSplash — after an HMR
+  // re-evaluation the patch kept driving the stale object while the fresh
+  // RouteInterstitial enabled the new one (dev-only "splash stopped firing").
+  // The window-level pointer re-binds to the live instance on every eval.
+  window.__btNavSplash = navSplash;
+  if (window.__btNavSignalPatched) return;
   window.__btNavSignalPatched = true;   // window flag — survives HMR re-evaluation
   const fire = (url) => {
     try {
       const next = new URL(String(url), window.location.href);
       if (next.origin !== window.location.origin) return;
-      navSplash.navStarted(next.pathname);
+      (window.__btNavSplash || navSplash).navStarted(next.pathname);
     } catch { /* malformed url — ignore */ }
   };
   const orig = window.history.pushState.bind(window.history);

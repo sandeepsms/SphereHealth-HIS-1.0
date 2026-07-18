@@ -86,6 +86,11 @@ async function todayRevenue(opts = {}) {
     { $match: {
         "payments.paidAt":   { $gte: from, $lt: to },
         "payments.voidedAt": { $exists: false },
+        // R9-FIX(R9-098): exclude the synthetic VOID- reversal rows. The
+        // voided +X original is already dropped (voidedAt), so counting its
+        // -X reversal as a refund-out drove revenue NEGATIVE on a same-day
+        // void (the only leg being a voided payment).
+        "payments.transactionId": { $not: /^VOID-/ },
     } },
     { $addFields: {
         _amt:  { $toDouble: { $ifNull: ["$payments.amount", 0] } },

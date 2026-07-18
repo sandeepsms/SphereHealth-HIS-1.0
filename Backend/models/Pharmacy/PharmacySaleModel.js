@@ -91,6 +91,14 @@ const SALE_ITEM = new mongoose.Schema(
     sgstAmount:     { type: Dec, default: () => toDec(0) },
     igstAmount:     { type: Dec, default: () => toDec(0) },
     netAmount:      { type: Dec, default: () => toDec(0) },     // taxable + gst
+    // R8-FIX(#28): how many units of THIS line the Schedule-X (NDPS) register
+    // actually decremented at dispense. A witness-less / register-failed
+    // dispense records 0 here even though the stock left the shelf — so a
+    // later return/cancel must credit the register back only up to this
+    // number, never the full returned qty (that would inflate the running
+    // balance above physical stock). Reversal paths decrement this as they
+    // consume it, keeping cumulative reversal ≤ what was registered.
+    scheduleXRegisteredQty: { type: Number, default: 0, min: 0 },
   },
   { _id: true }
 );
@@ -408,6 +416,12 @@ PharmacySaleSchema.index({ createdAt: -1 });
 // — the previous single-field createdAt index forced a COLLSCAN over the
 // status filter. Compound covers it.
 PharmacySaleSchema.index({ status: 1, createdAt: -1 });
+// TD-1 — patient-file coverage loads every patient's sales via
+// { $or: [{ UHID }, { patientUHID }] } sorted by createdAt; patientUHID had
+// no index so each Complete File load COLLSCANned this high-volume
+// collection. Compound serves the filter + sort in one pass (walk-in blank
+// UHIDs cluster under "" — fine, they're never queried by patient).
+PharmacySaleSchema.index({ patientUHID: 1, createdAt: -1 });
 // R7hr-12-S2 (D10-02): pharmacyController.listIpdCreditAdmissions runs
 // `Sale.find({ saleType: $in, status: $in, admissionId: $ne null })` on every
 // IPD-credit-pill open. Pre-fix only single-field indexes existed on

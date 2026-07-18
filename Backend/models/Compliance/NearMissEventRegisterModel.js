@@ -74,7 +74,12 @@ const NearMissEventRegisterSchema = new Schema({
 
   // ── What was done ──
   interventionTaken: { type: String, required: true, default: "" },
-  recommendation:    { type: String, required: true, default: "" },
+  // R7hr-NABH-PSQ: was `required: true, default: ""` — a self-contradiction
+  // (the "" default never satisfies required), so EVERY near-miss create
+  // without a recommendation 400'd with an opaque "could not write". A
+  // recommendation is optional at capture and can be added later during
+  // review via PATCH.
+  recommendation:    { type: String, default: "" },
 
   // ── Optional link to a Sentinel event row (clustering analysis) ──
   linkedSentinelId: { type: Schema.Types.ObjectId, ref: "SentinelEventRegister", default: null, index: true },
@@ -94,6 +99,8 @@ const NearMissEventRegisterSchema = new Schema({
   // ── Reporting metadata ──
   emittedAt: { type: Date, default: Date.now, index: true },
 
+  // NABH FMS/PSQ — equipment implicated in the near-miss, for RCA + recall join.
+  equipmentRef: { assetTag: { type: String, default: "" }, serialNo: { type: String, default: "" }, equipmentId: { type: Schema.Types.ObjectId, ref: "Equipment", default: null } },
   auditTrail: { type: [AuditSchema], default: [] },
 
   hospitalId: { type: Schema.Types.ObjectId, ref: "Hospital", default: null },
@@ -104,6 +111,14 @@ NearMissEventRegisterSchema.index({ UHID: 1, observedAt: -1 });
 NearMissEventRegisterSchema.index({ status: 1, createdAt: -1 });
 NearMissEventRegisterSchema.index({ eventType: 1, observedAt: -1 });
 NearMissEventRegisterSchema.index({ severityIfMissed: 1, observedAt: -1 });
+
+// ── D19 — NABH register tamper-evidence ─────────────────────
+// Stamp a keyed HMAC-SHA256 integrity digest on every save so an out-of-band
+// edit of this surveyor-inspected register row is detectable. Non-blocking +
+// backward-compatible: legacy rows (no stored digest) verify as "unverified",
+// never "tampered". Keyed by env REGISTER_HMAC_SECRET.
+const { registerIntegrityPlugin } = require("../../utils/registerIntegrity");
+NearMissEventRegisterSchema.plugin(registerIntegrityPlugin);
 
 module.exports =
   mongoose.models.NearMissEventRegister ||

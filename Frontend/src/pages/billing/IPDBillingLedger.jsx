@@ -1930,6 +1930,63 @@ export default function IPDBillingLedger() {
             {isDischarged ? "Reprint Final Bill" : "Generate Final Bill"}
           </button>
         )}
+        {/* R7hr(CLAIM-P1.3 → P3.3) — Insurance Claim Pack: fetches the
+            canonical claim data for this bill's episode and opens ONE
+            combined pack (the payer's whole form set, page-broken) so the
+            claims desk gets a single print / PDF. Scheme→forms routing now
+            lives in ClaimPackBundle. Shown for TPA/insured patients. */}
+        {can("billing.read") && data?.bill?._id && (
+          <button
+            onClick={async () => {
+              try {
+                const r = await axios.get(`${API_ENDPOINTS.BILLING}/${data.bill._id}/claim-data`);
+                const cd = r.data?.data;
+                if (!cd) { toast.warn("Claim data unavailable"); return; }
+                const scheme = cd.patient?.payerScheme || "CASH";
+                openPrint("claim-pack", cd);
+                const label = scheme === "CGHS" ? "CGHS MRC + docket"
+                  : scheme === "ESIC" ? "ESIC claim + docket"
+                  : ["PMJAY", "STATE", "ECHS"].includes(scheme) ? "claim docket (portal-filed)"
+                  : "IRDAI Part B + Part A";
+                toast.success(`Claim Pack opened — ${label}`);
+              } catch (e) { toast.error(e?.response?.data?.message || "Claim data fetch failed"); }
+            }}
+            title="Open the complete insurance Claim Pack (one print — all forms for this payer)"
+            style={{ padding: "7px 14px", background: "#7c3aed", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 12 }}>
+            <i className="pi pi-shield" style={{ marginRight: 6 }} />
+            Claim Pack
+          </button>
+        )}
+        {/* R7hr(CLAIM-P4.2) — the INSURER's OWN claim form as a filled PDF.
+            Overlays claim data onto the company's uploaded official blank (if
+            the hospital has provided one), else a generated standard-format
+            form branded for that insurer. Fetched as a blob so the JWT rides
+            the axios interceptor, then opened in a new tab. */}
+        {can("billing.read") && data?.bill?._id && (
+          <button
+            onClick={async () => {
+              try {
+                const r = await axios.get(
+                  `${API_ENDPOINTS.BILLING}/${data.bill._id}/insurer-form.pdf`,
+                  { responseType: "blob" }
+                );
+                const objUrl = URL.createObjectURL(new Blob([r.data], { type: "application/pdf" }));
+                window.open(objUrl, "_blank");
+                setTimeout(() => URL.revokeObjectURL(objUrl), 60000);
+                toast.success("Insurer claim form opened");
+              } catch (e) {
+                // blob error bodies come back as Blob — read the JSON message out
+                let msg = "Insurer form generation failed";
+                try { msg = JSON.parse(await e?.response?.data?.text?.())?.message || msg; } catch { /* keep default */ }
+                toast.error(msg);
+              }
+            }}
+            title="Fill & open this insurer's own claim form (PDF)"
+            style={{ padding: "7px 14px", background: "#0e7490", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", fontFamily: "inherit", fontWeight: 700, fontSize: 12 }}>
+            <i className="pi pi-file-pdf" style={{ marginRight: 6 }} />
+            Company Form
+          </button>
+        )}
         <button onClick={load} style={{
           marginLeft: "auto",
           padding: "7px 12px", background: "#fff", color: C.muted, border: `1px solid ${C.border}`,

@@ -74,10 +74,23 @@ async function tickOnce() {
     // We exclude Cancelled/Stopped because those are intentional
     // terminations — past-pending slots there should NOT be auto-missed
     // (the order was killed before that day).
+    // R9-FIX(R9-105): this used to hydrate EVERY order that ever had an AR row
+    // (incl. all Completed ones) — an unbounded find that grows without limit as
+    // the hospital accumulates history and risks OOM on a large deployment. Only
+    // orders that actually have an OVERDUE pending slot have work to do, so
+    // $elemMatch to exactly those. The sweep is self-draining (flipping a slot to
+    // "missed" drops the order out of the next tick's match), so a batch limit is
+    // safe — any overflow is picked up next tick; we log if a full batch is hit.
+    const BATCH_LIMIT = 2000;
     const orders = await DoctorOrder.find({
       status: { $in: ["Pending", "Acknowledged", "Active", "InProgress", "Completed", "OnHold"] },
-      "administrationRecord.0": { $exists: true }, // has at least one AR row
-    });
+      administrationRecord: {
+        $elemMatch: { status: "pending", isStatDose: { $ne: true }, scheduledDate: { $lt: cutoff } },
+      },
+    }).limit(BATCH_LIMIT);
+    if (orders.length === BATCH_LIMIT) {
+      console.warn(`[missedDoseCron] batch full (${BATCH_LIMIT}) — remaining overdue orders will be swept on the next tick`);
+    }
 
     for (const order of orders) {
       processed++;

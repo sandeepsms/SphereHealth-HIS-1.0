@@ -12,6 +12,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 const Patient            = require("../../models/Patient/patientModel");
+const sendErr = require("../../utils/sendErr");
 const Admission          = require("../../models/Patient/admissionModel");
 // OPDRegistration — the canonical store for every saved OPD visit
 // (chief complaint, HOPI, vitals, examination, diagnosis, prescription,
@@ -219,9 +220,59 @@ exports.getCompleteFile = async (req, res) => {
     // capped + lean. A schema without either field simply matches zero
     // rows — never throws.
     const _lazyModel = (p) => { try { return require(p); } catch { return null; } };
+
+    // ── R7hr(COV-SCOPE) — product decision (owner, 2026-07-12) ─────────
+    // The Complete File is the ADMISSION's medical record. On a
+    // readmitted patient these coverage collections used to mix every
+    // prior encounter's pharmacy dispenses / advances / prescriptions /
+    // ADRs into the current file. Scope each collection to the current
+    // admission: explicit admission linkage (any of the schema spellings
+    // in use) OR created inside the admission window — with a 72h
+    // lead-in grace (the ER visit / pre-admission workup of the SAME
+    // episode predates admissionDate) and a 24h post-discharge grace
+    // (exit paperwork: medical certificate, PREM survey).
+    // `?coverageScope=patient` restores the old patient-wide behaviour;
+    // OPD-only patients (no admission) stay patient-wide automatically.
+    const _scopeAdm = req.query.coverageScope === "patient"
+      ? null
+      : admissions.find((a) => ["Active", "Admitted"].includes(a.status)) || admissions[0] || null;
+    const _covScope = (() => {
+      if (!_scopeAdm) return null;
+      const or = [{ admissionId: _scopeAdm._id }, { admission: _scopeAdm._id }, { linkedAdmissionId: _scopeAdm._id }];
+      // Guard: an undefined admissionNumber clause would match every doc
+      // LACKING the field — only add the clause when the value exists.
+      if (_scopeAdm.admissionNumber) or.push({ admissionNumber: _scopeAdm.admissionNumber });
+      const startRaw = _scopeAdm.admissionDate || _scopeAdm.createdAt;
+      if (startRaw) {
+        const admTs = new Date(startRaw).getTime();
+        let start = new Date(admTs - 72 * 3600e3);
+        // R7hr(re-audit C2) — clamp the 72h lead-in so it can't reach back
+        // into a PRIOR admission's stay: if the patient was discharged from
+        // an earlier admission and readmitted within the grace window, the
+        // date clause would otherwise pull the previous encounter's records
+        // in. Floor `start` at the most recent prior discharge (+1s).
+        const priorDischarge = admissions
+          .filter((a) => a._id?.toString() !== _scopeAdm._id?.toString())
+          .map((a) => a.actualDischargeDate || a.dischargeDate)
+          .filter(Boolean)
+          .map((d) => new Date(d).getTime())
+          .filter((t) => t < admTs)
+          .sort((x, y) => y - x)[0];
+        if (priorDischarge && priorDischarge > start.getTime()) start = new Date(priorDischarge + 1000);
+        const endRaw = _scopeAdm.actualDischargeDate || _scopeAdm.dischargeDate;
+        const end = endRaw ? new Date(new Date(endRaw).getTime() + 24 * 3600e3) : now;
+        or.push({ createdAt: { $gte: start, $lte: end } });
+      }
+      return { $or: or };
+    })();
+
     const _byPatient = (Model, name, { sort = { createdAt: -1 }, cap = 100 } = {}) =>
       Model
-        ? safe(name, () => Model.find({ $or: [{ UHID }, { patientUHID: UHID }] }).sort(sort).limit(cap).lean())
+        ? safe(name, () => Model.find(
+            _covScope
+              ? { $and: [{ $or: [{ UHID }, { patientUHID: UHID }] }, _covScope] }
+              : { $or: [{ UHID }, { patientUHID: UHID }] },
+          ).sort(sort).limit(cap).lean())
         : Promise.resolve([]);
 
     const [
@@ -507,8 +558,63 @@ exports.getCompleteFile = async (req, res) => {
       },
     };
 
+    // TD-3 — sections that hit the per-section cap silently dropped their
+    // OLDEST rows with no signal to the reader. Surface which sections were
+    // truncated so the UI/print can show an honest "showing latest N" note
+    // instead of implying the record is complete.
+    // R8-FIX(#45): flag EVERY capped/windowed section, not just the
+    // PER_SECTION_LIMIT ones. Fixed-cap sections (bills@50, prescriptions/
+    // pharmacy@100, consents@100, coverage collections, registers @50…) were
+    // silently truncated with `truncation:null`, implying a complete record.
+    const _P = PER_SECTION_LIMIT;
+    const _sectionCaps = {
+      doctorNotes: _P, nurseNotes: _P, doctorOrders: _P,
+      nursingAssessments: _P, nursingCarePlans: _P, shiftHandovers: _P,
+      mar: _P, vitals: _P, investigations: _P, billingTriggers: _P,
+      activityLog: _P, labTrends: _P, labReports: _P, intakeOutput: _P,
+      admissions: 50, opdVisits: 100, consents: 100, dischargeSummary: 50,
+      bedTransfers: 50, mlc: 50, bills: 50, dietPlans: 50,
+      bloodTransfusion: 50, devices: 100,
+      emergencyCases: 100, prescriptions: 100, medicalCertificates: 50,
+      physioPlans: 50, physioSessions: 100, medReconciliation: 50,
+      diabeticCharts: 100, pharmacySales: 100, advances: 50,
+      appointments: 100, procedureNotes: 100, adrReports: 50,
+      foodReactions: 50, promPremSurveys: 50, codeResponseEvents: 50,
+    };
+    const _sectionRows = {
+      doctorNotes, nurseNotes, doctorOrders,
+      nursingAssessments, nursingCarePlans, shiftHandovers,
+      mar, vitals, investigations, billingTriggers,
+      activityLog, labTrends, labReports, intakeOutput,
+      admissions, opdVisits, consents, dischargeSummary,
+      bedTransfers, mlc, bills, dietPlans, bloodTransfusion, devices,
+      emergencyCases, prescriptions, medicalCertificates,
+      physioPlans, physioSessions, medReconciliation, diabeticCharts,
+      pharmacySales, advances, appointments, procedureNotes,
+      adrReports, foodReactions, promPremSurveys, codeResponseEvents,
+    };
+    const truncatedSections = Object.entries(_sectionRows)
+      .filter(([name, rows]) => Array.isArray(rows) && rows.length >= (_sectionCaps[name] || Infinity))
+      .map(([name]) => name);
+    // Grouped safety/compliance registers (each cap 50) — surveyor-critical.
+    Object.entries(complianceRegisters || {}).forEach(([name, rows]) => {
+      if (Array.isArray(rows) && rows.length >= 50) truncatedSections.push(`registers.${name}`);
+    });
+
     return res.json({
       success: true,
+      truncation: truncatedSections.length
+        ? {
+            limit: PER_SECTION_LIMIT,          // back-compat: default per-section cap
+            sections: truncatedSections,        // string[] — unchanged shape
+            sectionLimits: Object.fromEntries(  // R8-FIX(#45): actual cap hit per section
+              truncatedSections.map((name) => [
+                name,
+                name.startsWith("registers.") ? 50 : (_sectionCaps[name] || PER_SECTION_LIMIT),
+              ]),
+            ),
+          }
+        : null,
       data: {
         patient,
         admissions,
@@ -565,6 +671,11 @@ exports.getCompleteFile = async (req, res) => {
         promPremSurveys,
         codeResponseEvents,
         complianceRegisters,
+        // R7hr(COV-SCOPE): which scoping the coverage collections used —
+        // "admission" (default when an admission exists) or "patient"
+        // (?coverageScope=patient opt-out, or OPD-only patient).
+        coverageScope: _covScope ? "admission" : "patient",
+        coverageAdmissionId: _scopeAdm?._id || null,
         timeline,
         completeness,
         pagination,
@@ -572,7 +683,7 @@ exports.getCompleteFile = async (req, res) => {
     });
   } catch (e) {
     console.error("[patientFile] getCompleteFile error:", e);
-    return res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };
 
@@ -647,7 +758,7 @@ exports.getFhirBundle = async (req, res) => {
     return res.json(bundle);
   } catch (e) {
     console.error("[patientFile] getFhirBundle error:", e);
-    return res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };
 
@@ -672,7 +783,7 @@ exports.signStatus = async (req, res) => {
       hint: probe.error,
     });
   } catch (e) {
-    return res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };
 
@@ -687,25 +798,69 @@ exports.verifyAuditChain = async (req, res) => {
     const UHID = String(req.params.uhid || "").toUpperCase();
     const rows = await PatientActivityLog.find({ UHID }).sort({ createdAt: 1 }).lean();
     const crypto = require("crypto");
-    const bad = [];
-    let prev = "";
+    // #138 — distinguish two failure modes so retention deletions don't read
+    // as tampering:
+    //   • TAMPERED — a row's stored rowHash ≠ sha256 of its own content +
+    //     its OWN stored prevHash. The content was altered after insert. This
+    //     is a real integrity violation.
+    //   • GAP — a row is self-consistent but its stored prevHash ≠ the prior
+    //     surviving row's rowHash. The link is broken because an earlier row
+    //     was removed (TTL / retention purge). NABH allows this as long as it
+    //     is visible; it is NOT tampering.
+    const tampered = [];
+    const gaps = [];
+    let prevRowHash = null; // null = first surviving row
     for (const r of rows) {
-      const { rowHash, _id, __v, ...payload } = r;
-      // Drop the chain fields from the payload before re-hashing; recreate
-      // the doc shape used in activityLogger.log() exactly.
-      const doc = { ...payload };
-      delete doc.prevHash;
-      doc.prevHash = prev;
+      const storedPrev = r.prevHash || "";
+      // Reproduce activityLogger.log()'s canonical EXACTLY — it hashes a fixed
+      // field set only. Spreading all stored fields (createdAt/updatedAt/
+      // retainUntil/…) into the canonical would poison every hash and read as
+      // universal "tampering"; the field set below mirrors the writer 1:1.
+      const doc = {
+        UHID:        r.UHID,
+        patientId:   r.patientId   || null,
+        admissionId: r.admissionId || null,
+        ipdNo:       r.ipdNo || "",
+        action:      r.action,
+        module:      r.module,
+        area:        r.area || "",
+        summary:     r.summary || "",
+        sourceModel: r.sourceModel || "",
+        sourceId:    r.sourceId    || null,
+        before:      r.before,
+        after:       r.after,
+        userId:      r.userId   || null,
+        userName:    r.userName || "",
+        userRole:    r.userRole || "",
+        httpMethod:  r.httpMethod || "",
+        httpPath:    r.httpPath   || "",
+        ip:          r.ip || "",
+        userAgent:   r.userAgent || "",
+        tags:        Array.isArray(r.tags) ? r.tags : [],
+        isFlagged:   !!r.isFlagged,
+        prevHash:    storedPrev,
+      };
       const canonical = JSON.stringify(doc, Object.keys(doc).sort());
-      const expected = crypto.createHash("sha256").update(canonical + "|" + prev).digest("hex");
+      const expected = crypto.createHash("sha256").update(canonical + "|" + storedPrev).digest("hex");
+      const rowHash = r.rowHash;
       if (expected !== rowHash) {
-        bad.push({ id: _id, when: r.createdAt, action: r.action, expected, stored: rowHash });
+        tampered.push({ id: r._id, when: r.createdAt, action: r.action, expected, stored: rowHash });
+      } else if (prevRowHash !== null && storedPrev !== prevRowHash) {
+        gaps.push({ id: r._id, when: r.createdAt, action: r.action, expectedPrev: prevRowHash, storedPrev });
       }
-      prev = rowHash;
+      prevRowHash = rowHash;
     }
-    return res.json({ success: true, checked: rows.length, tampered: bad.length, rows: bad });
+    return res.json({
+      success: true,
+      checked: rows.length,
+      tampered: tampered.length,
+      gaps: gaps.length,
+      intact: tampered.length === 0,
+      rows: tampered,
+      chainGaps: gaps,
+    });
   } catch (e) {
-    return res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };
 
@@ -737,7 +892,7 @@ exports.getActivityFeed = async (req, res) => {
     ]);
     return res.json({ success: true, data: rows, pagination: { page, limit, total } });
   } catch (e) {
-    return res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };
 
@@ -785,7 +940,7 @@ exports.logEvent = async (req, res) => {
     });
     return res.json({ success: true, data: row });
   } catch (e) {
-    return res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };
 
@@ -868,6 +1023,6 @@ exports.getAuditBundle = async (req, res) => {
       },
     });
   } catch (e) {
-    return res.status(500).json({ success: false, message: e.message });
+    return sendErr(res, e);
   }
 };

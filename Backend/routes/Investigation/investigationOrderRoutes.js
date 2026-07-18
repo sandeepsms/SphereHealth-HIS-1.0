@@ -21,13 +21,17 @@ router.post("/:id/add-test",           validateObjectIdParam("id"), requireActio
 
 // Sample collection: Lab Technician / Nurse.
 router.post("/:id/collect-sample",     validateObjectIdParam("id"), requireAction("lab.collect"),       ctrl.collectSample);
+// NABL 7.2.6 — reject a sample (Hemolysed/Clotted/Mislabelled/…). Blocks result entry.
+router.post("/:id/reject-sample",      validateObjectIdParam("id"), requireAction("lab.result-entry"),  ctrl.rejectSample);
 
 // Result entry: Lab Technician only (Radiologist verifies separately).
 router.post("/:id/enter-results",          validateObjectIdParam("id"), requireAction("lab.result-entry"), ctrl.enterResults);
 router.post("/:id/enter-external-result",  validateObjectIdParam("id"), requireAction("lab.result-entry"), ctrl.enterExternalResult);
 
-// Verification: Radiologist / Doctor.
+// Verification: Radiologist / Doctor. QC-release gate fires here.
 router.post("/:id/verify",  validateObjectIdParam("id"), requireAction("lab.verify"),   ctrl.verify);
+// NABL 7.4.1.7 — amend a VERIFIED result via the append-only trail (verifier tier).
+router.post("/:id/amend",   validateObjectIdParam("id"), requireAction("lab.verify"),   ctrl.amendResult);
 
 // Dispatch (Lab Tech) vs cancel (Doctor/Admin). R7z: cancel splits off
 // from dispatch — Lab Tech mustn't be able to wipe a doctor's order or

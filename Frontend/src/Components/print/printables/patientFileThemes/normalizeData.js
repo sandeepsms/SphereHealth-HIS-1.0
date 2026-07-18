@@ -143,7 +143,19 @@ export function normalizeFileData(receipt = {}) {
       gender:      toStr(r.gender || r.sex),
       mobile:      toStr(r.mobile || r.contactNumber || r.phone),
       bloodGroup:  toStr(r.bloodGroup),
-      address:     toStr(r.completeAddress || r.address),
+      // R7hr(re-audit) — patient.address can be an object
+      // {line1,line2,city,state,pincode,…}; toStr(object) prints
+      // "[object Object]" (seen on the Audit theme's identity table).
+      // Compose a string from the parts when it's an object.
+      address:     (() => {
+        if (r.completeAddress) return toStr(r.completeAddress);
+        const a = r.address;
+        if (a && typeof a === "object") {
+          return [a.line1 || a.line, a.line2, a.street, a.area, a.city, a.district, a.state, a.pincode || a.pin || a.zip]
+            .map((p) => toStr(p)).filter(Boolean).join(", ");
+        }
+        return toStr(a);
+      })(),
     },
 
     admission: {
@@ -337,9 +349,18 @@ export function normalizeFileData(receipt = {}) {
       signedAt:  toDate(c.signedAt || c.createdAt),
       signedBy:  toStr(c.signedBy || c.signedByName || c.patientSignature),
       witness:   toStr(c.witness || c.witnessName),
+      // R7hr(DOCS-FULL): raw ConsentFormModel doc — FullConsentSection
+      // prints the whole consent record (risks/language/biometric),
+      // not just the signed-status register row above.
+      full:      c,
     })),
 
     discharge: {
+      // R7hr(DOCS-FULL): raw DischargeSummaryModel doc (owner call — the
+      // Complete File shows the FULL summary, standalone-level detail).
+      // FullDischargeSection reads this with its own field fallbacks;
+      // the compact keys below stay for legacy payloads + other themes.
+      full:         r.dischargeSummaryDoc || null,
       summary:      toStr(r.dischargeSummary),
       advice:       toStr(r.dischargeAdvice),
       followUpDate: toDate(r.followUpDate),
@@ -433,6 +454,10 @@ export function normalizeFileData(receipt = {}) {
       date:       toDate(rp.reportDate || rp.createdAt),
       impression: toStr(rp.impression || rp.findings || rp.result),
       status:     toStr(rp.status),
+      // R7hr(DOCS-FULL): raw LabReport doc — FullLabSection prints the
+      // whole diagnostic report (findings/organism/verifier), not just
+      // the one-line impression digest above.
+      full:       rp,
     })),
 
     labTrends: toArr(r.labTrends).map(t => ({
@@ -441,6 +466,15 @@ export function normalizeFileData(receipt = {}) {
       dates:    toArr(t.dates),
       status:   toStr(t.status),
       createdAt:toDate(t.createdAt),
+      // R7hr(DOCS-FULL): NABL sample-meta + verifier (LAB-P4 fields) so the
+      // file's results table matches the standalone lab report's detail.
+      sampleId:          toStr(t.sampleId),
+      sampleCollectedAt: toDate(t.sampleCollectedAt),
+      sampleReceivedAt:  toDate(t.sampleReceivedAt),
+      referringDoctor:   toStr(t.referringDoctor),
+      equipmentId:       toStr(t.equipmentId),
+      verifiedByName:    toStr(t.verifiedByName),
+      verifiedAt:        toDate(t.verifiedAt),
     })),
 
     shiftHandovers: toArr(r.shiftHandovers).map(h => ({
@@ -509,6 +543,9 @@ export function normalizeFileData(receipt = {}) {
       assignedBy:   toStr(d.assignedByName || d.dieticianName || d.assignedBy),
       notes:        toStr(d.notes || d.dietitianNotes),
       status:       toStr(d.status),
+      // R7hr(DOCS-FULL): raw PatientDietPlan doc — FullDietSection prints
+      // the meal-by-meal plan + clinical anchors + allergen banner.
+      full:         d,
     })),
 
     icuBundles: toArr(r.icuBundles).map(b => {

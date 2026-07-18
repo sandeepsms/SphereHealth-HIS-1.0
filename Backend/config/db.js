@@ -98,6 +98,17 @@ async function connectDB() {
       Beds.syncIndexes(),
     ]);
     console.log("All bed management indexes synced");
+
+    // R9-FIX(R9-069): reconcile the MortalityRegister admissionId index —
+    // syncIndexes() drops the old unique+sparse index (which wrongly blocked a
+    // 2nd null-admission death) and builds the partial-unique replacement.
+    try {
+      const MortalityRegister = require("../models/Compliance/MortalityRegisterModel");
+      await MortalityRegister.syncIndexes();
+      console.log("Mortality register indexes synced");
+    } catch (e) {
+      console.warn("[mongo] mortality index sync:", e.message);
+    }
   } catch (e) {
     console.error("[mongo] post-connect housekeeping failed:", e.message);
   }

@@ -1,5 +1,6 @@
 const TPA = require("../../models/tpa/tpaModel");
 const RoomCategory = require("../../models/bedMgmt/roomCategoryModel");
+const { safeRegex } = require("../../utils/queryGuards"); // R8-FIX(#50): ReDoS/regex-injection guard
 
 class TPAService {
   static async createTPA(data = {}) {
@@ -167,7 +168,7 @@ class TPAService {
   static async getAllTPAs(filters = {}) {
     const query = { isActive: true };
     if (filters.tpaName) {
-      query.tpaName = { $regex: filters.tpaName, $options: "i" };
+      query.tpaName = safeRegex(filters.tpaName); // R8-FIX(#50)
     }
     if (filters.tpaCode) {
       query.tpaCode = filters.tpaCode.toUpperCase();

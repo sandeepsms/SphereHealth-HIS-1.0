@@ -131,6 +131,25 @@ function truncateStack(stack) {
   return stack.slice(0, 4000) + "\n…[stack truncated]";
 }
 
+// R9-FIX(R9-089): the request body/query/params are PHI-redacted before persist,
+// but the raw URL was logged verbatim — and identifiers travel IN the path
+// (/patients/UH07, /billing/<objectId>/generate, /emergency/EMG-26-01). Scrub
+// id-shaped path segments and drop the query string (already captured, redacted,
+// as requestQuery) so a UHID/patient id never lands in the plain error log.
+function scrubRoutePath(u) {
+  if (!u) return null;
+  const path = String(u).split("?")[0];
+  const scrubbed = path.split("/").map((seg) => {
+    if (!seg) return seg;
+    if (/^[0-9a-fA-F]{24}$/.test(seg)) return ":id";       // Mongo ObjectId
+    if (/^UH\d+$/i.test(seg)) return ":uhid";              // UHID
+    if (/^\d+$/.test(seg)) return ":n";                    // pure-numeric id
+    if (/\d{4,}/.test(seg)) return ":ref";                // coded ref w/ long digit run (BILL-26-0001, EMG-26-01…)
+    return seg;
+  }).join("/");
+  return String(u).includes("?") ? `${scrubbed}?[redacted]` : scrubbed;
+}
+
 function safeJSONStringify(obj) {
   try {
     return JSON.stringify(obj);
@@ -167,7 +186,7 @@ function errorLoggerMiddleware(err, req, res, next) {
       timestamp: new Date().toISOString(),
       errorLogId,
       level: statusCode >= 500 ? "error" : "warn",
-      route: req?.originalUrl || req?.url || null,
+      route: scrubRoutePath(req?.originalUrl || req?.url), // R9-FIX(R9-089): id-scrubbed
       method: req?.method || null,
       statusCode,
       userId: req?.user?.id || req?.user?._id || null,

@@ -31,6 +31,7 @@ import ClinicalExaminationCard, { clinExamSummary } from "../../Components/clini
 // IV bag builder UX instead of the legacy hand-built textarea/table.
 import PrescriptionPanel from "../../Components/clinical/PrescriptionPanel";
 import InfusionPanel     from "../../Components/clinical/InfusionPanel";
+import Icd10Picker       from "../../Components/clinical/Icd10Picker";   // R7hr(ICD-P1.3)
 // R7hr-174 (USER, 2026-06-09): auto-print Valuables Handover slip on
 // Nurse IA sign when N15.receiptIssued === true. Purely additive — the
 // existing sign+save+gate-flag flow is unchanged; this only opens an
@@ -94,12 +95,6 @@ function Section({ title, icon, color = C.accent, badge, children, defaultOpen =
 
 function Grid2({ children, gap = 14 }) {
   return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap }}>{children}</div>;
-}
-function Grid3({ children }) {
-  return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>{children}</div>;
-}
-function Grid4({ children }) {
-  return <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12 }}>{children}</div>;
 }
 
 function Field({ label, required, children, hint }) {
@@ -473,7 +468,6 @@ const blankRx = () => ({
 });
 
 const ROUTES = ["Oral", "IV", "IM", "SC", "SL", "Topical", "Inhaled", "PR", "Nasal"];
-const FREQS  = ["OD", "BD", "TDS", "QID", "SOS", "Stat", "HS", "Alternate days", "Weekly"];
 
 /* ════════════════════════════════════════════════════════════════ */
 // R7ev — Named export so DoctorNotesPage can mount this inline (mirrors
@@ -1014,7 +1008,11 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
   });
 
   /* ── Auto-save draft ── */
-  const draftKey = patient?._id ? `sphere_draft_ipd_initial_${patient._id}` : null;
+  // R7hr(DEFER-19): key is per-ROLE — doctor + nurse work the same patient
+  // concurrently on this shared form; a single shared key meant the last
+  // autosave silently wiped the other party's unsaved draft.
+  const draftRole = (user?.role || "staff").toLowerCase().replace(/\s+/g, "-");
+  const draftKey = patient?._id ? `sphere_draft_ipd_initial_${draftRole}_${patient._id}` : null;
   const { savedAt, hasDraft, clearDraft } = useAutoSave(
     draftKey,
     { admitDate, admitTime, ipdNo, nurseName, ward, bedNo, modeOfAdmit, consciousnessLevel, mobility, allergy, chiefComplaint, vitals, painPresent, painScore, painLocation, painCharacter, devices, skinIntact, skinNotes, morse, braden, nutri, vte, nursingProblems, nursingGoals, nursingNotes, doctorName, regNo, hopi, psh, famHx, socHx, pshStruct, famHxStruct, socHxStruct, docAllergy, genExam, cvs, rs, abdomen, cns, provDx, finalDx, icd10, investigations, rxRows, treatmentPlan, followupNotes, dietAdvice, activityAdvice,
@@ -1287,8 +1285,15 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
         setDocAllergy(pt.knownAllergies);
       }
       // Restore auto-save draft if available
-      const dKey = `sphere_draft_ipd_initial_${pt._id}`;
-      const raw = localStorage.getItem(dKey);
+      const dRole = (user?.role || "staff").toLowerCase().replace(/\s+/g, "-");
+      const dKey = `sphere_draft_ipd_initial_${dRole}_${pt._id}`;
+      const legacyKey = `sphere_draft_ipd_initial_${pt._id}`;
+      let raw = localStorage.getItem(dKey);
+      if (!raw) {
+        // one-time migration off the old shared key
+        raw = localStorage.getItem(legacyKey);
+        if (raw) localStorage.removeItem(legacyKey);
+      }
       if (raw) {
         try {
           const { data: d } = JSON.parse(raw);
@@ -1366,6 +1371,62 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
             if (d.followupNotes)      setFollowupNotes(d.followupNotes);
             if (d.dietAdvice)         setDietAdvice(d.dietAdvice);
             if (d.activityAdvice)     setActivityAdvice(d.activityAdvice);
+            /* R7hr(DEFER-19): the autosave has captured all the R7fb/fc/fd/fg
+               structured panels since they shipped, but the restore path never
+               read them back — a refresh silently lost allergies, med-recon,
+               code status, ROS, Barthel, discharge plan, OB-GYN, ECOG… Objects
+               merge over the defaults so older drafts missing sub-keys stay safe. */
+            if (d.allergy)            setAllergy(d.allergy);
+            if (d.docAllergy)         setDocAllergy(d.docAllergy);
+            if (d.doctorName)         setDoctorName(d.doctorName);
+            if (d.regNo)              setRegNo(d.regNo);
+            if (d.docCC)              setDocCC(d.docCC);
+            if (d.ccDuration)         setCcDuration(d.ccDuration);
+            if (Array.isArray(d.allergyList))      setAllergyList(d.allergyList);
+            if (d.noKnownAllergies !== undefined)  setNoKnownAllergies(d.noKnownAllergies);
+            if (Array.isArray(d.medRecon))         setMedRecon(d.medRecon);
+            if (d.workingDx)          setWorkingDx(d.workingDx);
+            if (d.differentialDx)     setDifferentialDx(d.differentialDx);
+            if (d.comorbid)           setComorbid(c => ({ ...c, ...d.comorbid }));
+            if (d.codeStatus)         setCodeStatus(d.codeStatus);
+            if (d.codeStatusDiscussedWith) setCodeStatusDiscussedWith(d.codeStatusDiscussedWith);
+            if (d.codeStatusLimitations)   setCodeStatusLimitations(d.codeStatusLimitations);
+            if (d.elosDays)           setElosDays(d.elosDays);
+            if (d.goalOfCare)         setGoalOfCare(d.goalOfCare);
+            if (d.docRiskAck)         setDocRiskAck(c => ({ ...c, ...d.docRiskAck }));
+            if (d.ros)                setRos(c => ({ ...c, ...d.ros }));
+            if (d.idBand)             setIdBand(c => ({ ...c, ...d.idBand }));
+            if (Array.isArray(d.nurseAllergyList)) setNurseAllergyList(d.nurseAllergyList);
+            if (d.nurseNoKnownAllergies !== undefined) setNurseNoKnownAllergies(d.nurseNoKnownAllergies);
+            if (d.nurseBriefPmh)      setNurseBriefPmh(d.nurseBriefPmh);
+            if (Array.isArray(d.homeMeds))         setHomeMeds(d.homeMeds);
+            if (d.anthropo)           setAnthropo(c => ({ ...c, ...d.anthropo }));
+            if (d.psychosocial)       setPsychosocial(c => ({ ...c, ...d.psychosocial }));
+            if (d.barthel)            setBarthel(c => ({ ...c, ...d.barthel }));
+            if (d.bodyChart)          setBodyChart(c => ({ ...c, ...d.bodyChart }));
+            if (d.dischargePlan)      setDischargePlan(c => ({ ...c, ...d.dischargePlan }));
+            if (d.educationNeeds)     setEducationNeeds(c => ({ ...c, ...d.educationNeeds }));
+            if (d.precautions)        setPrecautions(c => ({ ...c, ...d.precautions }));
+            if (d.docAnthropo)        setDocAnthropo(c => ({ ...c, ...d.docAnthropo }));
+            if (d.localExam)          setLocalExam(d.localExam);
+            if (Array.isArray(d.referrals))        setReferrals(d.referrals);
+            if (d.prognosis)          setPrognosis(c => ({ ...c, ...d.prognosis }));
+            if (d.consentNeeded)      setConsentNeeded(c => ({ ...c, ...d.consentNeeded }));
+            if (d.cognitive)          setCognitive(c => ({ ...c, ...d.cognitive }));
+            if (d.cultural)           setCultural(c => ({ ...c, ...d.cultural }));
+            if (d.elimination)        setElimination(c => ({ ...c, ...d.elimination }));
+            if (d.sleep)              setSleep(c => ({ ...c, ...d.sleep }));
+            if (d.valuables)          setValuables(c => ({ ...c, ...d.valuables }));
+            if (d.caregiver)          setCaregiver(c => ({ ...c, ...d.caregiver }));
+            if (d.highRisk)           setHighRisk(c => ({ ...c, ...d.highRisk }));
+            if (d.obGyn)              setObGyn(c => ({ ...c, ...d.obGyn }));
+            if (d.immunisation)       setImmunisation(c => ({ ...c, ...d.immunisation }));
+            if (d.ecog)               setEcog(c => ({ ...c, ...d.ecog }));
+            if (d.spiritual)          setSpiritual(c => ({ ...c, ...d.spiritual }));
+            if (d.mobilityGait)       setMobilityGait(c => ({ ...c, ...d.mobilityGait }));
+            if (d.preAnaesthesia)     setPreAnaesthesia(c => ({ ...c, ...d.preAnaesthesia }));
+            if (d.nrsQuick)           setNrsQuick(c => ({ ...c, ...d.nrsQuick }));
+            if (d.promPrem)           setPromPrem(c => ({ ...c, ...d.promPrem }));
             toast.info("Draft restored", { autoClose: 2000 });
           }
         } catch { /* ignore */ }
@@ -3878,9 +3939,9 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
               <Field label="Registration No.">
                 <input value={regNo} onChange={e => setRegNo(e.target.value)} placeholder="MCI / State reg. no." className="his-field" />
               </Field>
-              <Field label="Assessment Date/Time">
-                <input type="datetime-local" defaultValue={new Date().toISOString().slice(0,16)} className="his-field" />
-              </Field>
+              {/* R7hr(DEFER-19): the "Assessment Date/Time" datetime-local input was
+                  uncontrolled and never read — assessment time is stamped
+                  server-side at save/sign, so the field only pretended to capture. */}
             </div>
           </Section>
 
@@ -4304,10 +4365,13 @@ export function IPDInitialAssessmentContent({ selectedPatient, onSign, defaultVi
                   <div style={{ width: 8, height: 8, borderRadius: "50%", background: "#8b5cf6", flexShrink: 0 }} />
                   <span style={{ fontSize: 10, fontWeight: 700, color: "#5b21b6", textTransform: "uppercase", letterSpacing: ".6px" }}>ICD-10 Code</span>
                 </div>
-                <input
+                {/* R7hr(ICD-P1.3) — typeahead off the 74k CMS master; picking
+                    a code also fills the official description alongside. */}
+                <Icd10Picker
                   value={icd10}
-                  onChange={e => setIcd10(e.target.value)}
-                  placeholder="e.g. J18.9"
+                  onChange={setIcd10}
+                  onPick={({ code, description }) => { setIcd10(code); setIcd10Description(description); }}
+                  placeholder="e.g. J18.9 or pneumonia"
                   style={{ width: "100%", border: "1.5px solid #c4b5fd", borderRadius: 8, padding: "9px 12px", fontFamily: "'DM Mono', monospace", fontSize: 13, fontWeight: 700, color: "#5b21b6", outline: "none", background: "#faf5ff", boxSizing: "border-box", letterSpacing: ".5px" }}
                 />
               </div>

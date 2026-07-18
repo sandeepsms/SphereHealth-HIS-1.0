@@ -107,7 +107,35 @@ class EmergencyController {
 
   async getAllEmergencyVisits(req, res) {
     try {
-      const { page = 1, limit = 10, ...filters } = req.query;
+      const { page = 1, limit = 10 } = req.query;
+      // R9-FIX(R9-016): build the ER list filter from an explicit allowlist and
+      // coerce every value to a scalar. Previously `...filters` spread the raw
+      // req.query straight into Emergency.find(), so `?status[$ne]=x` or
+      // `?UHID[$regex]=.*` arrived as live Mongo operators — query-operator
+      // injection that bypasses the intended filter and can dump the full ER
+      // register. An object-typed value now collapses to undefined and is dropped.
+      const q = req.query || {};
+      const scalar = (v) => (v == null || typeof v === "object" ? undefined : String(v));
+      const filters = {};
+      for (const k of ["status", "triageCategory", "disposition", "UHID", "emergencyNumber", "mlcNumber"]) {
+        const v = scalar(q[k]);
+        if (v !== undefined && v !== "") filters[k] = v;
+      }
+      if (q.isMLC !== undefined) {
+        const v = scalar(q.isMLC);
+        if (v === "true" || v === "false") filters.isMLC = v === "true";
+      }
+      if (q.from || q.to) {
+        try {
+          const { parseHospitalDate } = require("../../utils/queryGuards");
+          const from = q.from ? parseHospitalDate(String(q.from)) : null;
+          const to = q.to ? parseHospitalDate(String(q.to), { endOfDay: true }) : null;
+          const range = {};
+          if (from) range.$gte = from;
+          if (to) range.$lte = to;
+          if (Object.keys(range).length) filters.arrivalDate = range;
+        } catch (_) { /* malformed date → no date filter (never a wide-open operator) */ }
+      }
       // R7az-D3-HIGH-3: push Doctor-scope into the DB query so the
       // count + pagination reflect ONLY the doctor's slice. Pre-R7az we
       // post-filtered the page in memory — pagination totals were the
@@ -195,6 +223,13 @@ class EmergencyController {
         payload = { ...req.body };
         for (const k of ER_CLINICAL_FIELDS) delete payload[k];
       }
+      // R8-FIX(#21): `disposition` (+ its dependent attestation objects) must
+      // NEVER be set via the generic update — even by Admin — because that
+      // bypasses updateDisposition's state machine (death-certification / DAMA
+      // attestation / MLC auto-flag / sticky-terminal invariants). Force every
+      // disposition change through the dedicated /disposition endpoint.
+      payload = payload === req.body ? { ...req.body } : payload;
+      for (const k of ["disposition", "deathDetails", "damaDetails", "referralDetails"]) delete payload[k];
       const visit = await emergencyService.updateEmergencyVisit(
         req.params.emergencyNumber,
         payload
@@ -399,7 +434,11 @@ class EmergencyController {
           visit,
           actor: req.user,
           disposition: body.disposition || visit.disposition,
-          admissionLinkId: visit.admissionId,
+          // D17 — the ER visit's linked-admission field is `admission` (not
+          // `admissionId`), so this was always undefined and the register's
+          // admissionLinkId never got set for Admitted exits. Read the real
+          // field, tolerating any legacy shape that carries admissionId.
+          admissionLinkId: visit.admission || visit.admissionId,
           referredTo: body.referredTo,
           notes: body.dispositionNotes,
         }).catch((e) => console.error("ER NABH disposition error:", e.message));

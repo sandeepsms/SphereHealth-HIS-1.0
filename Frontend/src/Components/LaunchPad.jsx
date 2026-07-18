@@ -245,6 +245,7 @@ export default function LaunchPad() {
                 <i className="pi pi-search" />
                 <input
                   ref={searchRef}
+                  className="lp2-searchbox"
                   value={q}
                   onChange={(e) => setQ(e.target.value)}
                   onKeyDown={onSearchKeyDown}
@@ -394,14 +395,23 @@ export default function LaunchPad() {
         .lp2-brand-dot { width: 8px; height: 8px; border-radius: 50%; background: linear-gradient(135deg,#818cf8,#c084fc); box-shadow: 0 0 10px #818cf8aa; }
         .lp2-searchwrap { position: relative; flex: 1; max-width: 620px; display: flex; align-items: center; }
         .lp2-searchwrap > .pi-search { position: absolute; left: 16px; color: #94a3b8; font-size: 15px; pointer-events: none; }
-        .lp2-searchwrap input {
-          width: 100%; padding: 13px 96px 13px 44px; font-size: 14.5px; color: #fff;
+        /* R7hr — the input carries the .lp2-searchbox class ON PURPOSE: two
+           global bare-input resets would otherwise collapse the left/right
+           padding (search icon overlapping the "Sea🔍rch pages…" placeholder,
+           Alt+Space hint overlapping the text) — input:not([class]){padding:9px
+           12px} (any class opts out) AND input[class*="input"]{padding:9px 12px}
+           (so the class name must NOT contain "input", hence "searchbox"). The
+           padding is !important so no future [class*=…] reset can defeat it
+           again — the icon needs 44px on the left, the hint 96px on the right. */
+        .lp2-searchwrap .lp2-searchbox {
+          width: 100%; padding: 13px 96px 13px 44px !important; font-size: 14.5px; color: #fff;
           border-radius: 14px; border: 1.5px solid rgba(255,255,255,.16);
           background: rgba(255,255,255,.08); outline: none; font-family: inherit;
-          transition: border-color .15s, background .15s, box-shadow .15s;
+          box-sizing: border-box;
         }
-        .lp2-searchwrap input::placeholder { color: #8b93a7; }
-        .lp2-searchwrap input:focus { border-color: #818cf8; background: rgba(255,255,255,.11); box-shadow: 0 0 0 4px rgba(99,102,241,.22); }
+        .lp2-searchwrap .lp2-searchbox { transition: border-color .15s, background .15s, box-shadow .15s; }
+        .lp2-searchwrap .lp2-searchbox::placeholder { color: #8b93a7; }
+        .lp2-searchwrap .lp2-searchbox:focus { border-color: #818cf8; background: rgba(255,255,255,.11); box-shadow: 0 0 0 4px rgba(99,102,241,.22); }
         .lp2-kbdhint { position: absolute; right: 12px; font-size: 10.5px; color: #8b93a7; border: 1px solid rgba(255,255,255,.14); border-radius: 7px; padding: 3px 8px; pointer-events: none; }
         .lp2-clear { position: absolute; right: 10px; background: none; border: none; color: #94a3b8; cursor: pointer; font-size: 15px; padding: 4px; }
         .lp2-clear:hover { color: #fff; }

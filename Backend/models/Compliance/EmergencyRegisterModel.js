@@ -96,6 +96,12 @@ const EmergencyRegisterSchema = new Schema(
     isMLC: { type: Boolean, default: false, index: true },
     mlcNumber: { type: String, default: "" },
     mlcCaseId: { type: Schema.Types.ObjectId, ref: "MLCReport", default: null },
+    // R7hr(REG-V): emitEmergency has set these since day one, but strict
+    // mode silently dropped them because the schema lacked the fields —
+    // statutory MLC police details never persisted on the ER register.
+    policeStation: { type: String, default: "" },
+    policeOfficer: { type: String, default: "" },
+    policeFIRNo:   { type: String, default: "" },
 
     // ── Append-only lock ──
     locked: { type: Boolean, default: false, index: true },
@@ -113,6 +119,14 @@ EmergencyRegisterSchema.index({ arrivalAt: -1 });
 EmergencyRegisterSchema.index({ triageCategory: 1, arrivalAt: -1 });
 EmergencyRegisterSchema.index({ isMLC: 1, arrivalAt: -1 });
 EmergencyRegisterSchema.index({ disposition: 1, dispositionAt: -1 });
+
+// ── D19 — NABH register tamper-evidence ─────────────────────
+// Stamp a keyed HMAC-SHA256 integrity digest on every save so an out-of-band
+// edit of this surveyor-inspected register row is detectable. Non-blocking +
+// backward-compatible: legacy rows (no stored digest) verify as "unverified",
+// never "tampered". Keyed by env REGISTER_HMAC_SECRET.
+const { registerIntegrityPlugin } = require("../../utils/registerIntegrity");
+EmergencyRegisterSchema.plugin(registerIntegrityPlugin);
 
 module.exports =
   mongoose.models.EmergencyRegister ||

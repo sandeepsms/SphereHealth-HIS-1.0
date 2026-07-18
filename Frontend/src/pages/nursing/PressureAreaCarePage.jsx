@@ -569,7 +569,7 @@ export default function PressureAreaCarePage() {
   const [patient, setPatient] = useState(null);
   return (
     <ClinicalLayout onPatientSelect={setPatient} selectedId={patient?._id} pageType="pressure-area">
-      <PressureAreaContent patient={patient} />
+      <PressureAreaContent key={patient?._id || "no-patient"} patient={patient} />
     </ClinicalLayout>
   );
 }

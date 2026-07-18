@@ -65,6 +65,13 @@ const AdminRecordSchema = new mongoose.Schema({
     type: String,
     validate: {
       validator: function (v) {
+        // D3 — the independent double-check witness is only mandatory at the
+        // actual administration moment (status === "given"). A HAM order that
+        // is held / refused / missed / not-available never gave a drug, so
+        // there is no second-nurse witness to record; requiring one there threw
+        // a spurious ValidationError. Route POST /:id/administer enforces the
+        // same status === "given" gate for the presence check.
+        if (this.status !== "given") return true;
         const parent = (typeof this.ownerDocument === "function" ? this.ownerDocument() : null);
         if (parent && parent.hamFlag === true) {
           return typeof v === "string" && v.trim().length > 0;
@@ -104,6 +111,22 @@ const AdminRecordSchema = new mongoose.Schema({
       function () { return this.adverseEvent === true; },
       "adverseDetails are required when adverseEvent is true",
     ],
+  },
+  // NABH MOM.4 — nurse-flagged medication administration error/deviation.
+  // When nurseError=true the /administer (and MAR) path auto-emits a
+  // MedicationError register row via emitMedicationError; NCC-MERP severity
+  // E–I additionally chains a Sentinel event. Previously this field did not
+  // exist and no administration path ever called emitMedicationError, so the
+  // documented auto-capture was dead — errors were only captured via the
+  // manual compliance-officer form.
+  nurseError:     { type: Boolean, default: false },
+  errorDetails: {
+    // Phase matches MedicationErrorRegister enum: Prescribing/Transcribing/
+    // Dispensing/Administering/Monitoring (the /administer path is Administering).
+    errorPhase:  { type: String, default: "Administering" },
+    severityNCC: { type: String },  // NCC-MERP A–I
+    category:    { type: String },  // Wrong dose / Wrong route / Wrong time / Omission / Wrong drug …
+    description: { type: String },
   },
   // STAT / Emergency dose (given outside the scheduled window)
   isStatDose:     { type: Boolean, default: false },
@@ -203,6 +226,22 @@ const DoctorOrderSchema = new mongoose.Schema({
   twoNurseRequired:      { type: Boolean, default: false },       // derived from hamFlag
   highRisk:              { type: Boolean, default: false },
 
+  /* ── NABH MOM.4/MOM.5 — advisory medication-safety warnings ──
+     Auto-stamped on save for Medication orders: Do-Not-Use abbreviation
+     hits + LASA (look-alike/sound-alike) collisions. Advisory only — the
+     order is never blocked; the prescriber/pharmacist confirms. */
+  safetyWarnings: {
+    type: [{
+      _id: false,
+      type:      { type: String },   // DANGEROUS_ABBREVIATION | LASA
+      severity:  { type: String, default: "warning" },
+      message:   { type: String, default: "" },
+      token:     { type: String, default: "" },
+      tallMan:   { type: String, default: "" },
+    }],
+    default: [],
+  },
+
   orderDetails: {
     // Medication / IV Fluid / Blood fields
     // `dose` is `String` because real prescriptions write "500 mg", "1 unit",
@@ -238,7 +277,9 @@ const DoctorOrderSchema = new mongoose.Schema({
         // rejected by the lookahead.
         validator: (v) => {
           if (v == null || v === "") return true;
-          if (!/^\s*\d+(?:\.\d+)?\s*(?:mg|mcg|µg|g|kg|ml|l|iu|u|units?|drops?|tabs?|caps?|puffs?|sprays?|patch(?:es)?|tsp|tbsp|%)(?:[\s\/]|$)/i.test(v)) return false;
+          // R8-FIX(#14): mEq / mmol are valid electrolyte-dose units (the order
+          // form offers "mEq") — without them a legit "20 mEq" KCl dose was rejected.
+          if (!/^\s*\d+(?:\.\d+)?\s*(?:mg|mcg|µg|g|kg|ml|l|iu|u|units?|meq|mmol|drops?|tabs?|caps?|puffs?|sprays?|patch(?:es)?|tsp|tbsp|%)(?:[\s\/]|$)/i.test(v)) return false;
           // Lookahead-style zero rejection: extract the leading numeric and
           // ensure it's > 0. Catches "0 mg", "0.0 ml", "00 IU".
           const num = parseFloat(v);
@@ -257,7 +298,26 @@ const DoctorOrderSchema = new mongoose.Schema({
         "frequency is required for Medication orders",
       ],
     },
-    duration: String,
+    // NABH MOM.4 — generic name (INN) for generic-prescribing intent, distinct
+    // from the brand medicineName. Surfaced on the Rx + claim.
+    genericName: { type: String, default: "" },
+    // NABH MOM.4 — duration is required for a scheduled Medication order (a
+    // course without a length is incomplete). STAT / SOS / single ("Once")
+    // doses are exempt — they are a one-time administration, not a course.
+    duration: {
+      type: String,
+      required: [
+        function () {
+          const owner = (this.ownerDocument && this.ownerDocument()) || this.parent?.() || this;
+          if (owner?.orderType !== "Medication") return false;
+          // Read frequency from whichever context holds the sibling field.
+          const od = owner?.orderDetails || this;
+          const f = String(od?.frequency || this.frequency || "").toUpperCase();
+          return !/(STAT|SOS|ONCE|PRN|SINGLE)/.test(f); // single-dose orders need no course length
+        },
+        "duration is required for a scheduled Medication order (use STAT/SOS/Once for single doses)",
+      ],
+    },
     route: {
       type: String,
       required: [
@@ -582,13 +642,41 @@ DoctorOrderSchema.pre("save", function (next) {
   //    Re-runs on creation or whenever medicineName changes — modifying
   //    the drug name after the order exists must be able to flip the
   //    flag in either direction.
-  if (this.isNew || this.isModified("orderDetails.medicineName")) {
-    const name = this.orderDetails?.medicineName || this.orderDetails?.displayName || "";
+  if (this.isNew || this.isModified("orderDetails")) {
+    const d = this.orderDetails || {};
+    // R8-FIX(#26): IV_Fluid orders carry the drug identity in fluidName +
+    // additives (e.g. a KCl-spiked bag), NOT medicineName — scan those too so a
+    // concentrated-electrolyte IV bag is HAM-flagged + two-nurse gated. Re-run
+    // widened to any orderDetails change so editing additives can flip the flag.
+    const name = [d.medicineName, d.displayName, d.fluidName, d.additives]
+      .filter(Boolean).join(" ");
     if (name) {
       this.hamFlag = isHAM(name);
       this.twoNurseRequired = this.hamFlag;
       this.highRisk = this.hamFlag;
       this.concentratedElectrolyte = CONCENTRATED_ELECTROLYTE_RE.test(name);
+    }
+  }
+
+  // 1b. NABH MOM.4/MOM.5 — advisory medication-safety scan (Do-Not-Use
+  //     abbreviations + LASA collisions). Re-runs when the drug/dose/route
+  //     text changes. Non-blocking: a scan failure must never abort the save.
+  if (this.orderType === "Medication" &&
+      (this.isNew || this.isModified("orderDetails"))) {
+    try {
+      const { screenMedication } = require("../../services/Clinical/medicationSafety");
+      const d = this.orderDetails || {};
+      const { warnings } = screenMedication({
+        medicineName: d.medicineName || d.displayName || "",
+        genericName:  d.genericName || "",
+        dose:         d.dose || "",
+        frequency:    d.frequency || "",
+        route:        d.route || "",
+        instructions: d.notes || this.notes || "",
+      });
+      this.safetyWarnings = warnings;
+    } catch (e) {
+      console.warn("[DoctorOrder] medication-safety scan failed:", e.message);
     }
   }
 

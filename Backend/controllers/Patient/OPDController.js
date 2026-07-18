@@ -1,4 +1,5 @@
 const opdService = require("../../services/Patient/OPDService");
+const sendErr = require("../../utils/sendErr");
 
 // R7hr-226 (security audit) — the doctor's ASSESSMENT output fields. The
 // generic OPD update (PUT /:visitNumber) is gated reception.register (Admin +
@@ -46,7 +47,17 @@ class OPDController {
       // bridging admission AND the consultation charge). The controller-level
       // auto-billing block here used to fire the SAME event a second time,
       // double-charging every visit. Removed.
-      const visit = await opdService.createOPDVisit(req.body);
+      // R9-FIX(R9-007): mirror updateOPDVisit's non-Admin clinical-field strip
+      // on the CREATE path too — otherwise a Receptionist registering the visit
+      // could fabricate exam/diagnosis/prescription (bypassing the D9 allergy
+      // gate) and pre-fill the assessment, locking the doctor out. Reception's
+      // own fields (chief complaint, vitals, status, doctor assignment) stay.
+      let createPayload = req.body;
+      if (req.user?.role !== "Admin") {
+        createPayload = { ...req.body };
+        for (const k of OPD_CLINICAL_FIELDS) delete createPayload[k];
+      }
+      const visit = await opdService.createOPDVisit(createPayload);
       res.status(201).json({ success: true, message: "OPD visit created successfully", data: visit });
     } catch (error) {
       // R7hr-47 / R7hr-51: surface structured rule errors so the reception
@@ -273,7 +284,17 @@ class OPDController {
       const visit = await opdService.addPrescription(req.params.visitNumber, req.body);
       res.status(200).json({ success: true, message: "Prescription added", data: visit });
     } catch (error) {
-      res.status(400).json({ success: false, message: error.message });
+      // D9 — surface the typed drug-allergy 409 (ALLERGY_COLLISION) with the
+      // allergen + drug so the prescriber UI can prompt for a documented
+      // override reason, instead of flattening it to a generic 400.
+      const status = error.status || error.statusCode || 400;
+      res.status(status).json({
+        success: false,
+        message: error.message,
+        ...(error.code ? { code: error.code } : {}),
+        ...(error.allergen ? { allergen: error.allergen } : {}),
+        ...(error.drugName ? { drugName: error.drugName } : {}),
+      });
     }
   }
 
@@ -382,11 +403,15 @@ class OPDController {
     } catch (error) {
       // R7bx item 8 — forward typed error code (e.g. MCI_REG_NO_MISSING)
       // and explicit statusCode so the frontend can branch on stable identifiers.
-      const status = error.statusCode || 400;
+      // D8/D9 — also honour err.status (the shared allergy gate + signed-lock
+      // set 409) and pass allergen/drug through for the allergy-override prompt.
+      const status = error.statusCode || error.status || 400;
       res.status(status).json({
         success: false,
         message: error.message,
         ...(error.code ? { code: error.code } : {}),
+        ...(error.allergen ? { allergen: error.allergen } : {}),
+        ...(error.drugName ? { drugName: error.drugName } : {}),
       });
     }
   }
@@ -424,7 +449,7 @@ class OPDController {
       }
       return res.status(200).json({ success: true, message: "Note added", data: visit });
     } catch (e) {
-      res.status(500).json({ success: false, message: e.message });
+      sendErr(res, e);
     }
   }
 

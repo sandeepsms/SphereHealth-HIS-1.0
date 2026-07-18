@@ -2052,7 +2052,11 @@ async function onOPDRegistered(opdVisit, admission) {
   // Falls back to undefined if missing so addItemToBill drops to its
   // ServiceMaster lookup like before.
   const visitFee = Number(opdVisit.consultationFee);
-  const overrideAmount = Number.isFinite(visitFee) && visitFee >= 0 ? visitFee : undefined;
+  // R8-CRIT — a 0/unset consultationFee must FALL BACK to the ServiceMaster
+  // consult price, not bill the OPD-CON line at ₹0. `0` is the schema default
+  // (indistinguishable from unset), so only a positive fee is a real override;
+  // this closes the silent ₹0 consult on auto-dispatched new-patient OPD visits.
+  const overrideAmount = Number.isFinite(visitFee) && visitFee > 0 ? visitFee : undefined;
   return createTrigger({
     admissionId:         admission._id,
     opdVisitId:          opdVisit._id,
@@ -2494,7 +2498,10 @@ async function onAdmissionCreated(admissionDoc) {
   //    When no matrix row exists yet for this category, the resolver
   //    falls back to the legacy two-line shape priced from
   //    RoomCategory.defaultPricing so revenue continuity is preserved.
-  if (typeCode === "IPD" || typeCode === "DAYCARE") {
+  // R8-FIX(#11): bedded EMERGENCY admissions (ER→IPD bridge) are genuine
+  // inpatients and must accrue bed-day + nursing too. Kept as typeCode
+  // "EMERGENCY" (not IPD) so the consolidated ER→IPD draft bill isn't split.
+  if (typeCode === "IPD" || typeCode === "DAYCARE" || typeCode === "EMERGENCY") {
     const matrix = await resolveRoomCategoryChargeMatrix(admissionDoc);
     const catTag = matrix.categoryCode ? `-${matrix.categoryCode}` : "";
 
@@ -2701,7 +2708,8 @@ async function runDailyBedChargeAccrual() {
     const slice = active.slice(i, i + BATCH_SIZE);
     const results = await Promise.all(slice.map(async (adm) => {
       const typeCode = typeMap[adm.admissionType] || "IPD";
-      if (typeCode !== "IPD" && typeCode !== "DAYCARE") {
+      // R8-FIX(#11): include EMERGENCY so bedded ER→IPD admissions accrue daily.
+      if (typeCode !== "IPD" && typeCode !== "DAYCARE" && typeCode !== "EMERGENCY") {
         return { bedFired: 0, nurseFired: 0, skipped: 0, errored: false };
       }
       try {
@@ -2777,7 +2785,8 @@ async function flushDailyChargesForAdmission(admission, {
     Daycare: "DAYCARE", Transfer: "IPD",
   };
   const tc = typeCode || typeMap[admission.admissionType] || "IPD";
-  if (tc !== "IPD" && tc !== "DAYCARE") return { bedFired, nurseFired, skipped };
+  // R8-FIX(#11): include EMERGENCY so bedded ER→IPD admissions flush daily charges.
+  if (tc !== "IPD" && tc !== "DAYCARE" && tc !== "EMERGENCY") return { bedFired, nurseFired, skipped };
 
   const startMs = new Date(admission.admissionDate || admission.createdAt).getTime();
   const dayN = Math.max(1, Math.floor((Date.now() - startMs) / 86400000) + 1);
@@ -5009,6 +5018,9 @@ module.exports = {
   // Daily accrual + on-demand flush (admission discharge calls flushDailyChargesForAdmission)
   flushDailyChargesForAdmission,
   runDailyBedChargeAccrual,
+  // R9-FIX(R9-021): IST day-key helper — transferBed needs it to void the
+  // matching same-day BillingTrigger so re-accrual re-fires at the new tier.
+  getDateKey,
   // Retroactive backfill (bill creation calls this for active admissions)
   backfillAdmissionCharges,
   // ANH package matching (used by admin endpoints + admissionController)

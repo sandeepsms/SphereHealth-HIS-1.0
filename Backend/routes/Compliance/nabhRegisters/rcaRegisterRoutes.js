@@ -18,10 +18,28 @@
 
 const express = require("express");
 const router = express.Router();
+const mongoose = require("mongoose");
 const { requireAction } = require("../../../middleware/auth");
 const { validateObjectIdParam } = require("../../../utils/queryGuards");
 const RCARegister = require("../../../models/Compliance/RCARegisterModel");
+const SentinelEventRegister = require("../../../models/Compliance/SentinelEventRegisterModel");
 const emitter = require("../../../services/Compliance/nabhRegisterEmitter");
+
+// R7hr-NABH-PSQ — close the loop: when an RCA is linked to a sentinel event,
+// stamp the sentinel's rcaInitiated + rcaId so the two registers cross-
+// reference. Best-effort; a failed back-link never aborts the RCA write.
+async function _backlinkSentinel(sentinelId, rcaId, actorMeta) {
+  try {
+    if (!sentinelId || !mongoose.isValidObjectId(sentinelId)) return;
+    const s = await SentinelEventRegister.findById(sentinelId);
+    if (!s) return;
+    if (s.rcaInitiated && String(s.rcaId || "") === String(rcaId)) return; // already linked
+    s.rcaInitiated = true;
+    s.rcaId = rcaId;
+    s.auditTrail.push({ action: "RCA_INITIATED", ...actorMeta, notes: `RCA ${rcaId} linked` });
+    await s.save();
+  } catch (_) { /* non-fatal */ }
+}
 
 function _dateRange(query, field = "initiatedAt") {
   const out = {};
@@ -143,7 +161,92 @@ router.post(
       if (!row) {
         return res.status(400).json({ success: false, message: "Could not create RCA row" });
       }
+      // Cross-reference the sentinel event this RCA belongs to.
+      if (row.linkedSentinelId) {
+        await _backlinkSentinel(row.linkedSentinelId, row._id, {
+          byUserId: req.user?._id || req.user?.id || null,
+          byName:   req.user?.fullName || req.user?.name || "",
+          byRole:   req.user?.role || "",
+        });
+      }
       res.status(201).json({ success: true, data: row });
+    } catch (e) {
+      res.status(500).json({ success: false, message: e.message });
+    }
+  },
+);
+
+// ─────────────────────────────────────────────────────────────────────────
+// PATCH /:id — fill in the RCA (team, timeline, root causes, CAPA) + progress
+// / close it. R7hr-NABH-PSQ: pre-fix rcaRegisterRoutes had GET+POST only, so
+// the auto-created "Initiated" RCA row (empty CAPA) could never be filled or
+// closed — a Quality officer had to POST a duplicate. Arrays are replaced when
+// supplied (edit-form semantics); closing stamps closedAt/closedBy. Every
+// change appends an auditTrail entry (TEAM_ASSIGNED / CAPA_FILED / CLOSED /
+// STATUS_CHANGED). Closed is terminal unless reopen:true.
+// ─────────────────────────────────────────────────────────────────────────
+router.patch(
+  "/:id",
+  validateObjectIdParam("id"),
+  requireAction("compliance.nabh.write"),
+  async (req, res) => {
+    try {
+      const row = await RCARegister.findById(req.params.id);
+      if (!row) return res.status(404).json({ success: false, message: "RCA not found" });
+
+      const body = req.body || {};
+      const actorMeta = {
+        byUserId: req.user?._id || req.user?.id || null,
+        byName:   req.user?.fullName || req.user?.name || "",
+        byRole:   req.user?.role || "",
+      };
+      const audit = [];
+      const arr = (v) => (Array.isArray(v) ? v : null);
+
+      if (arr(body.teamMembers)) { row.teamMembers = body.teamMembers; audit.push({ action: "TEAM_ASSIGNED", ...actorMeta, notes: `${body.teamMembers.length} member(s)` }); }
+      if (arr(body.timeline)) row.timeline = body.timeline;
+      if (arr(body.contributingFactors)) row.contributingFactors = body.contributingFactors;
+
+      let capaTouched = false;
+      if (arr(body.rootCauses))        { row.rootCauses = body.rootCauses; capaTouched = true; }
+      if (arr(body.correctiveActions)) { row.correctiveActions = body.correctiveActions; capaTouched = true; }
+      if (arr(body.preventiveActions)) { row.preventiveActions = body.preventiveActions; capaTouched = true; }
+      if (capaTouched) audit.push({ action: "CAPA_FILED", ...actorMeta, notes: `root=${row.rootCauses.length} corrective=${row.correctiveActions.length} preventive=${row.preventiveActions.length}` });
+
+      // Status transition
+      if (body.status && body.status !== row.status) {
+        const ALLOWED = ["Open", "Initiated", "InProgress", "Closed"];
+        if (!ALLOWED.includes(body.status)) return res.status(400).json({ success: false, message: `Invalid status "${body.status}"` });
+        if (row.status === "Closed" && body.status !== "Closed" && body.reopen !== true) {
+          return res.status(409).json({ success: false, code: "RCA_CLOSED", message: "This RCA is Closed. Pass reopen:true to re-open it." });
+        }
+        if (body.status === "Closed" && (!row.rootCauses.length || (!row.correctiveActions.length && !row.preventiveActions.length))) {
+          return res.status(422).json({ success: false, code: "RCA_INCOMPLETE", message: "Cannot close an RCA without at least one root cause and one corrective/preventive action (CAPA)." });
+        }
+        const prev = row.status;
+        row.status = body.status;
+        if (body.status === "Closed") {
+          row.closedAt = new Date();
+          row.closedByName = actorMeta.byName;
+          row.closedByEmpId = req.user?.empId || req.user?.employeeId || "";
+          audit.push({ action: "CLOSED", ...actorMeta, notes: `${prev} → Closed${body.notes ? " · " + String(body.notes).trim() : ""}` });
+        } else {
+          audit.push({ action: "STATUS_CHANGED", ...actorMeta, notes: `${prev} → ${body.status}${body.reopen ? " (re-opened)" : ""}` });
+        }
+      }
+
+      // (Re)link a sentinel event
+      if (body.linkedSentinelId && mongoose.isValidObjectId(body.linkedSentinelId) && String(body.linkedSentinelId) !== String(row.linkedSentinelId || "")) {
+        row.linkedSentinelId = body.linkedSentinelId;
+      }
+
+      if (!audit.length && !arr(body.timeline) && !arr(body.contributingFactors) && !body.linkedSentinelId) {
+        return res.status(400).json({ success: false, message: "Nothing to update" });
+      }
+      row.auditTrail.push(...audit);
+      await row.save();
+      if (row.linkedSentinelId) await _backlinkSentinel(row.linkedSentinelId, row._id, actorMeta);
+      res.json({ success: true, data: row });
     } catch (e) {
       res.status(500).json({ success: false, message: e.message });
     }

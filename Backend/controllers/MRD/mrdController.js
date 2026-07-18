@@ -38,6 +38,15 @@ const ReleaseLogSchema = new mongoose.Schema({
   UHID:          { type: String, trim: true, default: "" },
   reason:        { type: String, trim: true, required: true },
   retainUntilAt: { type: Date, default: null },
+  // NABH IMS (release of information) + DPDP lawful-disclosure — who asked,
+  // why, to whom, and under what authorisation. Previously the log recorded
+  // only who RELEASED, not the requestor / purpose / recipient / consent.
+  requestedBy:          { type: String, trim: true, default: "" },
+  requestorRelationship:{ type: String, trim: true, default: "" }, // Patient / Kin / Insurer / Court / Police / Other
+  purpose:              { type: String, trim: true, default: "" },
+  releasedToName:       { type: String, trim: true, default: "" },
+  releasedToAgency:     { type: String, trim: true, default: "" },
+  consentReference:     { type: String, trim: true, default: "" }, // signed authorisation / ConsentForm id
   releasedBy:    { type: String, trim: true, default: "" },
   releasedById:  { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
   releasedByRole:{ type: String, trim: true, default: "" },
@@ -106,8 +115,18 @@ exports.releaseFile = async (req, res) => {
       if (!a) return sendErr(res, "Admission not found", "NOT_FOUND", 404);
       UHID = a.UHID;
       fileRef = a.admissionNumber || String(a._id);
+    } else if (fileType === "DISCHARGE_SUMMARY") {
+      const DischargeSummary = require("../../models/Clinical/DischargeSummaryModel");
+      const d = await DischargeSummary.findById(fileId).select("UHID admissionId patientName").lean();
+      if (!d) return sendErr(res, "Discharge summary not found", "NOT_FOUND", 404);
+      UHID = d.UHID || "";
+      fileRef = String(d._id);
+    } else {
+      // Never silently release an unknown/unresolved artefact type.
+      return sendErr(res, `Unsupported fileType "${fileType}" — expected AUDIT_ROW / ADMISSION / DISCHARGE_SUMMARY`, "VALIDATION", 400);
     }
 
+    const b = req.body || {};
     const entry = await MrdReleaseLog.create({
       fileType,
       fileId,
@@ -115,11 +134,105 @@ exports.releaseFile = async (req, res) => {
       UHID,
       reason,
       retainUntilAt,
+      // NABH IMS / DPDP release-of-information capture.
+      requestedBy:           String(b.requestedBy || "").trim(),
+      requestorRelationship: String(b.requestorRelationship || "").trim(),
+      purpose:               String(b.purpose || "").trim(),
+      releasedToName:        String(b.releasedToName || "").trim(),
+      releasedToAgency:      String(b.releasedToAgency || "").trim(),
+      consentReference:      String(b.consentReference || "").trim(),
       releasedBy:     req.user.fullName || req.user.employeeId || "MRD",
       releasedById:   req.user._id || req.user.id || null,
       releasedByRole: req.user.role,
     });
     return sendOk(res, entry, undefined, 201);
+  } catch (e) {
+    return sendErr(res, e, e.code || "VALIDATION", 400);
+  }
+};
+
+// POST /api/mrd/legal-hold  { recordType, recordId, hold, reason }
+//
+// NABH IMS.3 (#138) — set / clear a retention LEGAL HOLD on a clinical
+// record so services/MRD/retentionEnforcer.js excludes it from the
+// purge-candidate sweep (open litigation / MLC / insurance dispute /
+// court order). Pre-fix `legalHold` was declared on Admission /
+// DischargeSummary / MLCReport and READ by the enforcer, but no write
+// path existed — a record could never actually be put on hold.
+//
+// recordType ∈ ADMISSION | DISCHARGE_SUMMARY | MLC (the three legalHold-
+// aware TARGETS in retentionEnforcer). Both set and clear require a
+// documented reason; the actor + timestamp are stamped on the record
+// (legalHoldBy / legalHoldByName / legalHoldAt) for the IMS.3 trail.
+// Admin / MRD only — route-gated on compliance.legal-hold.write.
+exports.setLegalHold = async (req, res) => {
+  const { sendOk, sendErr } = env();
+  try {
+    // Defence-in-depth: the route gate already restricts to Admin / MRD;
+    // re-assert here so a mis-wired mount can't widen the custodian set.
+    if (req.user?.role !== "Admin" && req.user?.role !== "MRD") {
+      return sendErr(res, "Admin or MRD role required", "FORBIDDEN", 403);
+    }
+    const recordType = String(req.body?.recordType || "").trim().toUpperCase();
+    const recordId   = req.body?.recordId;
+    const hold       = req.body?.hold === true || req.body?.hold === "true";
+    const reason     = String(req.body?.reason || "").trim();
+
+    if (!mongoose.isValidObjectId(recordId)) {
+      return sendErr(res, "A valid recordId is required", "VALIDATION", 400);
+    }
+    // A hold — and a release — must carry a reason for the audit trail,
+    // mirroring the release-of-information capture on releaseFile.
+    if (!reason) {
+      return sendErr(res, "reason is required to set or clear a legal hold", "VALIDATION", 400);
+    }
+
+    const TARGETS = {
+      ADMISSION:         { model: require("../../models/Patient/admissionModel"),        label: "Admission" },
+      DISCHARGE_SUMMARY: { model: require("../../models/Clinical/DischargeSummaryModel"), label: "DischargeSummary" },
+      MLC:               { model: require("../../models/MLC/MLCReportModel"),             label: "MLCReport" },
+    };
+    const target = TARGETS[recordType];
+    if (!target) {
+      return sendErr(res, `Unsupported recordType "${recordType}" — expected ADMISSION / DISCHARGE_SUMMARY / MLC`, "VALIDATION", 400);
+    }
+
+    // legalHold* are whitelisted past the DischargeSummary finalized-
+    // immutability guard, so a hold can be applied even to a signed
+    // (finalized) summary — a legal-custody flag is a permitted post-
+    // finalize write. Admission / MLCReport have no such guard.
+    const patch = {
+      legalHold:       hold,
+      legalHoldReason: reason,
+      legalHoldBy:     req.user._id || req.user.id || null,
+      legalHoldByName: req.user.fullName || req.user.employeeId || "MRD",
+      legalHoldAt:     new Date(),
+    };
+    const doc = await target.model.findByIdAndUpdate(
+      recordId,
+      { $set: patch },
+      { new: true, runValidators: true },
+    ).select("_id UHID legalHold legalHoldReason legalHoldByName legalHoldAt").lean();
+    if (!doc) {
+      return sendErr(res, `${target.label} not found`, "NOT_FOUND", 404);
+    }
+
+    // NABH IMS.3 custody-change audit (7y floor). Non-blocking — the hold
+    // write above has already committed.
+    try {
+      const { emitClinicalAudit } = require("../../services/Compliance/clinicalAuditService");
+      emitClinicalAudit({
+        req,
+        event: "LEGAL_HOLD_UPDATED",
+        UHID: doc.UHID || "",
+        targetType: target.label,
+        targetId: doc._id,
+        after: { legalHold: doc.legalHold, legalHoldReason: doc.legalHoldReason, legalHoldByName: doc.legalHoldByName, legalHoldAt: doc.legalHoldAt },
+        reason,
+      });
+    } catch (_) { /* silent */ }
+
+    return sendOk(res, doc, { held: doc.legalHold });
   } catch (e) {
     return sendErr(res, e, e.code || "VALIDATION", 400);
   }

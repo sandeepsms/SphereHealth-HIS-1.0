@@ -1350,6 +1350,15 @@ function OrderCard({ order, onCancel, onComplete, onEdit }) {
             <span style={{ fontSize: 13, fontWeight: 700, color: C.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: 260 }}>{displayName}</span>
           </div>
           {subtitle && <div style={{ fontSize: 11, color: C.muted, marginTop: 1 }}>{subtitle}</div>}
+          {/* D11 — NABH MOM.4/MOM.5 medication-safety warnings, rendered from
+              persisted order.safetyWarnings (Do-Not-Use abbreviation + LASA/
+              tall-man). Non-blocking advisory shown on the order card; empty
+              array for non-Medication orders so nothing renders there. */}
+          {Array.isArray(order.safetyWarnings) && order.safetyWarnings.map((w, wi) => (
+            <div key={wi} style={{ display: "flex", alignItems: "flex-start", gap: 4, fontSize: 10, fontWeight: 600, color: C.amber, background: C.amberL, border: `1px solid ${C.amberB}`, borderRadius: 5, padding: "3px 7px", marginTop: 3 }} title={w.message}>
+              <span>⚠️</span><span>{w.message}</span>
+            </div>
+          ))}
         </div>
         {/* Progress bar */}
         {steps.length > 0 && order.status !== "Cancelled" && (

@@ -142,6 +142,19 @@ class MLCService {
     if (!payload.patientId && !payload.UHID) {
       throw new Error("patientId or UHID is required");
     }
+    // R9-FIX(R9-014): the controller spreads req.body into `payload`, so a
+    // caller could set status/finalized*/closed*/coSigned*/legalHold* at
+    // creation — self-finalizing an MLR, forging the co-signatory, or putting
+    // it under legal hold. Strip every lifecycle/attestation/lock field here;
+    // a fresh MLR is ALWAYS Draft, and status advances only through updateMLC's
+    // guarded transition. createdBy* are re-derived from `actor` below.
+    for (const k of [
+      "status", "finalizedBy", "finalizedById", "finalizedAt",
+      "closedBy", "closedById", "closedAt",
+      "coSignedBy", "coSignedByName", "coSignedAt",
+      "legalHold", "legalHoldReason", "legalHoldBy", "legalHoldByName", "legalHoldAt",
+      "createdBy", "createdById", "createdByRole",
+    ]) delete payload[k];
 
     // Resolve doctor + patient (so we can denormalise display fields)
     const doctor = await Doctor.findById(payload.doctorId);
@@ -204,6 +217,7 @@ class MLCService {
                        `${doctor.personalInfo?.firstName || ""} ${doctor.personalInfo?.lastName || ""}`.trim(),
           mlrNumber, mlrPrefix, mlrSeq,
           createdBy:     actor.fullName || actor.name || "",
+          createdById:   actor.id || actor._id || null, // R9-FIX(R9-012): tx branch persisted this, non-tx branch dropped it → finalize SoD had no creator to compare
           createdByRole: actor.role     || "",
         });
       }
@@ -295,8 +309,47 @@ class MLCService {
     delete patch.doctorId;
     delete patch.patientId;
     delete patch.UHID;
-    if (patch.status === "Finalized" && !patch.finalizedAt) patch.finalizedAt = new Date();
-    if (patch.status === "Closed"    && !patch.closedAt)    patch.closedAt    = new Date();
+    // R9-FIX(R9-013): attestation/lock identity is server-derived, never taken
+    // from the body — a caller must not forge who finalized/closed/co-signed
+    // the MLR or flip legal hold via the generic update.
+    for (const k of [
+      "createdBy", "createdById", "createdByRole",
+      "finalizedBy", "finalizedById", "finalizedAt",
+      "closedBy", "closedById", "closedAt",
+      "coSignedBy", "coSignedByName", "coSignedAt",
+      "legalHold", "legalHoldReason", "legalHoldBy", "legalHoldByName", "legalHoldAt",
+    ]) delete patch[k];
+
+    // R9-FIX(R9-013): validate the status transition against the MLC state
+    // machine (Draft→Finalized→Closed; Closed is terminal). updateMLC writes
+    // via findOneAndUpdate, which BYPASSES the model's pre('save') status guard,
+    // so without this a caller could set status to ANY value — e.g. flip a
+    // Closed medico-legal record back to Draft and then hard-delete it.
+    if (patch.status) {
+      const current = await MLC.findOne(filter).select("status createdById").lean();
+      if (!current) return null;
+      if (patch.status !== current.status) {
+        const { assertTransition } = require("../../utils/statusTransitionGuard");
+        assertTransition("MLCReport", current.status, patch.status); // throws on illegal move
+        const now = new Date();
+        if (patch.status === "Finalized") {
+          // Separation of duties: the finaliser must differ from the creator.
+          const actorId = String(actor?.id || actor?._id || "");
+          if (actorId && current.createdById && actorId === String(current.createdById)) {
+            const err = new Error("An MLC must be finalized by a different user than its creator (separation of duties).");
+            err.statusCode = 409; err.code = "MLC_SELF_FINALIZE"; throw err;
+          }
+          patch.finalizedBy   = actor?.fullName || actor?.name || "";
+          patch.finalizedById = actor?.id || actor?._id || null;
+          patch.finalizedAt   = now;
+        }
+        if (patch.status === "Closed") {
+          patch.closedBy   = actor?.fullName || actor?.name || "";
+          patch.closedById = actor?.id || actor?._id || null;
+          patch.closedAt   = now;
+        }
+      }
+    }
 
     // R7bx item 8 — MCI Regulation 1.4.2: a finalised MLR must carry the
     // signing doctor's MCI registration number. Block the Draft→Finalized

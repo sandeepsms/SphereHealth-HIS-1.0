@@ -775,23 +775,48 @@ const updateDoctorNote = async (id, data, doctorUserId) => {
     "icd10Code",
     "icd10Description",
     "shift",
+    // R7hr(EMER-IA): per-type specifics live under noteDetails (ICU vent
+    // settings, procedure record, emergency assessment…). The create path
+    // has always persisted it, but re-saving a draft dropped every
+    // noteDetails change — the ER page's second "Save Draft" silently
+    // reverted the assessment to its first-save content.
+    "noteDetails",
+    // R7hr(re-audit): the ER page derives isCritical from triage level and
+    // sends it on every PUT; without a slot a triage upgrade on a draft
+    // (III → I) never flipped the persisted critical flag.
+    "isCritical",
+    "patientStatus",
   ];
 
-  if (note.status === "signed") {
-    // ── ADDENDUM path: clone the signed note, apply changes, link.
+  // R8-FIX(#6): route BOTH signed AND already-amended notes through the
+  // append-only addendum path. Pre-fix an "amended" note (not "signed") fell to
+  // the draft in-place mutate below, silently rewriting the attested record
+  // with no addendum, no amendment entry, no audit.
+  if (note.status === "signed" || note.status === "amended") {
+    // ── ADDENDUM path: clone the attested note, apply changes, link.
     const base = note.toObject();
     delete base._id;
     delete base.__v;
     delete base.createdAt;
     delete base.updatedAt;
     delete base.signedAt; // addendum signs later if/when the doctor signs it
-    // Strip fields that must not be cloned wholesale
-    base.signature = undefined;
+    // Strip fields that must not be cloned wholesale.
+    // R9-FIX(R9-068): the addendum was cloned with status "amended" — a state
+    // the sign flow (draft → signed) can NEVER move out of — while still
+    // carrying the ORIGINAL note's signer identity (signedByName/Reg/EmpId were
+    // left intact). So the amendment was legally attributed to the first
+    // signer, unsigned by whoever actually wrote it, and could never be signed.
+    // Mirror nurseNotesService.js: start as a fresh DRAFT the author must sign,
+    // and clear the inherited signature identity.
+    base.signature     = undefined;
+    base.signedByName  = undefined;
+    base.signedByReg   = undefined;
+    base.signedByEmpId = undefined;
     // Apply mutations
     allowed.forEach((f) => {
       if (data[f] !== undefined) base[f] = data[f];
     });
-    base.status         = "amended";
+    base.status         = "draft";
     base.noteType       = base.noteType || "amendment";
     base.isAddendum     = true;
     base.originalNoteId = note.originalNoteId || note._id;
@@ -809,10 +834,10 @@ const updateDoctorNote = async (id, data, doctorUserId) => {
       module: "DoctorNote",
       sourceModel: "DoctorNotes",
       sourceId: addendum._id,
-      summary: `Addendum to doctor note ${note._id} (signed → amended)`,
+      summary: `Addendum to doctor note ${note._id} (${note.status} → draft addendum, awaiting sign)`,
       userId: doctorUserId || null,
       before: { _id: note._id, status: note.status },
-      after:  { _id: addendum._id, supersedesNoteId: note._id, originalNoteId: addendum.originalNoteId, status: "amended" },
+      after:  { _id: addendum._id, supersedesNoteId: note._id, originalNoteId: addendum.originalNoteId, status: "draft" },
     }).catch((e) => console.error("[doctorNotes] amend audit-log failed:", e.message));
 
     return addendum;
@@ -854,8 +879,32 @@ const updateDiagnosis = async (id, data, actor = {}) => {
   const diagFields = ["provisionalDiagnosis", "workingDiagnosis", "finalDiagnosis", "icd10Code", "icd10Description"];
   diagFields.forEach((f) => { if (data[f] !== undefined) $set[f] = data[f]; });
 
-  if (before.status === "signed") {
+  // R9-FIX(R9-065): amending a SIGNED (or already-amended) note is a legal-
+  // record change — it MUST carry a documented reason and leave an
+  // amendments[] trail entry (old→new). Previously this /diagnosis path
+  // rewrote a signed note silently: no reason, no trail, defeating the
+  // discipline the /amend route enforces.
+  let amendmentEntry = null;
+  if (before.status === "signed" || before.status === "amended") {
+    const reason = String(data.amendmentReason || data.reason || "").trim();
+    if (!reason) {
+      const error = new Error("An amendment reason is required to change a signed note's diagnosis (NABH IMS/HIC amendment rules).");
+      error.statusCode = 400;
+      error.code = "AMENDMENT_REASON_REQUIRED";
+      throw error;
+    }
+    const changes = diagFields
+      .filter((f) => data[f] !== undefined && String(data[f] ?? "") !== String(before[f] ?? ""))
+      .map((f) => ({ field: f, oldValue: before[f] ?? null, newValue: data[f] }));
     $set.status = "amended";
+    amendmentEntry = {
+      amendedAt:     new Date(),
+      amendedById:   (actor?.id || actor?._id) ? String(actor.id || actor._id) : undefined,
+      amendedByName: actor?.name || "",
+      amendedByRole: actor?.role || "",
+      reason,
+      changes,
+    };
   }
 
   const actorId = actor?.id || actor?._id;
@@ -873,6 +922,8 @@ const updateDiagnosis = async (id, data, actor = {}) => {
   }
 
   const updateOp = Object.keys($unset).length ? { $set, $unset } : { $set };
+  // R9-FIX(R9-065): append the amendment-trail entry for a signed-note change.
+  if (amendmentEntry) updateOp.$push = { amendments: amendmentEntry };
   // R7bo-LIVE-fix-v4: bypass Mongoose's cast pipeline entirely by
   // going to the raw collection. Mongoose's findOneAndUpdate ALWAYS
   // casts every field in $set against the schema and ALSO validates
@@ -974,6 +1025,22 @@ const updateDiagnosis = async (id, data, actor = {}) => {
       },
     });
   } catch (_) { /* silent */ }
+
+  // R8-FIX(#31) — IDSP raise when an ICD-10 code is added/changed on an existing
+  // note (diagnosis captured post-creation). Idempotent per admission+disease via
+  // sourceRef; safe alongside the create-time and discharge-finalize raises.
+  if (note.icd10Code) {
+    try {
+      const { raiseNotifiableCases } = require("../Compliance/notifiableDiseases");
+      await raiseNotifiableCases({
+        diagnoses: [{ code: note.icd10Code, description: note.icd10Description || note.finalDiagnosis || note.workingDiagnosis || note.provisionalDiagnosis || "" }],
+        patient: { _id: note.patient, UHID: note.patientUHID || note.UHID, name: note.patientName },
+        admission: { _id: note.admissionId },
+        actor: { fullName: actor?.name || "", name: actor?.name || "", id: actor?.id || null },
+        diagnosisDate: note.visitDate || note.signedAt || note.createdAt || new Date(),
+      });
+    } catch (e) { console.warn("[doctorNotes] notifiable raise failed:", e.message); }
+  }
 
   return note;
 };
@@ -1143,8 +1210,10 @@ const deleteDoctorNote = async (id, doctorUserId, opts = {}) => {
     error.statusCode = 404;
     throw error;
   }
-  if (note.status === "signed") {
-    const error = new Error("Cannot delete signed note");
+  // R8-FIX(#4): block delete of ANY attested note (signed OR amended). Pre-fix
+  // an amended note was deletable, so amend-then-delete erased the attested record.
+  if (note.status === "signed" || note.status === "amended") {
+    const error = new Error("Cannot delete a signed/amended note");
     error.statusCode = 400;
     throw error;
   }

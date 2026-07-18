@@ -71,6 +71,12 @@ class MARController {
       return res.status(400).json({ success: false, message: "patient (UHID) required to open a MAR" });
     }
 
+    // R8-FIX(#25): reject embedded GIVEN administrations — charting a dose must
+    // go through recordAdministration (five-rights + HAM dual-witness enforced
+    // there). Scheduled/pending placeholder slots are fine; a GIVEN embed is not.
+    if ((req.body.medications || []).some((m) => (m?.administrations || []).some((a) => normalizeStatus(a?.status) === "GIVEN")))
+      return res.status(422).json({ success: false, code: "EMBEDDED_GIVEN_FORBIDDEN", message: "Cannot embed a GIVEN administration on MAR create — chart doses via the administer endpoint (five-rights + HAM dual-witness enforced there)." });
+
     mar = await MAR.create({
       patient: patientId,
       UHID,
@@ -100,8 +106,14 @@ class MARController {
 
   // GET /api/mar/ipd/:ipdNo/date/:date — get MAR for a specific date
   getByIPDAndDate = handle(async (req, res) => {
-    const marDate = new Date(req.params.date);
-    const mar = await MAR.findOne({ ipdNo: req.params.ipdNo, date: marDate }).lean();
+    // R8-FIX(#43): match the local-(IST-)day WINDOW, not a UTC-midnight exact
+    // instant. MAR.date is stored at server-local midnight (createOrGet), but
+    // `new Date('YYYY-MM-DD')` parses as UTC midnight, so exact equality was off
+    // by the IST offset and returned nothing → spurious 404.
+    const raw = new Date(req.params.date);
+    const marDate = new Date(raw.getFullYear(), raw.getMonth(), raw.getDate());
+    const nextDay = new Date(marDate); nextDay.setDate(nextDay.getDate() + 1);
+    const mar = await MAR.findOne({ ipdNo: req.params.ipdNo, date: { $gte: marDate, $lt: nextDay } }).lean();
     if (!mar) return res.status(404).json({ success: false, message: "MAR not found for this date" });
     return res.json({ success: true, data: mar });
   });
@@ -123,9 +135,29 @@ class MARController {
 
   // POST /api/mar/:id/medication — add medication to MAR
   addMedication = handle(async (req, res) => {
+    // R8-FIX(#25): a medication pushed to the MAR must not carry a pre-charted
+    // GIVEN administration — that bypasses the five-rights + HAM dual-witness
+    // gates on recordAdministration.
+    if (((req.body && req.body.administrations) || []).some((a) => normalizeStatus(a?.status) === "GIVEN"))
+      return res.status(422).json({ success: false, code: "EMBEDDED_GIVEN_FORBIDDEN", message: "Cannot embed a GIVEN administration when adding a MAR medication — chart doses via the administer endpoint." });
+    // R9-FIX(R9-061): isHighAlert (HAM) drives the dual-witness gate at
+    // administration — derive it from the drug master, never trust the client
+    // body (a nurse could add insulin/heparin with isHighAlert:false and skip
+    // the two-nurse witness). A known HAM drug is force-flagged; a freetext med
+    // not in the master keeps the caller's value.
+    const med = { ...(req.body || {}) };
+    try {
+      const name = String(med.medicineName || med.drugName || "").trim();
+      if (name) {
+        const Drug = require("../../models/Pharmacy/DrugModel");
+        const esc = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const d = await Drug.findOne({ name: new RegExp(`^${esc}$`, "i") }).select("isHighAlert").lean();
+        if (d && d.isHighAlert === true) med.isHighAlert = true;
+      }
+    } catch (_) { /* best-effort — freetext med keeps the caller's value */ }
     const mar = await MAR.findByIdAndUpdate(
       req.params.id,
-      { $push: { medications: req.body } },
+      { $push: { medications: med } },
       { new: true, runValidators: true }
     );
     if (!mar) return res.status(404).json({ success: false, message: "MAR not found" });
@@ -152,8 +184,20 @@ class MARController {
   // violation.
   recordAdministration = handle(async (req, res) => {
     const { scheduledTime, status, nurseName, nurseStaffId, batchNumber, reason, remarks,
-            witnessUserId, witnessNurseName, witnessNurseStaffId } = req.body;
+            witnessUserId, witnessNurseName, witnessNurseStaffId, fiveRightsChecked } = req.body;
     const finalStatus = normalizeStatus(status);
+
+    // NABH MOM.4 / IPSG.3 — five-rights must be confirmed before a dose is
+    // charted GIVEN. Parity with the DoctorOrder /administer path (which
+    // returns 422 without fiveRightsChecked); previously this MAR path had no
+    // such gate, so a GIVEN dose could be charted without the check.
+    if (finalStatus === "GIVEN" && fiveRightsChecked !== true) {
+      return res.status(422).json({
+        success: false,
+        code: "FIVE_RIGHTS_REQUIRED",
+        message: "5 Rights must be confirmed before marking a dose GIVEN (fiveRightsChecked: true)",
+      });
+    }
 
     // Actor + signature must be resolvable
     const resolvedNurseName  = nurseName    || req.user?.fullName   || "";
@@ -174,6 +218,35 @@ class MARController {
     if (!mar) return res.status(404).json({ success: false, message: "MAR or medication not found" });
     const med = mar.medications.id(req.params.medId);
     if (!med) return res.status(404).json({ success: false, message: "Medication not found in MAR" });
+
+    // R8-FIX(#27): drug-allergy safety gate via the CANONICAL allergyCheck util
+    // (its header names recordAdministration as intended call-site #4, but it was
+    // never wired here). Ward-stock drugs are charted straight on the MAR with no
+    // pharmacy dispense, so this is the ONLY allergy checkpoint. Reads
+    // authoritative Patient.allergies (falls back to the MAR snapshot). An
+    // allergyOverrideReason lets a prescriber-authorised dose proceed; the reason
+    // is recorded on the administration entry (below) for the NABH trail.
+    let allergyOverrideNote = "";
+    if (finalStatus === "GIVEN") {
+      const { assertDrugSafeOrOverride } = require("../../utils/allergyCheck");
+      let patientAllergies = mar.allergies;
+      try {
+        const pt = await Patient.findById(mar.patient).select("knownAllergies allergyList").lean();
+        if (pt && ((pt.allergyList && pt.allergyList.length) || pt.knownAllergies))
+          patientAllergies = (pt.allergyList && pt.allergyList.length) ? pt.allergyList : pt.knownAllergies;
+      } catch (_) { /* fall back to the MAR allergy snapshot */ }
+      try {
+        const r = assertDrugSafeOrOverride(med, patientAllergies, {
+          overrideReason: req.body.allergyOverrideReason, label: "mar-admin",
+        });
+        if (r && r.overridden)
+          allergyOverrideNote = `Allergy override (${r.allergen}): ${String(req.body.allergyOverrideReason).trim()}`;
+      } catch (e) {
+        if (e.code === "ALLERGY_COLLISION")
+          return res.status(409).json({ success: false, code: "ALLERGY_COLLISION", allergen: e.allergen, drug: e.drugName, message: e.message });
+        throw e;
+      }
+    }
 
     if (scheduledTime) {
       const dup = (med.administrations || []).find((a) => _isSameSchedule(a, scheduledTime));
@@ -208,7 +281,6 @@ class MARController {
       // Confirm the witness holds mar.write.
       try {
         const User = require("../../models/User/userModel");
-        const { roleCan } = require("../../config/permissions");
         const wUser = await User.findById(witnessUserId).select("role fullName employeeId").lean();
         if (!wUser) {
           return res.status(400).json({ success: false, code: "HAM_WITNESS_NOT_FOUND", message: "Witness user not found" });
@@ -248,7 +320,9 @@ class MARController {
       signatureUrl: resolvedSignature || undefined,
       batchNumber,
       reason,
-      remarks,
+      // R8-FIX(#27): keep the allergy-override reason on the record for the trail.
+      remarks: allergyOverrideNote ? [remarks, allergyOverrideNote].filter(Boolean).join(" | ") : remarks,
+      fiveRightsChecked: fiveRightsChecked === true,
       // R7bb-FIX-E-19: stamp both witnesses on HAM doses for audit.
       ...(hamWitness ? {
         administeredByUser1Id: resolvedUserId,
@@ -330,7 +404,7 @@ class MARController {
         targetType: "MAR.administration",
         targetId: pushResult._id,
         after: {
-          drug: refreshedMed?.drugName,
+          drug: refreshedMed?.medicineName, // R9-FIX(R9-062): schema field is medicineName, not drugName
           dose: refreshedMed?.dose,
           status: finalStatus,
           scheduledTime,

@@ -493,7 +493,7 @@ export default function PatientEducationPage() {
   const [patient, setPatient] = useState(null);
   return (
     <ClinicalLayout onPatientSelect={setPatient} selectedId={patient?._id} pageType="patient-education">
-      <PatientEducationContent patient={patient} />
+      <PatientEducationContent key={patient?._id || "no-patient"} patient={patient} />
     </ClinicalLayout>
   );
 }

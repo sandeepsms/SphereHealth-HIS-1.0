@@ -129,6 +129,10 @@ const BillingAuditSchema = new mongoose.Schema(
         // follow-ups are auditable (who logged the query, who replied, when).
         "TPA_QUERY_RAISED",
         "TPA_QUERY_REPLIED",
+        // R7hr(TPA-P3) — claim-pack document + dispatch trail
+        "TPA_DOC_ATTACHED",
+        "TPA_DOC_REMOVED",
+        "TPA_DISPATCHED",
       ],
       index: true,
     },

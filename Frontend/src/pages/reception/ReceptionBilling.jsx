@@ -4065,6 +4065,10 @@ function RefundAdvanceModal({ advance, patient, onClose, onDone }) {
   const [reason,       setReason]       = useState("");
   const [refundedBy,   setRefundedBy]   = useState("");
   const [txnId,        setTxnId]        = useState("");
+  // R7hr(TPA-UI): NABH-P3.5 refund-to-kin capture — who physically received
+  // the money (mandatory-in-spirit on Death cases where the patient can't).
+  const [recipientName,     setRecipientName]     = useState("");
+  const [recipientRelation, setRecipientRelation] = useState("");
   const [saving,       setSaving]       = useState(false);
 
   const MODES = ["CASH", "UPI", "BANK_TRANSFER", "CARD", "ONLINE"];
@@ -4082,6 +4086,8 @@ function RefundAdvanceModal({ advance, patient, onClose, onDone }) {
           refundReason: reason.trim(),
           refundedBy: refundedBy || undefined,
           transactionId: txnId || undefined,
+          refundedToName: recipientName.trim() || undefined,
+          refundedToRelation: recipientRelation.trim() || undefined,
         },
       );
       toast.success(`Refunded ${fmtCur(remaining)} from advance ${advance.receiptNumber}`);
@@ -4176,6 +4182,29 @@ function RefundAdvanceModal({ advance, patient, onClose, onDone }) {
                 />
               </div>
             )}
+          </div>
+
+          {/* R7hr(TPA-UI): refund-to-kin — record the actual recipient when
+              money goes to family (deceased / incapacitated patient). */}
+          <div className="rx-grid-2">
+            <div className="his-field-group">
+              <label className="his-label">Received By (if not the patient)</label>
+              <input
+                className="his-field"
+                value={recipientName}
+                onChange={(e) => setRecipientName(e.target.value)}
+                placeholder="Recipient's full name"
+              />
+            </div>
+            <div className="his-field-group">
+              <label className="his-label">Relation to Patient</label>
+              <input
+                className="his-field"
+                value={recipientRelation}
+                onChange={(e) => setRecipientRelation(e.target.value)}
+                placeholder="e.g. Son, Wife, Father"
+              />
+            </div>
           </div>
         </div>
         <div className="rx-modal-foot">

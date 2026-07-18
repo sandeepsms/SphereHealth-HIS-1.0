@@ -42,6 +42,24 @@ if (!process.env.NODE_ENV) {
 const NODE_ENV = process.env.NODE_ENV || "development";
 const IS_PROD = NODE_ENV === "production";
 
+// R8-FIX(#33) — REGISTER_HMAC_SECRET keys the NABH register tamper-evidence
+// (D19) digests. Fail fast in production so a deploy can't silently key them on
+// the source-known dev default (forgeable by anyone holding the resale source).
+// Dev/local + E2E run without it (registerIntegrity.js uses a guarded dev
+// default off-prod), so this stays a production gate to preserve zero-config dev.
+if (IS_PROD) {
+  requireEnv(
+    "REGISTER_HMAC_SECRET",
+    (v) => v.length >= 32 && v !== "sphere-health-register-integrity-dev-secret-CHANGE-IN-PROD",
+  );
+} else if (!process.env.REGISTER_HMAC_SECRET) {
+  console.warn(
+    "WARN: REGISTER_HMAC_SECRET is not set — using the built-in dev default. " +
+      "NABH register tamper-evidence is only meaningful once it is a private, " +
+      "server-held value in production.",
+  );
+}
+
 // ── Process-level safety net ───────────────────────────────────────────────
 // In Node 15+ an unhandled promise rejection terminates the process by default.
 // We log and let it terminate, but for synchronous uncaught exceptions we
@@ -90,7 +108,18 @@ app.use(
 
 // ── Body parsers ───────────────────────────────────────────────────────────
 app.use(cors(corsOptions));
-app.use(express.json({ limit: "5mb" }));
+// Capture the raw request bytes for ABDM gateway callbacks so the HMAC/
+// signature middleware can verify against the exact payload (JSON re-
+// serialisation would not be byte-exact). Scoped to /api/abdm to avoid
+// holding a buffer for every request.
+app.use(express.json({
+  limit: "5mb",
+  verify: (req, _res, buf) => {
+    if (buf && buf.length && req.originalUrl && req.originalUrl.startsWith("/api/abdm")) {
+      req.rawBody = buf;
+    }
+  },
+}));
 app.use(express.urlencoded({ extended: true, limit: "5mb" }));
 
 // ── Rate limiters ──────────────────────────────────────────────────────────
@@ -233,7 +262,7 @@ require("./services/nursing/nursingChargesService")
 // don't double-charge the same admission. The boot-time catch-up still
 // runs 60s after start so a missed midnight cron still flushes the day.
 const autoBilling = require("./services/Billing/autoBillingService");
-const { scheduleDaily, acquireLock, releaseLock } = require("./utils/cronScheduler");
+const { scheduleDaily, acquireLock, releaseLock, startRetrySweeper } = require("./utils/cronScheduler");
 
 // R7at-FIX-1/D10-HIGH-1+2: boot-catchup now uses the SAME lock name as
 // the daily cron (`cron:daily-accrual`, not the divergent `:boot`
@@ -732,22 +761,27 @@ const _cancelAuditArchive = scheduleDaily("billing-audit-archive", 3, 30, async 
     weekday: "short", timeZone: process.env.HOSPITAL_TZ || "Asia/Kolkata",
   }).format(now);
   if (dow !== "Sun") return { skipped: "non-Sunday", moved: 0 };
-  // Pull a batch of expired rows. 1000-row cap so we don't blow memory.
-  const expired = await BillingAudit.find({ retainUntil: { $lt: now } })
-    .sort({ createdAt: 1 }).limit(1000).lean();
-  if (expired.length === 0) return { moved: 0 };
-  // Bulk-insert into archive, then bulk-delete from hot. If insert fails
-  // we DO NOT delete — duplicates next week are harmless (archive _id
-  // matches and the insert is ignored).
+  // R9-FIX(R9-101): the TTL index on retainUntil reaps expired rows within
+  // ~60s of expiry, so an archiver that only pulled `retainUntil < now` always
+  // found them already deleted → cold storage stayed permanently EMPTY. Instead
+  // we COPY rows APPROACHING expiry (within a 30-day look-ahead) to cold storage
+  // and let the TTL own the hot-collection deletion at retainUntil. The weekly
+  // cadence (<=7-day gap) comfortably beats the 30-day window, so every row is
+  // archived well before the TTL reaps it. Idempotent — re-copying a row next
+  // week is a no-op (archive _id matches → 11000 ignored).
+  const horizon = new Date(now.getTime() + 30 * 86400000);
+  const nearing = await BillingAudit.find({ retainUntil: { $lt: horizon } })
+    .sort({ retainUntil: 1 }).limit(5000).lean();
+  if (nearing.length === 0) return { moved: 0 };
   try {
-    await ArchiveColl.insertMany(expired, { ordered: false });
+    await ArchiveColl.insertMany(nearing, { ordered: false });
   } catch (e) {
     // Tolerate duplicate-key spam from prior partial runs.
     if (e.code !== 11000) throw e;
   }
-  const ids = expired.map((r) => r._id);
-  const del = await BillingAudit.deleteMany({ _id: { $in: ids } });
-  return { moved: expired.length, deleted: del.deletedCount };
+  // Do NOT delete here — the TTL index removes each row from the hot
+  // collection at its own retainUntil, after it is safely in cold storage.
+  return { moved: nearing.length, archivedAheadOfTTL: true };
 });
 
 // R7bd-E-3 / A2-MED-17: low-stock reorder notifier. Runs at 08:00 IST
@@ -791,7 +825,7 @@ const _cancelReorderNotifier = scheduleDaily("reorder-notifier", 8, 0, async () 
     return { items: items.length, sent: out.sent, channel: out.channel };
   } catch (e) {
     console.error("[reorder-notifier] cron error:", e.stack || e.message);
-    return { error: e.message };
+    throw e; // R8-FIX(#16): rethrow so cronScheduler records CronFailure + retry-sweeper replays (no false "ok" heartbeat)
   }
 });
 
@@ -840,7 +874,7 @@ const _cancelExpiryWatch = scheduleDaily("pharmacy-expiry-watch", 6, 30, async (
     return { items: items.length, sent: out.sent, channel: out.channel, buckets: out.buckets };
   } catch (e) {
     console.error("[pharmacy-expiry-watch] cron error:", e.stack || e.message);
-    return { error: e.message };
+    throw e; // R8-FIX(#16): rethrow so cronScheduler records CronFailure + retry-sweeper replays (no false "ok" heartbeat)
   }
 });
 
@@ -910,7 +944,7 @@ const _cancelLicenseExpiryWatch = scheduleDaily("drug-license-expiry-watch", 8, 
     return { status, daysToExpiry: days };
   } catch (e) {
     console.error("[drug-license-expiry-watch] cron error:", e.stack || e.message);
-    return { error: e.message };
+    throw e; // R8-FIX(#16): rethrow so cronScheduler records CronFailure + retry-sweeper replays (no false "ok" heartbeat)
   }
 });
 
@@ -964,7 +998,7 @@ const _cancelExpireCredentials = scheduleDaily("expire-credentials", 2, 0, async
     return r;
   } catch (e) {
     console.error("[cron:expire-credentials] error:", e.stack || e.message);
-    return { error: e.message };
+    throw e; // R8-FIX(#16): rethrow so cronScheduler records CronFailure + retry-sweeper replays (no false "ok" heartbeat)
   }
 });
 
@@ -981,7 +1015,7 @@ const _cancelPreExpiryEmail = scheduleDaily("credential-pre-expiry-email", 9, 0,
     return await cron.runPreExpirySweep();
   } catch (e) {
     console.error("[cron:credential-pre-expiry-email] error:", e.stack || e.message);
-    return { error: e.message };
+    throw e; // R8-FIX(#16): rethrow so cronScheduler records CronFailure + retry-sweeper replays (no false "ok" heartbeat)
   }
 });
 
@@ -1032,7 +1066,60 @@ const _cancelFireDrillOverdue = scheduleDaily("fire-drill-overdue", 3, 0, async 
     return await cron.runOverdueSweep();
   } catch (e) {
     console.error("[cron:fire-drill-overdue] error:", e.stack || e.message);
-    return { error: e.message };
+    throw e; // R8-FIX(#16): rethrow so cronScheduler records CronFailure + retry-sweeper replays (no false "ok" heartbeat)
+  }
+});
+
+// NABH FMS.5 — daily PPM-adherence sweep (equipment nextServiceDue + facility
+// PPM nextDueDate). Mirrors the fire-drill overdue sweep.
+const _cancelMaintenanceOverdue = scheduleDaily("maintenance-overdue", 3, 15, async () => {
+  try {
+    const cron = require("./services/Compliance/maintenanceOverdueCron");
+    return await cron.runOverdueSweep();
+  } catch (e) {
+    console.error("[cron:maintenance-overdue] error:", e.stack || e.message);
+    throw e; // R8-FIX(#16): rethrow so cronScheduler records CronFailure + retry-sweeper replays (no false "ok" heartbeat)
+  }
+});
+
+// NABH HIC.6 — monthly antibiogram roll-up. On the 1st (IST) aggregate the
+// previous calendar month's micro isolates into cumulative susceptibility
+// rows. Window is computed in IST (like gst-monthly-snapshot) so the UTC-vs-
+// IST date boundary can't attribute isolates to the wrong month.
+const _cancelAntibiogramRollup = scheduleDaily("antibiogram-monthly-rollup", 3, 45, async () => {
+  try {
+    const TZ = process.env.HOSPITAL_TZ || "Asia/Kolkata";
+    const istParts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit",
+    }).formatToParts(new Date());
+    const get = (t) => Number(istParts.find((p) => p.type === t).value);
+    const Y = get("year"), M = get("month"), D = get("day");
+    if (D !== 1) return { skipped: "not 1st of month (IST)" };
+
+    const prevM = M === 1 ? 12 : M - 1;
+    const prevY = M === 1 ? Y - 1 : Y;
+    const period = `${prevY}-${String(prevM).padStart(2, "0")}`;
+    const from = new Date(`${period}-01T00:00:00+05:30`);
+    const to   = new Date(`${Y}-${String(M).padStart(2, "0")}-01T00:00:00+05:30`);
+
+    const agg = require("./services/Compliance/antibiogramAggregator");
+    return await agg.runAggregation({ period, from, to, actor: { name: "System (antibiogram-rollup)" } });
+  } catch (e) {
+    console.error("[cron:antibiogram-monthly-rollup] error:", e.stack || e.message);
+    throw e; // R8-FIX(#16): rethrow so cronScheduler records CronFailure + retry-sweeper replays (no false "ok" heartbeat)
+  }
+});
+
+// GST §34 — nightly refund↔credit-note reconciliation. Flags REFUNDED bills
+// missing a credit note (phantom output-GST liability) + dangling CNs, so the
+// accountant clears exceptions before the GSTR-1 month is filed.
+const _cancelRefundRecon = scheduleDaily("refund-cn-reconciliation", 3, 50, async () => {
+  try {
+    const cron = require("./services/Compliance/refundReconciliationCron");
+    return await cron.runReconciliation({ lookbackDays: 45 });
+  } catch (e) {
+    console.error("[cron:refund-cn-reconciliation] error:", e.stack || e.message);
+    throw e; // R8-FIX(#16): rethrow so cronScheduler records CronFailure + retry-sweeper replays (no false "ok" heartbeat)
   }
 });
 
@@ -1042,7 +1129,7 @@ const _cancelRetentionReview = scheduleDaily("retention-review", 4, 0, async () 
     return await svc.runRetentionReview();
   } catch (e) {
     console.error("[cron:retention-review] error:", e.stack || e.message);
-    return { error: e.message };
+    throw e; // R8-FIX(#16): rethrow so cronScheduler records CronFailure + retry-sweeper replays (no false "ok" heartbeat)
   }
 });
 
@@ -1085,7 +1172,7 @@ const _cancelRetentionReview = scheduleDaily("retention-review", 4, 0, async () 
 // Mirrors the retention startup-self-test pattern directly above.
 (() => {
   const cronDeps = [
-    { name: "cronScheduler", path: "./utils/cronScheduler", needs: ["acquireLock", "releaseLock"] },
+    { name: "cronScheduler", path: "./utils/cronScheduler", needs: ["acquireLock", "releaseLock", "startRetrySweeper"] },
   ];
   const failures = [];
   for (const dep of cronDeps) {
@@ -1122,7 +1209,10 @@ const _cancelVisitorPassExpiry = (() => {
       console.info(`[cron:visitor-pass-expiry] tick OK — expired=${result?.expired||0} dur=${Date.now()-start}ms`);
     } catch (e) {
       console.error('[cron:visitor-pass-expiry] error:', e.stack || e.message);
-      // TODO B4-T05 retry: recordCronFailure('visitor-pass-expiry', e);
+      // D16: the CronFailure retry queue + sweeper (startRetrySweeper) now
+      // exist, but only scheduleDaily jobs are addressable by name for replay.
+      // This interval job isn't in that registry, so it stays log-only — a
+      // stale pass simply re-flips on the next 5-min tick anyway.
     }
   }, 5 * 60 * 1000);
   if (typeof interval.unref === "function") interval.unref();
@@ -1224,21 +1314,48 @@ const _cancelAssessmentComplianceSweeper = (() => {
   return () => clearInterval(interval);
 })();
 
-// R7bx-2 — nightly mongodump backup. Runs at 02:30 IST every day with
-// the same distributed lock pattern as every other daily cron so a
-// multi-replica deploy doesn't double-write the same archive name. The
-// child process is spawned by scripts/backupMongoDB.js — backup failures
-// are logged but never crash the server (the script returns a structured
-// error which the cron wrapper logs).
+// D2 — nightly TOOL-FREE backup. Runs at 02:30 IST every day behind the
+// same distributed lock as every other daily cron. The old cron shelled out
+// to `mongodump`, which is ABSENT from the node:alpine image, so it ENOENT'd
+// on every nightly tick in every Docker deployment. This wires the in-process
+// EJSON backup engine (scripts/backup/*) instead: it uses the bundled MongoDB
+// driver, needs NO external binary, and writes a verified .shbak.gz to
+// BACKUP_OFFLINE_DIR (set to the persistent /app/backups volume in
+// docker-compose.yml).
+//
+// We deliberately do NOT try/catch-and-swallow here: the old wrapper caught
+// the rejection and returned { error }, so scheduleDaily saw outcome="ok" and
+// the mongodump ENOENT was SILENT (no CRON_FAILED, no CronFailure row).
+// Letting run() throw makes scheduleDaily emit a CRON_FAILED BillingAudit
+// heartbeat, record a CronFailure retry row, and hand the job to the retry
+// sweeper — so a broken backup is loud. run() never calls process.exit and
+// closes its own Mongo client, so a failure can never crash the server.
 const _cancelNightlyMongoBackup = scheduleDaily("nightly-mongo-backup", 2, 30, async () => {
-  try {
-    const { runBackup } = require("./scripts/backupMongoDB");
-    return await runBackup();
-  } catch (e) {
-    console.error("[cron:nightly-mongo-backup] error:", e.stack || e.message);
-    return { error: e.message };
-  }
+  const { run } = require("./scripts/backup/runBackup");
+  return await run({ mode: "nightly" });
 });
+
+// R9-FIX(R9-104): the nightly backup runs every day, but Docker/Linux deploys
+// had NO monthly (long-retention) tier — only the ~14-day nightly rotation on
+// the same host as the DB. runBackup already supports mode:"monthly" (separate
+// "monthly" subdir, BACKUP_MONTHLY_KEEP=24-month retention, same verified-
+// off-site push). Register a second in-process job that fires on the 1st IST:
+// scheduleDaily runs daily, so the fn early-returns on days 2-31 (mirrors
+// antibiogram-monthly-rollup). Staggered at 03:15 IST between the nightly
+// (02:30) and antibiogram (03:45) jobs to avoid contention.
+const _cancelMonthlyMongoBackup = scheduleDaily("monthly-mongo-backup", 3, 15, async () => {
+  const TZ = process.env.HOSPITAL_TZ || "Asia/Kolkata";
+  const D = Number(new Intl.DateTimeFormat("en-CA", { timeZone: TZ, day: "2-digit" }).format(new Date()));
+  if (D !== 1) return { skipped: "not 1st of month (IST)" };
+  const { run } = require("./scripts/backup/runBackup");
+  return await run({ mode: "monthly" });
+});
+
+// D16-fix — cron-failure retry sweeper. scheduleDaily records every failed
+// daily tick into the CronFailure queue (30/60/120-min backoff ladder) but
+// pre-D16 nothing replayed them. This drains the due rows every 5 min and
+// re-invokes the matching job behind the same cron:<name> lock. Best-effort.
+const _cancelRetrySweeper = startRetrySweeper({ intervalMs: 5 * 60 * 1000 });
 
 // Keep a reference name for the graceful-shutdown handler below.
 const _autoBillingInterval = {
@@ -1265,6 +1382,8 @@ const _autoBillingInterval = {
     _cancelInfusionIntakeCron();            // R7bq-4
     _cancelMissedDoseCron();                // R7bq-J1
     _cancelNightlyMongoBackup();            // R7bx-2
+    _cancelMonthlyMongoBackup();            // R9-104
+    _cancelRetrySweeper();                 // D16-fix — cron retry sweeper
   },
 };
 

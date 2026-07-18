@@ -61,6 +61,14 @@ const GENDERS        = ["Male", "Female", "Other"];
 const MARITAL        = ["Single", "Married", "Divorced", "Widowed"];
 const BLOOD_GROUPS   = ["A+", "A-", "B+", "B-", "O+", "O-", "AB+", "AB-", "Unknown"];
 const PAYMENT_TYPES  = ["Cash", "TPA", "Insurance", "Corporate"];
+// R7hr(CLAIM-P2) — payer scheme drives which claim form(s) apply + which
+// scheme IDs to capture (claim builder keys on this, not paymentType).
+const PAYER_SCHEMES = [
+  { v: "CASH", l: "Cash / Self-pay" }, { v: "RETAIL_TPA", l: "Retail health insurance (TPA)" },
+  { v: "CORPORATE", l: "Corporate / Group" }, { v: "CGHS", l: "CGHS" }, { v: "ESIC", l: "ESIC" },
+  { v: "ECHS", l: "ECHS (ex-servicemen)" }, { v: "PMJAY", l: "Ayushman / PM-JAY" },
+  { v: "STATE", l: "State scheme" }, { v: "OTHER", l: "Other" },
+];
 const TRIAGE_LEVELS  = ["Red (P1)", "Yellow (P2)", "Green (P3)", "Blue (P4)"];
 const ER_TYPES       = ["Medical", "Surgical", "Trauma", "Pediatric", "Obstetric", "Cardiac", "Stroke"];
 
@@ -100,6 +108,10 @@ const emptyPatient = {
   paymentType: "Cash",
   tpa: null,
   policyNumber: "", // mandatory when paymentType === "TPA" (backend validation)
+  insurerCode: "",         // CLAIM-P4.1 — which insurer's form to fill
+  insurerName: "",
+  payerScheme: "CASH",     // R7hr(CLAIM-P2) — claim-form axis
+  schemeIds: {},           // conditional govt-scheme ids (CGHS/ESIC/PMJAY/…)
   emergencyContact: { name: "", relation: "", phone: "" },
   UHID: "",
 };
@@ -175,6 +187,7 @@ export default function ReceptionConsole() {
   const [departments, setDepartments] = useState([]);
   const [doctors,     setDoctors]     = useState([]);
   const [tpaList,     setTpaList]     = useState([]);
+  const [insurerList, setInsurerList] = useState([]);   // CLAIM-P4.1 — insurer registry
   const [allServices, setAllServices] = useState([]);
 
   /* ── Patient search ── */
@@ -269,6 +282,11 @@ export default function ReceptionConsole() {
         if (tpaRes?.success) {
           setTpaList(tpaRes.data.map(t => ({ label: t.tpaName, value: t._id })));
         }
+        // CLAIM-P4.1 — insurer registry for the company picker (non-fatal).
+        try {
+          const insRes = await axios.get(`${API_ENDPOINTS.BASE}/insurers`);
+          if (insRes?.data?.success) setInsurerList(insRes.data.data || []);
+        } catch { /* picker just stays empty if this fails */ }
       } catch (e) {
         console.error("Reference data load error:", e);
       }
@@ -571,6 +589,10 @@ export default function ReceptionConsole() {
       paymentType: p.paymentType || "Cash",
       tpa: p.tpa?._id || p.tpa || null,
       policyNumber: p.policyNumber || "",
+      insurerCode: p.insurerCode || "",
+      insurerName: p.insurerName || "",
+      payerScheme: p.payerScheme || "CASH",
+      schemeIds: p.schemeIds || {},
       emergencyContact: p.emergencyContact || { name: "", relation: "", phone: "" },
       UHID: p.UHID || "",
     });
@@ -810,6 +832,10 @@ export default function ReceptionConsole() {
         paymentType:     patient.paymentType,
         tpa:             patient.tpa || null,
         policyNumber:    patient.policyNumber || undefined,
+        insurerCode:     patient.insurerCode || undefined,
+        insurerName:     patient.insurerName || undefined,
+        payerScheme:     patient.payerScheme || "CASH",
+        schemeIds:       patient.schemeIds || {},
         // Patient model has NO `emergencyContact` field — it uses
         // `companionName / companionRelationship / companionContact`. The
         // old code silently dropped the receptionist's input on every save
@@ -820,6 +846,9 @@ export default function ReceptionConsole() {
         // Optional but useful when present
         department:      primaryDept || undefined,
         doctor:          primaryDoctor || undefined,
+        // R8-CRIT — carry the consult fee into registration so the auto-dispatched
+        // OPD visit bills it (the fee-bearing createOPDVisit below is deduped away).
+        consultationFee: visitType === "OPD" ? (Number(opd.consultationFee) || undefined) : undefined,
         registrationType: visitType === "Daycare" ? "Daycare" : visitType,
       };
 
@@ -1567,8 +1596,38 @@ export default function ReceptionConsole() {
                       {PAYMENT_TYPES.map(p => <option key={p}>{p}</option>)}
                     </select>
                   </div>
+                  {/* R7hr(CLAIM-P2) — payer scheme decides the claim form(s) */}
+                  <div className="his-field-group">
+                    <label className="his-label">Payer Scheme</label>
+                    <select className="his-select" value={patient.payerScheme} onChange={e => setP("payerScheme", e.target.value)}>
+                      {PAYER_SCHEMES.map(s => <option key={s.v} value={s.v}>{s.l}</option>)}
+                    </select>
+                  </div>
                   {patient.paymentType !== "Cash" && (
                     <>
+                      {/* CLAIM-P4.1 — the INSURER (company that issued the policy),
+                          distinct from the TPA administrator below. Drives which
+                          company's claim form the PDF engine fills. */}
+                      <div className="his-field-group">
+                        <label className="his-label">Insurance Company</label>
+                        <select className="his-select" value={patient.insurerCode || ""}
+                          onChange={e => {
+                            const code = e.target.value;
+                            const name = insurerList.find(i => i.code === code)?.name || "";
+                            setPatient(p => ({ ...p, insurerCode: code, insurerName: name }));
+                          }}>
+                          <option value="">— Select Insurer —</option>
+                          {["STANDALONE_HEALTH", "PRIVATE_GENERAL", "PSU", "DIGITAL"].map(grp => {
+                            const items = insurerList.filter(i => i.type === grp);
+                            if (!items.length) return null;
+                            return (
+                              <optgroup key={grp} label={items[0].typeLabel}>
+                                {items.map(i => <option key={i.code} value={i.code}>{i.name}</option>)}
+                              </optgroup>
+                            );
+                          })}
+                        </select>
+                      </div>
                       <div className="his-field-group">
                         <label className="his-label">TPA / Insurance Provider{TPA_MANDATORY(visitType) && <span className="rc-req">*</span>}</label>
                         <select className={`his-select ${errors.tpa ? "his-field--err" : ""}`} value={patient.tpa || ""}
@@ -1589,6 +1648,29 @@ export default function ReceptionConsole() {
                     </>
                   )}
                 </div>
+                {/* R7hr(CLAIM-P2) — government-scheme IDs, shown per payerScheme.
+                    setSchemeId writes into patient.schemeIds so the claim
+                    builder + CGHS/ESIC printables have the right identifiers. */}
+                {["CGHS", "ESIC", "ECHS", "PMJAY", "STATE"].includes(patient.payerScheme) && (
+                  <div className="rc-grid-3" style={{ marginTop: 8 }}>
+                    {(() => {
+                      const setSchemeId = (k, v) => setPatient(p => ({ ...p, schemeIds: { ...(p.schemeIds || {}), [k]: v } }));
+                      const s = patient.schemeIds || {};
+                      const F = (k, label, ph) => (
+                        <div className="his-field-group">
+                          <label className="his-label">{label}</label>
+                          <input className="his-field" value={s[k] || ""} onChange={e => setSchemeId(k, e.target.value)} placeholder={ph} />
+                        </div>
+                      );
+                      if (patient.payerScheme === "CGHS") return <>{F("cghsCardNo", "CGHS Card No", "e.g. CG-12345")}{F("cghsWardEntitlement", "Ward Entitlement", "General / Semi-Pvt / Private")}{F("ppoNo", "PPO No (pensioner)", "optional")}</>;
+                      if (patient.payerScheme === "ESIC") return <>{F("esicIpNo", "ESIC IP No", "insurance number")}{F("esicEmployer", "Employer", "")}{F("esicDispensary", "Dispensary", "")}</>;
+                      if (patient.payerScheme === "ECHS") return <>{F("echsCardNo", "ECHS Card No", "")}{F("ppoNo", "PPO No", "")}</>;
+                      if (patient.payerScheme === "PMJAY") return <>{F("pmjayId", "Ayushman / PM-JAY ID", "")}</>;
+                      if (patient.payerScheme === "STATE") return <>{F("stateSchemeName", "Scheme Name", "e.g. MJPJAY")}{F("stateSchemeId", "Scheme ID", "")}</>;
+                      return null;
+                    })()}
+                  </div>
+                )}
               </div>
             </div>
           )}
