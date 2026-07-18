@@ -1193,6 +1193,45 @@ exports.dispense = async (req, res) => {
     // R7ct — bill-level GST split rollup, accumulated from per-item splits below.
     let totalCgst = 0, totalSgst = 0, totalIgst = 0;
     const consumedAll = []; // [{ batchId, qty }] across all items, for rollback
+
+    // R9-FIX(R9-044): NDPS pre-flight for Schedule-X drugs BEFORE the point of
+    // no return (fifoConsume / Sale.create). Previously the register call ran
+    // only AFTER the sale + stock consumption, so a failure (missing witness,
+    // day locked, insufficient register balance) left the narcotic dispensed
+    // and durable with the statutory register carrying only a "pending" remark
+    // — controlled stock off the shelf, no register line. Validate the
+    // deterministic gates up front and REJECT the whole dispense on failure, so
+    // nothing leaves the shelf that can't be registered.
+    {
+      const sxReq = items.filter((it) => drugMetaMap.get(String(it.drugId))?.schedule === "X");
+      if (sxReq.length > 0) {
+        const wName = req.body?.witnessName;
+        const wId   = req.body?.witnessId;
+        if (!wName || !wId) {
+          return res.status(400).json({ success: false, code: "WITNESS_REQUIRED",
+            message: "Schedule-X (narcotic) dispense requires a witness (NDPS two-person rule). Provide witnessName + witnessId." });
+        }
+        if (String(wId) === String(req.user?._id)) {
+          return res.status(409).json({ success: false, code: "WITNESS_SELF",
+            message: "The Schedule-X witness must be a different person from the dispenser (NDPS two-person rule)." });
+        }
+        // Per-drug register-balance pre-check (sum requested qty per drug).
+        const reqByDrug = new Map();
+        for (const it of sxReq) {
+          const k = String(it.drugId);
+          reqByDrug.set(k, (reqByDrug.get(k) || 0) + Number(it.quantity || 0));
+        }
+        for (const [k, needQty] of reqByDrug) {
+          const have = await scheduleXRegister.currentBalance(k);
+          if (have < needQty) {
+            const nm = drugMetaMap.get(k)?.name || "Schedule-X drug";
+            return res.status(409).json({ success: false, code: "INSUFFICIENT_REGISTER_BALANCE",
+              message: `Insufficient Schedule-X register balance for ${nm} — register shows ${have}, dispense requested ${needQty}. Reconcile the register before dispensing.` });
+          }
+        }
+      }
+    }
+
     try {
     for (const it of items) {
       const used = await fifoConsume(it.drugId, Number(it.quantity));

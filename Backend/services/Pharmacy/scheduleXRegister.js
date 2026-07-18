@@ -221,11 +221,16 @@ async function recordReceipt({ drugId, qty, receivedBy = "", receivedById = null
 // minting one here would fabricate controlled-substance stock. Absent /
 // under-balance doc → returns null so the caller can log the anomaly.
 //
-// This is the balance-only sibling of recordDispense/recordReceipt; it does
-// NOT append a ScheduleXEntry row — the caller owns the paper trail (returns
-// and cancels already ride their PHARMACY_RETURNED / cancel audit rows, and
-// vendor returns their PharmacyVendorReturn + audit emit).
-async function recordReversal({ drugId, signedQty, actorName = "", actorById = null } = {}) {
+// R9-FIX(R9-043): this used to be balance-ONLY — it moved the running
+// Schedule-X balance but appended no ScheduleXEntry row, on the assumption
+// that the caller wrote the paper trail. In practice the callers (sale
+// return/cancel, vendor return) only wrote a generic pharmacy/audit row, NOT a
+// Schedule-X register row — so a narcotic could re-enter or leave the cabinet
+// with the statutory NDPS register showing a balance jump and NO matching
+// receive/dispense line. dailyBalance/verify then couldn't reconcile the day.
+// recordReversal now appends the register row itself, inside the same call, so
+// the balance and the register can never diverge again.
+async function recordReversal({ drugId, signedQty, actorName = "", actorById = null, remarks = "" } = {}) {
   if (!drugId) {
     const e = new Error("drugId required"); e.code = "ARG_MISSING"; throw e;
   }
@@ -247,7 +252,39 @@ async function recordReversal({ drugId, signedQty, actorName = "", actorById = n
     },
     { new: true }, // no upsert — never mint a balance doc on a reversal
   );
-  return updated ? updated.toObject() : null;
+  if (!updated) return null; // absent / under-balance → nothing moved, no row
+
+  // Append the matching statutory register row. delta>0 = stock came BACK into
+  // the cabinet (RECEIVE); delta<0 = stock left (DISPENSE, e.g. vendor return).
+  const closing = Number(updated.balance || 0);
+  const opening = closing - delta;
+  const drug = await Drug.findById(drugId).select("name").lean();
+  try {
+    await ScheduleXEntry.create({
+      date: _istMidnight(new Date()),
+      drugId,
+      drugName: drug?.name || "(unknown)",
+      openingBalance: Math.max(0, opening),
+      received:  delta > 0 ? delta : 0,
+      dispensed: delta < 0 ? -delta : 0,
+      closingBalance: Math.max(0, closing),
+      dispensedBy: actorName || "",
+      dispensedById: actorById || null,
+      rowType: delta > 0 ? "RECEIVE" : "DISPENSE",
+      remarks: remarks || (delta > 0 ? "Reversal — stock returned to Schedule-X cabinet" : "Reversal — Schedule-X stock issued out"),
+    });
+  } catch (createErr) {
+    // Compensation: undo the balance move if the register-row write failed, so
+    // the two can't silently disagree (mirrors recordDispense).
+    try {
+      await ScheduleXBalance.findOneAndUpdate({ drugId }, { $inc: { balance: -delta } });
+    } catch (compErr) {
+      console.error("[ScheduleX] reversal compensation restore failed for drugId",
+        String(drugId), "delta", delta, ":", compErr.message);
+    }
+    throw createErr;
+  }
+  return updated.toObject();
 }
 
 // ── dailyBalance ─────────────────────────────────────────────────
@@ -351,10 +388,22 @@ async function verifyBalance(date, { verifierId, verifierName } = {}) {
   return { day, verifyRows, summary };
 }
 
+// ── currentBalance ───────────────────────────────────────────────
+// R9-FIX(R9-044): read the running Schedule-X register balance for a drug
+// (0 if no balance doc yet). Used by the dispense pre-flight so an
+// insufficient-register dispense is blocked BEFORE stock leaves the shelf,
+// instead of consuming stock and only flagging a remark.
+async function currentBalance(drugId) {
+  if (!drugId) return 0;
+  const doc = await ScheduleXBalance.findOne({ drugId }).select("balance").lean();
+  return doc ? Number(doc.balance || 0) : 0;
+}
+
 module.exports = {
   recordDispense,
   recordReceipt,
   recordReversal,
+  currentBalance,
   dailyBalance,
   verifyBalance,
 };
