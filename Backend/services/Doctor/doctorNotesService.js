@@ -800,13 +800,23 @@ const updateDoctorNote = async (id, data, doctorUserId) => {
     delete base.createdAt;
     delete base.updatedAt;
     delete base.signedAt; // addendum signs later if/when the doctor signs it
-    // Strip fields that must not be cloned wholesale
-    base.signature = undefined;
+    // Strip fields that must not be cloned wholesale.
+    // R9-FIX(R9-068): the addendum was cloned with status "amended" — a state
+    // the sign flow (draft → signed) can NEVER move out of — while still
+    // carrying the ORIGINAL note's signer identity (signedByName/Reg/EmpId were
+    // left intact). So the amendment was legally attributed to the first
+    // signer, unsigned by whoever actually wrote it, and could never be signed.
+    // Mirror nurseNotesService.js: start as a fresh DRAFT the author must sign,
+    // and clear the inherited signature identity.
+    base.signature     = undefined;
+    base.signedByName  = undefined;
+    base.signedByReg   = undefined;
+    base.signedByEmpId = undefined;
     // Apply mutations
     allowed.forEach((f) => {
       if (data[f] !== undefined) base[f] = data[f];
     });
-    base.status         = "amended";
+    base.status         = "draft";
     base.noteType       = base.noteType || "amendment";
     base.isAddendum     = true;
     base.originalNoteId = note.originalNoteId || note._id;
@@ -824,10 +834,10 @@ const updateDoctorNote = async (id, data, doctorUserId) => {
       module: "DoctorNote",
       sourceModel: "DoctorNotes",
       sourceId: addendum._id,
-      summary: `Addendum to doctor note ${note._id} (signed → amended)`,
+      summary: `Addendum to doctor note ${note._id} (${note.status} → draft addendum, awaiting sign)`,
       userId: doctorUserId || null,
       before: { _id: note._id, status: note.status },
-      after:  { _id: addendum._id, supersedesNoteId: note._id, originalNoteId: addendum.originalNoteId, status: "amended" },
+      after:  { _id: addendum._id, supersedesNoteId: note._id, originalNoteId: addendum.originalNoteId, status: "draft" },
     }).catch((e) => console.error("[doctorNotes] amend audit-log failed:", e.message));
 
     return addendum;

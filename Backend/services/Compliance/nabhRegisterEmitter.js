@@ -76,7 +76,12 @@ const _CRIT_HIGH = Number(process.env.RBS_CRITICAL_HIGH || 300);
 
 function _actor(actor = {}) {
   return {
-    byUserId: actor._id || actor.id || actor.userId || null,
+    // R9-FIX(R9-073): accept `byUserId` too. The MAR med-error call site (and
+    // any caller using the {byUserId,byName,byRole} shape) passed byUserId, but
+    // this only read _id/id/userId — so the reporting user's id silently fell to
+    // null on every MAR-originated medication error. byName/byRole already had
+    // their `by*` fallbacks; byUserId was the odd one out.
+    byUserId: actor._id || actor.id || actor.userId || actor.byUserId || null,
     byName:   actor.fullName || actor.name || actor.byName || "",
     byRole:   actor.role || actor.byRole || "",
   };

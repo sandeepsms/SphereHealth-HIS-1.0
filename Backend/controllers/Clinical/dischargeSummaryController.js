@@ -221,6 +221,19 @@ class DischargeSummaryController {
   // PATCH /api/discharge-summary/:id/finalize
   finalize = handle(async (req, res) => {
     const { allowOverride, overrideReason } = req.body;
+    // R9-FIX(R9-067): ANY override must carry a documented reason — a single
+    // up-front rule covering every gate below. Previously only the nursing-
+    // handover gate required a reason; the PROM/PREM (patient-voice) and
+    // mandatory-content gates accepted `allowOverride: true` with NO reason, so
+    // a caller could silently skip the NABH-mandated patient survey with
+    // nothing recorded. Reject a reasonless override before any gate runs.
+    if (allowOverride && !String(overrideReason || "").trim()) {
+      return res.status(400).json({
+        success: false,
+        code: "OVERRIDE_REASON_REQUIRED",
+        message: "Override requires a documented reason (e.g. 'LAMA at 14:30, signed AMA form on file'). Set overrideReason.",
+      });
+    }
     // R9-FIX(R9-066): the signing name is the AUTHENTICATED actor's, NEVER the
     // request body's. Previously `finalizedByName` came from req.body, so a
     // doctor could finalize under another doctor's name — and the /cosign SoD
