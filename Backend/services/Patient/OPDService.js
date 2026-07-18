@@ -90,9 +90,17 @@ async function generateOPDAdmissionNumber() {
     // legacy OPD-YYYYMMDD-NNNN rows post-migration — if migration mapped
     // those to OPD-YY-NN, the regex still finds them; if not, the seed is 0
     // and OPDService keeps going from there.
-    const last = await Admission.findOne({ admissionNumber: { $regex: `^${prefix}` } })
-      .sort({ admissionNumber: -1 }).lean();
-    seed = last ? (parseInt(last.admissionNumber.slice(prefix.length), 10) || 0) : 0;
+    // R9-FIX(R9-093): port the R8 #38 NUMERIC-max scan (billingService.js:66-71).
+    // The old `.sort({ admissionNumber: -1 })` is LEXICOGRAPHIC: once the series
+    // crosses 99, 'OPD-26-99' sorts ABOVE 'OPD-26-100' (padStart(2) stops
+    // widening) so the seed picked 99 and re-issued an in-use number (E11000 /
+    // duplicate admission number). Reduce over all same-year rows by parsed int.
+    const rows = await Admission.find({ admissionNumber: { $regex: `^${prefix}` } })
+      .select({ admissionNumber: 1 }).lean();
+    seed = rows.reduce((max, r) => {
+      const n = parseInt(String(r.admissionNumber || "").slice(prefix.length), 10);
+      return Number.isFinite(n) && n > max ? n : max;
+    }, 0);
   }
   const seq = await nextSequence(key, seed);
   return `${prefix}${String(seq).padStart(2, "0")}`;

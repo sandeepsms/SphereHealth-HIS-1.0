@@ -407,6 +407,17 @@ OPDSchema.index({ vitalsStatus: 1 });
 // under concurrent OPD registrations.
 const { nextSequence } = require("../../utils/counter");
 
+// R9-FIX(R9-011): the OPD daily token counter must reset at hospital-local
+// midnight, not UTC midnight. `toISOString()` is UTC, so a patient registered
+// between 00:00 and 05:29 IST fell on the PREVIOUS calendar day's key and kept
+// incrementing yesterday's token run instead of starting today's at 1. Key on
+// the hospital timezone (Asia/Kolkata by default, overridable via HOSPITAL_TZ)
+// exactly as autoBillingService / counter.js do.
+const _OPD_TOKEN_TZ = process.env.HOSPITAL_TZ || "Asia/Kolkata";
+const _OPD_TOKEN_DATE_FMT = new Intl.DateTimeFormat("en-CA", {
+  timeZone: _OPD_TOKEN_TZ, year: "numeric", month: "2-digit", day: "2-digit",
+});
+
 OPDSchema.pre("validate", async function (next) {
   try {
     if (this.isNew) {
@@ -419,7 +430,7 @@ OPDSchema.pre("validate", async function (next) {
         this.visitNumber = `OPD-${yy}-${String(seq).padStart(2, "0")}`;
       }
       if (!this.tokenNumber) {
-        const dateKey = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+        const dateKey = _OPD_TOKEN_DATE_FMT.format(new Date()); // YYYY-MM-DD in hospital TZ (R9-011)
         const docKey  = this.doctorId ? String(this.doctorId) : "global";
         this.tokenNumber = await nextSequence(`opd-token:${dateKey}:${docKey}`);
       }
