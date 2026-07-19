@@ -120,6 +120,14 @@ async function actNurseNote(pt, day, hod, shift) {
   rec(r.status < 300, `nurse ${shift} note`, `${r.status}`);
 }
 
+async function actMonitorObs(pt, day, hod) {
+  // lightweight hourly nursing round so NO hour is empty (realistic ward monitoring)
+  const shift = hod < 14 ? "morning" : (hod < 21 ? "evening" : "night");
+  const r = await call("nurse", "POST", "/nurse-notes", { UHID: pt.UHID, ipdNo: pt.ipd, admissionId: pt.aid, shift,
+    generalCondition: `Day ${day + 1} ${hhmm(hod)} — hourly round, stable`, nursingCare: "Hourly round: patient comfortable, IV line patent, I/O noted, safety checks done", remarks: "Routine hourly nursing monitoring", noteType: "general" });
+  rec(r.status < 300, "nurse hourly monitoring obs", `${r.status}`);
+}
+
 async function actCreateOrders(pt) {
   const base = { patientId: pt.pid, UHID: pt.UHID, patientName: pt.name, admissionId: pt.aid, ipdNo: pt.ipd, visitType: "IPD", orderedBy: pt.consultant };
   const lab = await call("doctor", "POST", "/doctor-orders", { ...base, orderType: "Lab", priority: "Routine", orderDetails: { testName: "Serum Electrolytes + RFT" } });
@@ -231,6 +239,11 @@ async function actFinalSettle(pt) {
 // ───────────────────────── TIMELINE ─────────────────────────
 async function runHour(pt, h) {
   const day = Math.floor(h / 24), hod = h % 24;
+  // ensure EVERY hour has at least one task: major-event hours run their event;
+  // otherwise a lightweight hourly nursing monitoring round fires.
+  const majorHours = new Set([0, 3, 6, 9, 12, 15, 18, 21, 7, 8, 10, 11, 13, 14, 17, 19]);
+  if (day % 3 === 0) majorHours.add(16);
+  if (!majorHours.has(hod)) await actMonitorObs(pt, day, hod);
   if ([0, 3, 6, 9, 12, 15, 18, 21].includes(hod)) await actVitals(pt, day, hod);   // 8/day
   if (hod === 7)  await actNurseNote(pt, day, hod, "morning");
   if (hod === 19) await actNurseNote(pt, day, hod, "evening");
@@ -241,7 +254,7 @@ async function runHour(pt, h) {
   if (day === 0 && hod === 13) { await actFulfillLab(pt); await actNursingOrderExec(pt); }
   if (day === 1 && hod === 9)  await actBedCleaning(pt);
   if (day === 1 && hod === 11 && /anemia|bleed/i.test(pt.dx)) await actBloodTransfusion(pt); // BT only for the anemia patient
-  if ((day === 0 || day === 3) && hod === 16) await actProcedureNote(pt, day);      // procedure note /3 days
+  if (day % 3 === 0 && hod === 16) await actProcedureNote(pt, day);                 // procedure note every 3rd day (recurring)
   if (day === 0 && hod === 11) await actReceptionAdvance(pt, 5000, "CASH");
   if (day === 2 && hod === 11) await actReceptionAdvance(pt, 5000, "CARD");
   if (day === 2 && hod === 17) await actInterimSettle(pt);
@@ -268,9 +281,18 @@ async function runHour(pt, h) {
   const start = has("--hour") ? valOf("--hour") : (state.lastHour + 1);
   const end = has("--backfill") ? (valOf("--backfill") || HOURS - 1) : (has("--hour") ? valOf("--hour") : (state.lastHour + 1));
 
+  // pre-flight: if the backend is unreachable, skip this tick WITHOUT advancing
+  // (so the scheduled hourly task doesn't burn through sim-hours while the dev
+  // server is down — it retries the same hour once the backend is back up).
+  try { await call("admin", "GET", "/doctors?limit=1"); }
+  catch (e) { console.log(`Backend unreachable — skipping tick (will retry next run). ${e.message}`); return; }
+
   console.log(`Running sim hours ${start}..${end} for ${state.patients.length} patients…\n`);
   for (let h = start; h <= end; h++) {
-    for (const pt of state.patients) await runHour(pt, h);
+    for (const pt of state.patients) {
+      try { await runHour(pt, h); }
+      catch (e) { rec(false, "tick error (transient)", `hour ${h} ${pt.UHID}: ${e.message}`); }
+    }
     state.lastHour = h;
   }
   save(state);
