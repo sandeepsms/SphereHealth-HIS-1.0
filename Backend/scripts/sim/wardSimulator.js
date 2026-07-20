@@ -239,9 +239,11 @@ async function actFinalSettle(pt) {
 // ───────────────────────── TIMELINE ─────────────────────────
 async function runHour(pt, h) {
   const day = Math.floor(h / 24), hod = h % 24;
-  // ensure EVERY hour has at least one task: major-event hours run their event;
-  // otherwise a lightweight hourly nursing monitoring round fires.
-  const majorHours = new Set([0, 3, 6, 9, 12, 15, 18, 21, 7, 8, 10, 11, 13, 14, 17, 19]);
+  // ensure EVERY hour has at least one task: the RECURRING-event hours run their
+  // event; every other hour gets a lightweight nursing monitoring round. (Only
+  // the always-daily hods count as "major" here — the one-time-event hods like
+  // orders/billing 10/11/13/14/17 still get the filler on days they don't fire.)
+  const majorHours = new Set([0, 3, 6, 9, 12, 15, 18, 21, 7, 8, 19]);
   if (day % 3 === 0) majorHours.add(16);
   if (!majorHours.has(hod)) await actMonitorObs(pt, day, hod);
   if ([0, 3, 6, 9, 12, 15, 18, 21].includes(hod)) await actVitals(pt, day, hod);   // 8/day
